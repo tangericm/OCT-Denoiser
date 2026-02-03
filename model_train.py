@@ -6,8 +6,8 @@ from engine.infer import predict_npz_to_tiffs
 
 def main():
     # Edit only these:
-    npz_path = r"C:\Users\erict\OneDrive\Desktop\Projects\OCT Reconstruction\images\processed\6mm_1024Aline_gapped_dataset.npz"
-    runs_root = r"C:\Users\erict\OneDrive\Desktop\Projects\OCT Reconstruction\runs"
+    npz_path = r"images\processed\6mm_1024Aline_gapped_dataset.npz"
+    runs_root = r"runs"
 
     cfg = TrainConfig(
         npz_path=npz_path,
@@ -19,14 +19,14 @@ def main():
         epochs=300,
         base=32, 
         batch_size=12,
-        lr=0.00030606554343739014,
+        lr=3e-04,
         num_workers=4,
-        patch_h=192,
-        patch_w=320,
-        patches_per_frame=24,
-        w_charb=0.30176532529712513,
-        w_grad=0.011968933422333048,
-        weight_decay=8.131534094431376e-05,
+        patch_h=288,
+        patch_w=288,
+        patches_per_frame=16,
+        w_charb=0.010307111599432855,
+        w_grad=0.010163544565911599,
+        weight_decay=8e-05,
     )
 
     seed_all(cfg.seed, deterministic=cfg.deterministic)

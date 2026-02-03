@@ -4,11 +4,9 @@ from __future__ import annotations
 import os
 import csv
 import time
-import math
 from dataclasses import dataclass, asdict
-from typing import Dict, Any, Optional
+from typing import Dict
 
-import torch
 from engine.train import run_training  # uses run_training(cfg, paths)
 
 # -----------------------------
@@ -26,7 +24,6 @@ class TuneConfig:
     batch_size: int = 12
     num_workers: int = 4
     seed: int = 42
-    use_gap: bool = False
 
     # model
     model_name: str = "resunet_pseudo3d"
@@ -34,14 +31,14 @@ class TuneConfig:
 
     # optimization
     epochs: int = 30            # short runs for tuning
-    lr: float = 0.00030606554343739014
-    weight_decay: float = 8.131534094431376e-05
+    lr: float = 3e-04
+    weight_decay: float = 8e-05
     amp: bool = True
     grad_clip: float = 1.0
 
     # loss weights 
-    w_charb: float = 0.5410708683161444
-    w_grad: float = 0.18812101173726326
+    w_charb: float = 0.5
+    w_grad: float = 0.1
 
     # logging/checkpoint cadence
     val_every: int = 5
@@ -83,8 +80,8 @@ def main():
     # -----------------------------
     # User edits
     # -----------------------------
-    NPZ_PATH = r"C:\Users\erict\OneDrive\Desktop\Projects\OCT Reconstruction\processed\6mm_1024Aline_gapped_dataset.npz"
-    TUNE_ROOT = os.path.join("runs", "optuna_tune_" + time.strftime("%Y%m%d_%H%M%S"))
+    NPZ_PATH = r"C:\Users\erict\OneDrive\Desktop\Projects\OCT Denoiser\images\processed\6mm_1024Aline_gapped_dataset.npz"
+    TUNE_ROOT = os.path.join(r"runs\optuna", "optuna_tune_" + time.strftime("%Y%m%d_%H%M%S"))
     ensure_dir(TUNE_ROOT)
 
     # Lazy import so script still runs without optuna installed
@@ -105,22 +102,21 @@ def main():
         # cfg.weight_decay = trial.suggest_float("weight_decay", 1e-6, 9e-5, log=True)
 
         # Patch params
-        # # Keep multiples of 32 for tensor cores / conv efficiency
-        # ph = trial.suggest_categorical("patch_h", [192, 224, 256, 288, 320])
-        # pw = trial.suggest_categorical("patch_w", [192, 224, 256, 288, 320])
-        # cfg.patch_h, cfg.patch_w = int(ph), int(pw)
-        # cfg.patches_per_frame = trial.suggest_categorical("patches_per_frame", [16, 24, 32, 48])
+        # Keep multiples of 32 for tensor cores / conv efficiency
+        ph = trial.suggest_categorical("patch_h", [192, 224, 256, 288, 320])
+        pw = trial.suggest_categorical("patch_w", [192, 224, 256, 288, 320])
+        cfg.patch_h, cfg.patch_w = int(ph), int(pw)
+        cfg.patches_per_frame = trial.suggest_categorical("patches_per_frame", [16, 24, 32, 48])
 
-        # # Batch size (optional: comment out if you often OOM)
-        # cfg.batch_size = trial.suggest_categorical("batch_size", [4, 8, 12, 16])
+        # Batch size (optional: comment out if you often OOM)
+        cfg.batch_size = trial.suggest_categorical("batch_size", [4, 8, 12, 16])
 
         # Loss balance
-        cfg.w_charb = trial.suggest_float("w_charb", 0.3, 0.6)
-        cfg.w_grad = trial.suggest_float("w_grad", 0.01, 0.3)
-        cfg.w_snr = trial.suggest_float("w_snr", 0.05, 0.2)
+        cfg.w_charb = trial.suggest_float("w_charb", 0.01, 0.8)
+        cfg.w_grad = trial.suggest_float("w_grad", 0.01, 0.8)
 
-        # # Model capacity (optional knob)
-        # cfg.base = trial.suggest_categorical("base", [24, 32, 40])
+        # Model capacity (optional knob)
+        cfg.base = trial.suggest_categorical("base", [24, 32, 40])
 
         # Reduce variance for fair comparisons
         cfg.seed = 42
@@ -166,9 +162,9 @@ def main():
 
         return final_val
 
-    sampler = optuna.samplers.TPESampler(seed=123)
+    sampler = optuna.samplers.TPESampler(seed=42)
     study = optuna.create_study(direction="minimize", sampler=sampler)
-    study.optimize(objective, n_trials=30)
+    study.optimize(objective, n_trials=100)
 
     print("\nBest trial:")
     print(study.best_trial.number)

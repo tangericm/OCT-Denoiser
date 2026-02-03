@@ -73,7 +73,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
 
     plotter = LiveLossPlot(
         out_dir=paths["run"],
-        title=f"Loss: {cfg.model_name}",
+        title=f"Loss - {cfg.experiment_name}, Network: {cfg.model_name}",
         filename="loss_curve.png",
         save_every_epoch=False,   # set True if you want per-epoch pngs always
         show_window=True,         # set False if you never want an interactive window
