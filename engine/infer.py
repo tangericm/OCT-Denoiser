@@ -106,6 +106,7 @@ def predict_npz_to_tiffs(
 
     sig_roi/bg_roi are pixel-coordinate boxes: (y0, y1, x0, x1), y1/x1 exclusive.
     """
+    torch.backends.cudnn.benchmark = True
     ensure_dir(outdir)
 
     data = np.load(npz_path, allow_pickle=True)
@@ -113,6 +114,7 @@ def predict_npz_to_tiffs(
     Y = data["Y"].astype(np.float32)  # [F,1,H,W]
 
     F, C, H, W = X.shape
+    print(X.shape)
     assert C == 2
 
     # Basic ROI bounds safety
@@ -141,17 +143,29 @@ def predict_npz_to_tiffs(
     # Timing
     times = []
 
+    # Move input to GPU once
+    # X_gpu = torch.from_numpy(X).to(device, non_blocking=True)  # [F,2,H,W]
+
+    # Warmup
+    x = torch.from_numpy(X[0:1]).to(device)  # [1,2,H,W]
+    for _ in range(1):
+        _ = model(x)  # [1,2,H,W]
+    if device.startswith("cuda"):
+        torch.cuda.synchronize()
+        
     for i in range(F):
-        x = torch.from_numpy(X[i:i + 1]).to(device)  # [1,2,H,W]
 
         start_time = time.time()
-        yhat = model(x).detach().cpu().numpy().astype(np.float32)  # [1,1,H,W]
+        x = torch.from_numpy(X[i:i + 1]).to(device)  # [1,2,H,W]
 
-        # End timing
+        yhat = model(x)  # [1,1,H,W]
+
         end_time = time.time()
         elapsed_time = end_time - start_time
         times.append(elapsed_time)
-        print(f"[INFO] Prediction time: {elapsed_time:.2f} seconds")
+        print(f"[INFO] Prediction time: {elapsed_time:.10f} seconds")
+
+        yhat = yhat.detach().cpu().numpy().astype(np.float32)  # [1,1,H,W]
 
         preds[i] = yhat[0]
 
@@ -175,7 +189,7 @@ def predict_npz_to_tiffs(
     mean_pred = float(np.mean(snr_pred_arr)) if snr_pred_arr.size else float("nan")
     mean_gt = float(np.mean(snr_gt_arr)) if snr_gt_arr.size else float("nan")
     mean_time = float(np.mean(times)) if times else float("nan")
-    print(f"[INFO] Average prediction time per frame: {mean_time:.2f} seconds")
+    print(f"[INFO] Average prediction time per frame: {mean_time:.10f} seconds")
 
    # Save CSV with both
     snr_csv_path = os.path.join(outdir, snr_csv_name)

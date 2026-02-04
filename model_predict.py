@@ -1,9 +1,9 @@
 from engine.infer import predict_npz_to_tiffs
 
 def main():
-    npz_path = r"images\processed\6mm_1024Aline_2_gapped_dataset.npz"
+    npz_path = r"images\Maestro3\processed\6mm_1024Aline_2_gapped_dataset.npz"
     ckpt_path = r"runs\6mm_1024aline\20260203_054736\checkpoints\best.pt"
-    outdir = r"images\predictions_tiff\6mm_1024Aline_2"
+    outdir = r"images\Maestro3\6mm_1024Aline_2\predictions_tiff"
 
     predict_npz_to_tiffs(
         npz_path=npz_path,
