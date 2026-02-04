@@ -86,9 +86,11 @@ def dc_subtract(spec: np.ndarray) -> np.ndarray:
     """
     spec: [pixels, alines]
     subtract mean across alines for each pixel (row-wise), like MATLAB: OCT - mean(OCT,2)
-    Removes DC spike at first pixel by setting it equal to second pixel.
+    Remove DC spike at first pixels.
     """
-    spec[0, :] = spec[1, :]  # Remove first-pixel spike by copying second pixel
+    spec[0, :] = spec[3, :]
+    spec[1, :] = spec[3, :]
+    spec[2, :] = spec[3, :]
     return spec - spec.mean(axis=1, keepdims=True)
 
 
@@ -151,7 +153,7 @@ def recon_bscan_from_spectrum(spec_complex: np.ndarray,
     bscan = mag[z0:z1, :]  # [H,W]
 
     if use_log:
-        bscan = np.log(bscan + log_eps).astype(np.float32)
+        bscan = np.log10(bscan + log_eps).astype(np.float32)
 
     # Normalize per-frame for stable training (you can revise later)
     mu = float(bscan.mean())
@@ -243,58 +245,62 @@ class BscanProcessor:
         # Precompute two spectral windows
         self.w1, self.w2 = make_two_window_masks(cfg.pixels, cfg.gap, cfg.window_sigma)
 
-    def _debug_plot(self, step_name: str, data: np.ndarray, is_complex: bool = False, 
-                    windows: Optional[Tuple[np.ndarray, np.ndarray]] = None) -> None:
-        """
-        Concise debug plotting of a single processing step with optional window overlay.
-        
-        Args:
-            step_name: Name of the processing step
-            data: [pixels, alines] array to plot
-            is_complex: If True, plot magnitude of complex data
-            windows: Optional tuple (w1, w2) of window functions to overlay on center A-line
-        """
+    def _debug_plot(
+        self,
+        step_name: str,
+        data: np.ndarray,
+        is_complex: bool = False,
+        windows: Optional[Tuple[np.ndarray, np.ndarray]] = None,
+        frame_idx: Optional[int] = None,
+        save_png: bool = False,
+    ) -> None:
         if is_complex:
             mag = np.abs(data)
         else:
             mag = np.abs(data)
-        
-        # Plot center A-line and 2D view
+
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-        
-        # Center A-line (log scale) with optional window overlay
+
         aline_idx = mag.shape[1] // 2
-        ax1.semilogy(mag[:, aline_idx], linewidth=0.8, color='steelblue', label='Spectrum')
-        
+        ax1.semilogy(mag[:, aline_idx], linewidth=0.8, color="steelblue")
+
         if windows is not None:
             w1, w2 = windows
-            # Normalize windows to match spectrum scale for visibility
-            spec_max = mag[:, aline_idx].max()
             ax1_twin = ax1.twinx()
-            ax1_twin.plot(w1, linewidth=1.5, color='red', alpha=0.7, label='Window 1')
-            ax1_twin.plot(w2, linewidth=1.5, color='orange', alpha=0.7, label='Window 2')
-            ax1_twin.set_ylabel('Window Amplitude', color='red')
+            ax1_twin.plot(w1, color="red", alpha=0.7, label="Window 1")
+            ax1_twin.plot(w2, color="orange", alpha=0.7, label="Window 2")
             ax1_twin.set_ylim([0, 1.1])
-            ax1_twin.tick_params(axis='y', labelcolor='red')
-            ax1.legend(loc='upper left')
-            ax1_twin.legend(loc='upper right')
-        
-        ax1.set_title(f"{step_name} - Center A-line")
+            ax1_twin.legend(loc="upper right")
+
+        ax1.set_title(f"{step_name} – Center A-line")
         ax1.set_xlabel("Pixel")
         ax1.set_ylabel("Magnitude (log)")
         ax1.grid(True, alpha=0.3)
-        
-        # 2D heatmap
-        im = ax2.imshow(np.log(mag + 1e-6), aspect='auto', cmap='gray', origin='upper')
-        ax2.set_title(f"{step_name} - All A-lines")
+
+        im = ax2.imshow(np.log10(mag + 1e-6), aspect="auto", cmap="gray", origin="upper")
+        ax2.set_title(f"{step_name} – All A-lines")
         ax2.set_xlabel("A-line")
         ax2.set_ylabel("Pixel")
         plt.colorbar(im, ax=ax2, label="Log Magnitude")
-        
-        plt.tight_layout()
-        plt.show(block=False)
 
-    def process_one(self, bscan_path: str) -> Dict[str, np.ndarray]:
+        plt.tight_layout()
+
+        # ---- NEW: save PNG (first frame only) ----
+        if (save_png and frame_idx == 0 and hasattr(self, "_debug_out_dir") and self._debug_out_dir is not None):
+            safe_name = step_name.replace(" ", "_").replace(".", "")
+            # Prefer explicit dataset frame basename if available (set in `process_one`),
+            # otherwise fall back to numeric frame index.
+            frame_name = getattr(self, "_current_frame_name", f"frame{frame_idx:03d}")
+            dataset_name = getattr(self, "_dataset_name", None)
+            if dataset_name:
+                out_path = os.path.join(self._debug_out_dir, f"{dataset_name}_{frame_name}_{safe_name}.png")
+            else:
+                out_path = os.path.join(self._debug_out_dir, f"{frame_name}_{safe_name}.png")
+            plt.savefig(out_path, dpi=150)
+
+        plt.close(fig)
+
+    def process_one(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, np.ndarray]:
         """
         Returns dict containing:
           - target_full: [H,W] float32
@@ -302,25 +308,28 @@ class BscanProcessor:
           - input_w2: [H,W] float32
         """
         cfg = self.cfg
+        # Record the current B-scan basename so `_debug_plot` can use a descriptive filename
+        # e.g. 'frame000_5_...' instead of a generic 'debug' prefix.
+        self._current_frame_name = os.path.splitext(os.path.basename(bscan_path))[0]
 
         raw = read_bscan_raw(bscan_path, cfg.pixels, cfg.alines)  # [pixels, alines]
-        if cfg.debug_mode:
-            self._debug_plot("1. Raw Spectrum", raw)
+        # if cfg.debug_mode:
+            # self._debug_plot("1. Raw Spectrum", raw, frame_idx=frame_idx, save_png=True)
 
         if cfg.do_dc_subtract:
             raw = dc_subtract(raw)
-            if cfg.debug_mode:
-                self._debug_plot("2. After DC Subtraction", raw)
+            # if cfg.debug_mode:
+                # self._debug_plot("2. After DC Subtraction", raw)
 
         # Resample to k-linear using CLB LUT
         resamp = resample_klinear(raw, self.resampling)  # [pixels, alines]
-        if cfg.debug_mode:
-            self._debug_plot("3. After Resampling", resamp)
+        # if cfg.debug_mode:
+            # self._debug_plot("3. After Resampling", resamp, frame_idx=frame_idx, save_png=True)
 
         # Apodization (Hann)
         resamp = (resamp * self.apod[:, None]).astype(np.float32)
-        if cfg.debug_mode:
-            self._debug_plot("4. After Apodization", resamp)
+        # if cfg.debug_mode:
+            # self._debug_plot("4. After Apodization", resamp, frame_idx=frame_idx, save_png=True)
 
         # Dispersion compensation
         if cfg.dispersion is not None and len(cfg.dispersion) > 0:
@@ -329,8 +338,7 @@ class BscanProcessor:
             spec_full = resamp.astype(np.complex64)  # treat as complex with imag=0
         if cfg.debug_mode:
             self._debug_plot("5. Full Spectrum (Complex)", spec_full, is_complex=True, 
-                           windows=(self.w1, self.w2))
-
+                           windows=(self.w1, self.w2), frame_idx=frame_idx, save_png=True)
         # Full-spectrum target recon
         target_full = recon_bscan_from_spectrum(
             spec_full, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth
@@ -339,9 +347,9 @@ class BscanProcessor:
         # Two-window gapped inputs
         spec1 = (spec_full * self.w1[:, None]).astype(np.complex64)
         spec2 = (spec_full * self.w2[:, None]).astype(np.complex64)
-        if cfg.debug_mode:
-            self._debug_plot("6a. Window 1 Spectrum", spec1, is_complex=True)
-            self._debug_plot("6b. Window 2 Spectrum", spec2, is_complex=True)
+        # if cfg.debug_mode:
+            # self._debug_plot("6a. Window 1 Spectrum", spec1, is_complex=True, frame_idx=frame_idx, save_png=True)
+            # self._debug_plot("6b. Window 2 Spectrum", spec2, is_complex=True, frame_idx=frame_idx, save_png=True)
 
         input_w1 = recon_bscan_from_spectrum(
             spec1, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth
@@ -349,10 +357,10 @@ class BscanProcessor:
         input_w2 = recon_bscan_from_spectrum(
             spec2, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth
         )
-        if cfg.debug_mode:
-            self._debug_plot("7a. Reconstructed Window 1", input_w1)
-            self._debug_plot("7b. Reconstructed Window 2", input_w2)
-            self._debug_plot("7c. Full Target", target_full)
+        # if cfg.debug_mode:
+            # self._debug_plot("7a. Reconstructed Window 1", input_w1, frame_idx=frame_idx, save_png=True)
+            # self._debug_plot("7b. Reconstructed Window 2", input_w2, frame_idx=frame_idx, save_png=True)
+            # self._debug_plot("7c. Full Target", target_full, frame_idx=frame_idx, save_png=True)
 
         return {
             "target_full": target_full,  # [H,W]
@@ -370,15 +378,23 @@ class BscanProcessor:
         cfg = self.cfg
         F = len(self.bscan_paths)
 
+        self._debug_out_dir = None
+        self._dataset_name = None
+        if out_npz is not None:
+            self._debug_out_dir = os.path.dirname(out_npz)
+            os.makedirs(self._debug_out_dir, exist_ok=True)
+            # Dataset basename (used to prefix debug PNG filenames)
+            self._dataset_name = os.path.splitext(os.path.basename(out_npz))[0]
+
         # Determine H,W by running first frame
-        first = self.process_one(self.bscan_paths[0])
+        first = self.process_one(self.bscan_paths[0], frame_idx=0)
         H, W = first["target_full"].shape
 
         X = np.zeros((F, 2, H, W), dtype=np.float32)
         Y = np.zeros((F, 1, H, W), dtype=np.float32)
 
         for i, p in enumerate(self.bscan_paths):
-            out = self.process_one(p)
+            out = self.process_one(p, frame_idx=i)
             X[i, 0] = out["input_w1"]
             X[i, 1] = out["input_w2"]
             Y[i, 0] = out["target_full"]
@@ -452,11 +468,11 @@ def run_sanity_tests(dataset: Dict[str, np.ndarray], cfg: Config):
 # CLI entrypoint
 # -----------------------------
 def main():
-    # Update this to your project root that contains "6mm_1024Aline" and the CLB file.
-    project_root = r"C:\Users\erict\OneDrive\Desktop\Projects\OCT Reconstruction\images"
+    project_root = r"images\Maestro3"
 
     cfg = Config(
         data_folder="6mm_1024Aline", 
+        # data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165", 
         pixels=2048,
         alines=1024,
         do_dc_subtract=True,
@@ -464,17 +480,18 @@ def main():
         use_log=True,
         crop_depth=(1024, 2048),
         apply_fftshift_depth=True,
-        window_sigma=0.08,
-        gap=0.25,
+        window_sigma=0.04,
+        gap=0.10,
         dispersion=[1.315892282e-06, 5.459678905e-10], # M3
         # dispersion=[4.778474717e-06, 6.475358372e-09], # M2
-        debug_mode=False,
+        debug_mode=True,
     )
+    
 
     proc = BscanProcessor(project_root, cfg)
 
     # Use data_folder name for output NPZ filename
-    out_npz = os.path.join(project_root, "processed", f"{cfg.data_folder}_gapped_dataset.npz")
+    out_npz = os.path.join(project_root, "processed", f"{cfg.data_folder}_gapped_dataset_s004_g010.npz")
 
     dataset = proc.process_all(out_npz=out_npz)
     run_sanity_tests(dataset, cfg)

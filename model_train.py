@@ -5,8 +5,7 @@ from engine.train import run_training
 from engine.infer import predict_npz_to_tiffs
 
 def main():
-    # Edit only these:
-    npz_path = r"images\processed\6mm_1024Aline_gapped_dataset.npz"
+    npz_path = r"images\Maestro3\processed\6mm_1024Aline_gapped_dataset_s008_g025.npz"
     runs_root = r"runs"
 
     cfg = TrainConfig(

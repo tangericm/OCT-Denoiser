@@ -80,8 +80,10 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     )
     
     print(f"[INFO] Device={cfg.device}  train_batches={len(train_loader)}  val_batches={len(val_loader)}")
-    # print(f"[INFO] Training patches: {len(train_ds)}  Val patches: {len(val_ds)}")
 
+    # ---- Timing bookkeeping ----
+    epoch_times = []
+    train_start_time = time.time()
     for epoch in range(1, cfg.epochs + 1):
         model.train()
         t0 = time.time()
@@ -93,6 +95,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
 
             opt.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=use_cuda_amp):
+
                 pred = model(x)
                 loss = cfg.w_charb * charbonnier_loss(pred, y) + cfg.w_grad * gradient_l1(pred, y)
 
@@ -123,7 +126,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             history["val_loss"].append({"epoch": epoch, "loss": val_loss})
             plotter.update(epoch=epoch, train_loss=train_loss, val_loss=val_loss)
             dt = time.time() - t0
-            print(f"[E{epoch:04d}] train={train_loss:.4f}  val={val_loss:.4f}  time={dt:.1f}s")
+            print(f"[E{epoch:04d}] train={train_loss:.10f}  val={val_loss:.10f}  time={dt:.5f}s")
 
             if val_loss < best_val:
                 best_val = val_loss
@@ -146,7 +149,9 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                     f"Best={early_stop.best:.6f} at epoch={early_stop.best_epoch}. Stopping at epoch={epoch}."
                 )
                 break
-
+        
+        epoch_dt = time.time() - t0
+        epoch_times.append(epoch_dt)
         if (epoch % cfg.save_every) == 0:
             torch.save(
                 {"epoch": epoch, "model": model.state_dict(), "cfg": asdict(cfg)},
@@ -154,7 +159,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             )
 
     save_json(os.path.join(paths["run"], "history.json"), history)
-    print(f"[DONE] Best val loss = {best_val:.4f}")
+    print(f"[DONE] Best val loss = {best_val:.10f}")
     history["early_stop"] = {
         "patience": early_stop.patience,
         "min_delta": early_stop.min_delta,
@@ -162,5 +167,17 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         "best_epoch": early_stop.best_epoch,
         "stop_epoch": early_stop.stop_epoch,
         "num_checks": early_stop.num_checks,
+    }
+    total_train_time = time.time() - train_start_time
+    mean_epoch_time = sum(epoch_times) / max(len(epoch_times), 1)
+    print(
+        f"[TIMING] Epochs run = {len(epoch_times)} | "
+        f"Mean epoch time = {mean_epoch_time:.10f} s | "
+        f"Total training time = {total_train_time:.10f} s"
+    )
+    history["timing"] = {
+        "epoch_times_sec": epoch_times,
+        "mean_epoch_time_sec": mean_epoch_time,
+        "total_train_time_sec": total_train_time,
     }
     return {"model": model, "best_ckpt_path": best_ckpt_path, "history": history}

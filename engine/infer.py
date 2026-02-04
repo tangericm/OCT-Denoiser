@@ -16,29 +16,45 @@ from utils.keypoint_registration import register_stack_keypoints_to_pred0
 
 def _roi_snr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> float:
     """
-    SNR = (mean(signal) - mean(background)) / (std(background) + eps)
+    Per-A-line SNR, then average across A-lines within the ROI.
 
-    img2d: [H,W] float32 (log-compressed is fine)
+    For each A-line (x column) in the ROI:
+      SNR_x(dB) = 20*log10( (max(signal_y_range, x) + eps) / (std(background_y_range, x) + eps) )
+
+    Then return mean(SNR_x) over all x in the ROI where bg std is finite.
+
+    img2d: [H,W] float32 (linear or log-compressed is fine as long as you're consistent)
     ROI format: (y0, y1, x0, x1), y1/x1 exclusive
     """
     y0s, y1s, x0s, x1s = sig_roi
     y0b, y1b, x0b, x1b = bg_roi
 
-    sig = img2d[y0s:y1s, x0s:x1s]
-    bg  = img2d[y0b:y1b, x0b:x1b]
+    # Ensure the A-line (x) ranges match; otherwise you aren't averaging comparable columns.
+    x0 = max(x0s, x0b)
+    x1 = min(x1s, x1b)
+    if x1 <= x0:
+        return float("nan")
 
-    # Convert to linear amplitude
-    sig_A = 10.0 ** (sig / 20.0)
-    bg_A  = 10.0 ** (bg  / 20.0)
+    # Extract ROIs, aligned in x
+    sig = img2d[y0s:y1s, x0:x1]  # shape [Hs, Wx]
+    bg  = img2d[y0b:y1b, x0:x1]  # shape [Hb, Wx]
 
+    sig = (10 ** sig) - 1e-6
+    bg  = (10 ** bg) - 1e-6
 
-    # mu_sig = float(np.mean(sig))
-    # mu_bg  = float(np.mean(bg))
-    max_sig = float(np.max(sig_A))
-    std_bg = float(np.std(bg_A))
+    # Per-column metrics
+    max_sig_per_x = np.max(sig, axis=0)          # [Wx]
+    std_bg_per_x  = np.std(bg, axis=0)           # [Wx]
 
-    # return (mu_sig - mu_bg) / (std_bg + eps)
-    return 20.0 * np.log10((max_sig + eps) / (std_bg + eps))
+    # Compute per-A-line SNR in dB
+    snr_per_x = 20.0 * np.log10((max_sig_per_x + eps) / (std_bg_per_x + eps))
+
+    # Robustness: ignore any non-finite values (can happen if img2d contains NaNs/Infs)
+    snr_per_x = snr_per_x[np.isfinite(snr_per_x)]
+    if snr_per_x.size == 0:
+        return float("nan")
+
+    return float(np.mean(snr_per_x))
 
 
 def _save_roi_plot_first(
@@ -210,7 +226,7 @@ def predict_npz_to_tiffs(
     print(f"[OK] Mean SNR gt  : {mean_gt:.4f}")
     print(f"[OK] Saved ROI plots (frame 0): snr_rois_frame0_pred.png, snr_rois_frame0_gt.png")
 
-    # Save TIFFs (existing behavior)
+    # Save TIFFs
     pred_stack = preds[:, 0, :, :]
     gt_stack = Y[:, 0, :, :]
     w1_stack = X[:, 0, :, :]
@@ -220,8 +236,8 @@ def predict_npz_to_tiffs(
     # pred_reg_mean  = pred_reg.mean(axis=0).astype(np.float32)
     # gt_reg_mean    = gt_reg.mean(axis=0).astype(np.float32)
     
-    save_tiff_stack(os.path.join(outdir, "input_w1.tif"), w1_stack, dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(os.path.join(outdir, "input_w2.tif"), w2_stack, dtype=tiff_dtype, scale_per_slice=True)
+    # save_tiff_stack(os.path.join(outdir, "input_w1.tif"), w1_stack, dtype=tiff_dtype, scale_per_slice=True)
+    # save_tiff_stack(os.path.join(outdir, "input_w2.tif"), w2_stack, dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(os.path.join(outdir, "pred.tif"), pred_stack, dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(os.path.join(outdir, "gt.tif"), gt_stack, dtype=tiff_dtype, scale_per_slice=True)
 
@@ -231,10 +247,10 @@ def predict_npz_to_tiffs(
     # save_tiff_stack(os.path.join(outdir, "gt_registered_mean.tif"), gt_reg_mean, dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
-        save_tiff_stack(os.path.join(outdir, "input_w1_float32.tif"), w1_stack, dtype="float32", scale_per_slice=False)
-        save_tiff_stack(os.path.join(outdir, "input_w2_float32.tif"), w2_stack, dtype="float32", scale_per_slice=False)
-        save_tiff_stack(os.path.join(outdir, "pred_float32.tif"), pred_stack, dtype="float32", scale_per_slice=False)
-        save_tiff_stack(os.path.join(outdir, "gt_float32.tif"), gt_stack, dtype="float32", scale_per_slice=False)
+        # save_tiff_stack(os.path.join(outdir, "input_w1_float32.tif"), w1_stack, dtype="float32", scale_per_slice=True)
+        # save_tiff_stack(os.path.join(outdir, "input_w2_float32.tif"), w2_stack, dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, "pred_float32.tif"), pred_stack, dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, "gt_float32.tif"), gt_stack, dtype="float32", scale_per_slice=True)
 
         # save_tiff_stack(os.path.join(outdir, "pred_registered_float32.tif"), pred_reg, dtype="float32", scale_per_slice=False)
         # save_tiff_stack(os.path.join(outdir, "gt_registered_float32.tif"), gt_reg, dtype="float32", scale_per_slice=False)
