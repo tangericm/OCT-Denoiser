@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import csv
 import numpy as np
+import time
 import torch
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -10,6 +11,7 @@ import matplotlib.patches as patches
 from networks import create_model
 from utils.io_tiff import save_tiff_stack
 from utils.run_manager import ensure_dir
+from utils.keypoint_registration import register_stack_keypoints_to_pred0
 
 
 def _roi_snr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> float:
@@ -133,39 +135,66 @@ def predict_npz_to_tiffs(
 
     preds = np.zeros((F, 1, H, W), dtype=np.float32)
 
-    # --- NEW: SNR outputs ---
-    snr_list = []
+    # SNR lists for pred + gt
+    snr_pred_list: list[float] = []
+    snr_gt_list: list[float] = []
+    # Timing
+    times = []
 
     for i in range(F):
         x = torch.from_numpy(X[i:i + 1]).to(device)  # [1,2,H,W]
 
+        start_time = time.time()
         yhat = model(x).detach().cpu().numpy().astype(np.float32)  # [1,1,H,W]
+
+        # End timing
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        times.append(elapsed_time)
+        print(f"[INFO] Prediction time: {elapsed_time:.2f} seconds")
+
         preds[i] = yhat[0]
 
         # Compute SNR for this predicted frame
         pred_img = preds[i, 0]  # [H,W]
-        snr_val = _roi_snr(pred_img, sig_roi, bg_roi)
-        snr_list.append(snr_val)
+        gt_img   = Y[i, 0, :H, :] 
+        snr_pred = _roi_snr(pred_img, sig_roi, bg_roi)
+        snr_gt   = _roi_snr(gt_img,   sig_roi, bg_roi)
+        snr_pred_list.append(snr_pred)
+        snr_gt_list.append(snr_gt)
 
         if i == 0:
-            plot_path = os.path.join(outdir, "snr_rois_frame0.png")
-            _save_roi_plot_first(pred_img, sig_roi, bg_roi, snr_val, plot_path)
+            plot_path_pred = os.path.join(outdir, "snr_rois_frame0_pred.png")
+            _save_roi_plot_first(pred_img, sig_roi, bg_roi, snr_pred, plot_path_pred)
+            plot_path_gt = os.path.join(outdir, "snr_rois_frame0_gt.png")
+            _save_roi_plot_first(gt_img, sig_roi, bg_roi, snr_gt, plot_path_gt)
 
-    snr_arr = np.asarray(snr_list, dtype=np.float32)
-    mean_snr = float(np.mean(snr_arr)) if snr_arr.size else float("nan")
+    snr_pred_arr = np.asarray(snr_pred_list, dtype=np.float32)
+    snr_gt_arr = np.asarray(snr_gt_list, dtype=np.float32)
 
+    mean_pred = float(np.mean(snr_pred_arr)) if snr_pred_arr.size else float("nan")
+    mean_gt = float(np.mean(snr_gt_arr)) if snr_gt_arr.size else float("nan")
+    mean_time = float(np.mean(times)) if times else float("nan")
+    print(f"[INFO] Average prediction time per frame: {mean_time:.2f} seconds")
+
+   # Save CSV with both
     snr_csv_path = os.path.join(outdir, snr_csv_name)
     with open(snr_csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["frame", "snr"])
-        for i, s in enumerate(snr_arr):
-            w.writerow([i, float(s)])
+        w.writerow(["frame", "snr_pred", "snr_gt", "snr_pred_minus_gt"])
+        for i in range(F):
+            sp = float(snr_pred_arr[i])
+            sg = float(snr_gt_arr[i])
+            w.writerow([i, sp, sg, sp - sg])
         w.writerow([])
-        w.writerow(["mean_snr", mean_snr])
+        w.writerow(["mean_snr_pred", mean_pred])
+        w.writerow(["mean_snr_gt", mean_gt])
+        w.writerow(["mean_pred_minus_gt", (mean_pred - mean_gt) if np.isfinite(mean_pred) and np.isfinite(mean_gt) else float("nan")])
 
     print(f"[OK] Saved SNR CSV: {snr_csv_path}")
-    print(f"[OK] Mean SNR: {mean_snr:.4f}")
-    print(f"[OK] Saved ROI plot (frame 0): {os.path.join(outdir, 'snr_rois_frame0.png')}")
+    print(f"[OK] Mean SNR pred: {mean_pred:.4f}")
+    print(f"[OK] Mean SNR gt  : {mean_gt:.4f}")
+    print(f"[OK] Saved ROI plots (frame 0): snr_rois_frame0_pred.png, snr_rois_frame0_gt.png")
 
     # Save TIFFs (existing behavior)
     pred_stack = preds[:, 0, :, :]
@@ -173,13 +202,27 @@ def predict_npz_to_tiffs(
     w1_stack = X[:, 0, :, :]
     w2_stack = X[:, 1, :, :]
 
+    # pred_reg, gt_reg, _ = register_stack_keypoints_to_pred0(pred_stack, gt_stack, scale_locked=True)
+    # pred_reg_mean  = pred_reg.mean(axis=0).astype(np.float32)
+    # gt_reg_mean    = gt_reg.mean(axis=0).astype(np.float32)
+    
     save_tiff_stack(os.path.join(outdir, "input_w1.tif"), w1_stack, dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(os.path.join(outdir, "input_w2.tif"), w2_stack, dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(os.path.join(outdir, "pred.tif"), pred_stack, dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(os.path.join(outdir, "gt.tif"), gt_stack, dtype=tiff_dtype, scale_per_slice=True)
+
+    # save_tiff_stack(os.path.join(outdir, "pred_registered.tif"), pred_reg, dtype=tiff_dtype, scale_per_slice=True)
+    # save_tiff_stack(os.path.join(outdir, "gt_registered.tif"), gt_reg, dtype=tiff_dtype, scale_per_slice=True)
+    # save_tiff_stack(os.path.join(outdir, "pred_registered_mean.tif"), pred_reg_mean, dtype=tiff_dtype, scale_per_slice=True)
+    # save_tiff_stack(os.path.join(outdir, "gt_registered_mean.tif"), gt_reg_mean, dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
         save_tiff_stack(os.path.join(outdir, "input_w1_float32.tif"), w1_stack, dtype="float32", scale_per_slice=False)
         save_tiff_stack(os.path.join(outdir, "input_w2_float32.tif"), w2_stack, dtype="float32", scale_per_slice=False)
         save_tiff_stack(os.path.join(outdir, "pred_float32.tif"), pred_stack, dtype="float32", scale_per_slice=False)
         save_tiff_stack(os.path.join(outdir, "gt_float32.tif"), gt_stack, dtype="float32", scale_per_slice=False)
+
+        # save_tiff_stack(os.path.join(outdir, "pred_registered_float32.tif"), pred_reg, dtype="float32", scale_per_slice=False)
+        # save_tiff_stack(os.path.join(outdir, "gt_registered_float32.tif"), gt_reg, dtype="float32", scale_per_slice=False)
+        # save_tiff_stack(os.path.join(outdir, "pred_registered_mean_float32.tif"), pred_reg_mean, dtype="float32", scale_per_slice=False)
+        # save_tiff_stack(os.path.join(outdir, "gt_registered_mean_float32.tif"),  gt_reg_mean, dtype="float32", scale_per_slice=False)

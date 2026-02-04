@@ -2,11 +2,6 @@ import os
 from typing import List, Optional
 
 class LiveLossPlot:
-    """
-    Live-updating Matplotlib plot for train/val losses.
-    - If a GUI backend exists, it will show an interactive window.
-    - Always saves PNG snapshots to disk.
-    """
 
     def __init__(
         self,
