@@ -156,9 +156,9 @@ def recon_bscan_from_spectrum(spec_complex: np.ndarray,
         bscan = np.log10(bscan + log_eps).astype(np.float32)
 
     # Normalize per-frame for stable training (you can revise later)
-    mu = float(bscan.mean())
-    sd = float(bscan.std()) + 1e-6
-    bscan = (bscan - mu) / sd
+    # mu = float(bscan.mean())
+    # sd = float(bscan.std()) + 1e-6
+    # bscan = (bscan - mu) / sd
     return bscan.astype(np.float32)
 
 
@@ -210,19 +210,24 @@ class BscanProcessor:
             raise FileNotFoundError(f"Data folder not found: {self.data_dir}")
 
         # Find CLB (either in root or inside data_dir)
-        clb_candidates = [
-            os.path.join(root_folder, "000003_3DOCT-1_FUNDUS.CLB"),
-            os.path.join(self.data_dir, "000003_3DOCT-1_FUNDUS.CLB"),
-            # os.path.join(root_folder, "9071984_3DOCT-1_FUNDUS.CLB"),
-            # os.path.join(self.data_dir, "9071984_3DOCT-1_FUNDUS.CLB"),
-        ]
         self.clb_path = None
-        for c in clb_candidates:
-            if os.path.isfile(c):
-                self.clb_path = c
-                break
         if self.clb_path is None:
-            raise FileNotFoundError(f"Could not find CLB file in: {clb_candidates}")
+            clbs = sorted(glob.glob(os.path.join(self.data_dir, "*.CLB")))
+            if len(clbs) == 1:
+                self.clb_path = clbs[0]
+            elif len(clbs) > 1:
+                raise FileNotFoundError(
+                    f"Multiple .CLB files found in dataset folder {self.data_dir}: {clbs}\n"
+                )
+        # Search in root_folder
+        if self.clb_path is None:
+            clbs = sorted(glob.glob(os.path.join(root_folder, "*.CLB")))
+            if len(clbs) == 1:
+                self.clb_path = clbs[0]
+            elif len(clbs) > 1:
+                raise FileNotFoundError(
+                    f"Multiple .CLB files found in root folder {root_folder}: {clbs}\n"
+                )
 
         # Enumerate bscans
         self.bscan_paths = sorted(glob.glob(os.path.join(self.data_dir, "bscan*.raw")))
@@ -394,6 +399,8 @@ class BscanProcessor:
         Y = np.zeros((F, 1, H, W), dtype=np.float32)
 
         for i, p in enumerate(self.bscan_paths):
+            if (i + 1) % 10 == 0 or i == 0:
+                print(f"Processing frame {i + 1}/{F}")
             out = self.process_one(p, frame_idx=i)
             X[i, 0] = out["input_w1"]
             X[i, 1] = out["input_w2"]
@@ -480,8 +487,8 @@ def main():
         use_log=True,
         crop_depth=(1024, 2048),
         apply_fftshift_depth=True,
-        window_sigma=0.04,
-        gap=0.10,
+        window_sigma=0.08,
+        gap=0.25,
         dispersion=[1.315892282e-06, 5.459678905e-10], # M3
         # dispersion=[4.778474717e-06, 6.475358372e-09], # M2
         debug_mode=True,
@@ -491,7 +498,7 @@ def main():
     proc = BscanProcessor(project_root, cfg)
 
     # Use data_folder name for output NPZ filename
-    out_npz = os.path.join(project_root, "processed", f"{cfg.data_folder}_gapped_dataset_s004_g010.npz")
+    out_npz = os.path.join(project_root, "processed", f"{cfg.data_folder}_gapped_dataset_s008_g025.npz")
 
     dataset = proc.process_all(out_npz=out_npz)
     run_sanity_tests(dataset, cfg)
