@@ -9,14 +9,18 @@ from typing import Dict, Any
 from engine.early_stopping import EarlyStopping
 from utils.json_logging import save_json
 from utils.live_plot import LiveLossPlot
-from data.datamodule import NPZDataModule, DataConfig
+from data.datamodule import RawBscanDataModule, RawDataConfig
 from engine.losses import charbonnier_loss, gradient_l1
 from engine.eval import evaluate
 from networks import create_model  # registers via networks/__init__.py
 
 def _batch_to_device(batch, device: str):
-    x, y = batch
-    return x.to(device, non_blocking=True), y.to(device, non_blocking=True), None
+    if len(batch) == 2:
+        x, y = batch
+        meta = None
+    else:
+        x, y, meta = batch
+    return x.to(device, non_blocking=True), y.to(device, non_blocking=True), meta
 
 def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     """
@@ -28,19 +32,19 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     device = cfg.device if torch.cuda.is_available() else "cpu"
 
     # Save config at run root
-    save_json(os.path.join(paths["run"], "config.json"), cfg)
+    save_json(os.path.join(paths["run"], "config.json"), asdict(cfg))
 
     # Data
-    dm = NPZDataModule(DataConfig(
-        npz_path=cfg.npz_path,
+    dm = RawBscanDataModule(RawDataConfig(
+        folder_specs=cfg.folder_specs,  # List[FolderSpec]
         train_frac=cfg.train_frac,
         patch_h=cfg.patch_h,
         patch_w=cfg.patch_w,
         patches_per_frame=cfg.patches_per_frame,
-        augment=cfg.augment,
         batch_size=cfg.batch_size,
         num_workers=cfg.num_workers,
         seed=cfg.seed,
+        cache_frames_per_worker=getattr(cfg, "cache_frames_per_worker", 2),
     ))
     dm.setup()
     train_loader = dm.train_loader()

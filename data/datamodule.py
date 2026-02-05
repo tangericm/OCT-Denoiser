@@ -1,69 +1,76 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
+from typing import List, Any
 from torch.utils.data import DataLoader
-from .dataset_npz import NPZDataset
+
+from data.dataset import RawBscanPatchDataset
 
 @dataclass
-class DataConfig:
-    npz_path: str
+class RawDataConfig:
+    folder_specs: List[Any]   # List[FolderSpec]
     train_frac: float
     patch_h: int
     patch_w: int
     patches_per_frame: int
-    augment: bool
     batch_size: int
     num_workers: int
     seed: int
+    cache_frames_per_worker: int = 2
 
-class NPZDataModule:
-    def __init__(self, cfg: DataConfig):
+class RawBscanDataModule:
+    def __init__(self, cfg: RawDataConfig):
         self.cfg = cfg
-        self.train_ds = None
-        self.val_ds = None
+        self._train = None
+        self._val = None
 
     def setup(self):
-        self.train_ds = NPZDataset(
-            self.cfg.npz_path,
+        self._train = RawBscanPatchDataset(
+            folder_specs=self.cfg.folder_specs,
             split="train",
             train_frac=self.cfg.train_frac,
-            patch_size=(self.cfg.patch_h, self.cfg.patch_w),
+            patch_h=self.cfg.patch_h,
+            patch_w=self.cfg.patch_w,
             patches_per_frame=self.cfg.patches_per_frame,
-            augment=self.cfg.augment,
             seed=self.cfg.seed,
+            cache_frames_per_worker=self.cfg.cache_frames_per_worker,
         )
-        self.val_ds = NPZDataset(
-            self.cfg.npz_path,
+        self._val = RawBscanPatchDataset(
+            folder_specs=self.cfg.folder_specs,
             split="val",
             train_frac=self.cfg.train_frac,
-            patch_size=(self.cfg.patch_h, self.cfg.patch_w),
-            patches_per_frame=max(4, self.cfg.patches_per_frame // 4),
-            augment=False,
-            seed=self.cfg.seed,
+            patch_h=self.cfg.patch_h,
+            patch_w=self.cfg.patch_w,
+            patches_per_frame=max(1, self.cfg.patches_per_frame // 2),
+            seed=self.cfg.seed + 999,
+            cache_frames_per_worker=1,
         )
 
-    def train_loader(self) -> DataLoader:
-        assert self.train_ds is not None
+    def train_loader(self):
         return DataLoader(
-            self.train_ds,
+            self._train,
             batch_size=self.cfg.batch_size,
             shuffle=True,
             num_workers=self.cfg.num_workers,
             pin_memory=True,
-            drop_last=True,
             persistent_workers=(self.cfg.num_workers > 0),
-            prefetch_factor=4 if self.cfg.num_workers > 0 else None,
+            prefetch_factor=2 if self.cfg.num_workers > 0 else None,
+            collate_fn=self._collate,
         )
 
-    def val_loader(self) -> DataLoader:
-        assert self.val_ds is not None
+    def val_loader(self):
         return DataLoader(
-            self.val_ds,
+            self._val,
             batch_size=self.cfg.batch_size,
             shuffle=False,
-            num_workers=self.cfg.num_workers,
+            num_workers=max(0, self.cfg.num_workers // 2),
             pin_memory=True,
-            drop_last=False,
             persistent_workers=(self.cfg.num_workers > 0),
-            prefetch_factor=4 if self.cfg.num_workers > 0 else None,
+            prefetch_factor=2 if self.cfg.num_workers > 0 else None,
+            collate_fn=self._collate,
         )
+
+    @staticmethod
+    def _collate(batch):
+        # batch entries: (x, y, meta)
+        xs, ys, metas = zip(*batch)
+        import torch
+        return torch.stack(xs, 0), torch.stack(ys, 0), metas

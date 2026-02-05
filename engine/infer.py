@@ -100,9 +100,9 @@ def _save_roi_plot_first(
     plt.close(fig)
 
 @torch.no_grad()
-def predict_npz_to_tiffs(
+def predict_raw_to_tiffs(
     *,
-    npz_path: str,
+    folder_spec,
     ckpt_path: str,
     outdir: str,
     model_name: str,
@@ -110,30 +110,108 @@ def predict_npz_to_tiffs(
     device: str,
     tiff_dtype: str = "uint16",
     also_save_float32: bool = False,
+    max_frames: int | None = None,
+
+    # if full-frame doesn't fit VRAM, set tile params
+    tile_hw: tuple[int, int] | None = None,   # e.g. (512, 512)
+    overlap: int = 32,
+
     # ROI boxes (y0, y1, x0, x1)
     sig_roi: tuple[int, int, int, int] = (111, 600, 20, 1020),
     bg_roi: tuple[int, int, int, int] = (1000, 1020, 20, 1020),
-
     snr_csv_name: str = "snr_per_frame.csv",
 ) -> None:
     """
-    Runs inference on NPZ, saves TIFF stacks, and (optionally) computes SNR per frame based
-    on user-defined ROIs and saves ROI visualization plots + CSV.
-
-    sig_roi/bg_roi are pixel-coordinate boxes: (y0, y1, x0, x1), y1/x1 exclusive.
+    Raw-folder inference:
+      - preprocess each frame on the fly using folder_spec + CLB
+      - run model
+      - save TIFF stacks + optional SNR CSV + ROI plots (frame 0)
     """
+    from preprocess import Config as PreprocessConfig, BscanProcessor  # your preprocess.py module
+    import csv
+    import numpy as np
+    import os
+    import time
+
     torch.backends.cudnn.benchmark = True
     ensure_dir(outdir)
 
-    data = np.load(npz_path, allow_pickle=True)
-    X = data["X"].astype(np.float32)  # [F,2,H,W]
-    Y = data["Y"].astype(np.float32)  # [F,1,H,W]
+    # Build processor from FolderSpec
+    pcfg = PreprocessConfig(
+        pixels=folder_spec.pixels,
+        alines=folder_spec.alines,
+        data_folder=folder_spec.data_folder,
+        do_dc_subtract=getattr(folder_spec, "do_dc_subtract", True),
+        window_type=getattr(folder_spec, "window_type", "hann"),
+        use_log=getattr(folder_spec, "use_log", True),
+        log_eps=getattr(folder_spec, "log_eps", 1e-6),
+        crop_depth=folder_spec.crop_depth,
+        apply_fftshift_depth=getattr(folder_spec, "apply_fftshift_depth", True),
+        window_sigma=folder_spec.window_sigma,
+        gap=folder_spec.gap,
+        dispersion=getattr(folder_spec, "dispersion", None),
+        debug_mode=False,
+    )
+    proc = BscanProcessor(folder_spec.root_folder, pcfg)
 
-    F, C, H, W = X.shape
-    print(X.shape)
-    assert C == 2
+    # Load model
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    model = create_model(model_name, base=base).to(device)
+    model.load_state_dict(ckpt["model"], strict=True)
+    model.eval()
 
-    # Basic ROI bounds safety
+    # Determine frame count + shape
+    paths = proc.bscan_paths
+    if max_frames is not None:
+        paths = paths[: int(max_frames)]
+    F = len(paths)
+
+    # Pre-run first frame to get H,W
+    out0 = proc.process_one(paths[0], frame_idx=0)
+    H, W = out0["target_full"].shape
+
+    preds = np.zeros((F, 1, H, W), dtype=np.float32)
+    gts   = np.zeros((F, 1, H, W), dtype=np.float32)
+
+    snr_pred_list: list[float] = []
+    snr_gt_list: list[float] = []
+    times: list[float] = []
+
+    # helper: full-frame or tiled inference
+    def _infer_1(x2hw: np.ndarray) -> np.ndarray:
+        # x2hw: [2,H,W]
+        x = torch.from_numpy(x2hw[None, ...]).to(device, non_blocking=True)
+
+        if tile_hw is None:
+            yhat = model(x)  # [1,1,H,W]
+            return yhat.detach().cpu().numpy().astype(np.float32)[0, 0]
+
+        # tiled inference
+        th, tw = tile_hw
+        y_out = np.zeros((H, W), dtype=np.float32)
+        w_out = np.zeros((H, W), dtype=np.float32)
+
+        step_h = max(1, th - overlap)
+        step_w = max(1, tw - overlap)
+
+        for y0 in range(0, H, step_h):
+            for x0 in range(0, W, step_w):
+                y1 = min(H, y0 + th)
+                x1 = min(W, x0 + tw)
+                yy0 = max(0, y1 - th)
+                xx0 = max(0, x1 - tw)
+
+                tile = x[:, :, yy0:y1, xx0:x1]  # [1,2,th,tw] (or smaller at edges)
+                yhat = model(tile)              # [1,1,*,*]
+                yhat_np = yhat.detach().cpu().numpy().astype(np.float32)[0, 0]
+
+                yh, yw = yhat_np.shape
+                y_out[yy0:yy0+yh, xx0:xx0+yw] += yhat_np
+                w_out[yy0:yy0+yh, xx0:xx0+yw] += 1.0
+
+        return y_out / np.maximum(w_out, 1e-6)
+
+    # ROI clipping (same pattern as your NPZ infer)
     def _clip_roi(r):
         y0, y1, x0, x1 = r
         y0 = int(np.clip(y0, 0, H - 1))
@@ -142,117 +220,68 @@ def predict_npz_to_tiffs(
         x1 = int(np.clip(x1, x0 + 1, W))
         return (y0, y1, x0, x1)
 
-    sig_roi = _clip_roi(sig_roi)
-    bg_roi = _clip_roi(bg_roi)
-
-    ckpt = torch.load(ckpt_path, map_location="cpu")
-
-    model = create_model(model_name, base=base).to(device)
-    model.load_state_dict(ckpt["model"], strict=True)
-    model.eval()
-
-    preds = np.zeros((F, 1, H, W), dtype=np.float32)
-
-    # SNR lists for pred + gt
-    snr_pred_list: list[float] = []
-    snr_gt_list: list[float] = []
-    # Timing
-    times = []
-
-    # Move input to GPU once
-    # X_gpu = torch.from_numpy(X).to(device, non_blocking=True)  # [F,2,H,W]
+    sig_roi_c = _clip_roi(sig_roi)
+    bg_roi_c  = _clip_roi(bg_roi)
 
     # Warmup
-    x = torch.from_numpy(X[0:1]).to(device)  # [1,2,H,W]
-    for _ in range(1):
-        _ = model(x)  # [1,2,H,W]
+    _ = _infer_1(np.stack([out0["input_w1"], out0["input_w2"]], axis=0).astype(np.float32))
     if device.startswith("cuda"):
         torch.cuda.synchronize()
-        
-    for i in range(F):
 
-        start_time = time.time()
-        x = torch.from_numpy(X[i:i + 1]).to(device)  # [1,2,H,W]
+    for i, p in enumerate(paths):
+        out = proc.process_one(p, frame_idx=i)
+        x2hw = np.stack([out["input_w1"], out["input_w2"]], axis=0).astype(np.float32)
+        gt = out["target_full"].astype(np.float32)
 
-        yhat = model(x)  # [1,1,H,W]
-
-        end_time = time.time()
-        elapsed_time = end_time - start_time
+        t0 = time.time()
+        pred = _infer_1(x2hw)
+        if device.startswith("cuda"):
+            torch.cuda.synchronize()
+        elapsed_time = time.time() - t0
         times.append(elapsed_time)
-        print(f"[INFO] Prediction time: {elapsed_time:.10f} seconds")
+        # print(f"[INFO] Prediction time: {elapsed_time:.10f} seconds")
 
-        yhat = yhat.detach().cpu().numpy().astype(np.float32)  # [1,1,H,W]
+        preds[i, 0] = pred
+        gts[i, 0] = gt
 
-        preds[i] = yhat[0]
-
-        # Compute SNR for this predicted frame
-        pred_img = preds[i, 0]  # [H,W]
-        gt_img   = Y[i, 0, :H, :] 
-        snr_pred = _roi_snr(pred_img, sig_roi, bg_roi)
-        snr_gt   = _roi_snr(gt_img,   sig_roi, bg_roi)
+        # SNR on pred + gt
+        snr_pred = _roi_snr(pred, sig_roi_c, bg_roi_c)
+        snr_gt   = _roi_snr(gt,   sig_roi_c, bg_roi_c)
         snr_pred_list.append(snr_pred)
         snr_gt_list.append(snr_gt)
 
         if i == 0:
-            plot_path_pred = os.path.join(outdir, "snr_rois_frame0_pred.png")
-            _save_roi_plot_first(pred_img, sig_roi, bg_roi, snr_pred, plot_path_pred)
-            plot_path_gt = os.path.join(outdir, "snr_rois_frame0_gt.png")
-            _save_roi_plot_first(gt_img, sig_roi, bg_roi, snr_gt, plot_path_gt)
+            _save_roi_plot_first(pred, sig_roi_c, bg_roi_c, snr_pred, os.path.join(outdir, "snr_rois_frame0_pred.png"))
+            _save_roi_plot_first(gt,   sig_roi_c, bg_roi_c, snr_gt,   os.path.join(outdir, "snr_rois_frame0_gt.png"))
 
-    snr_pred_arr = np.asarray(snr_pred_list, dtype=np.float32)
-    snr_gt_arr = np.asarray(snr_gt_list, dtype=np.float32)
-
-    mean_pred = float(np.mean(snr_pred_arr)) if snr_pred_arr.size else float("nan")
-    mean_gt = float(np.mean(snr_gt_arr)) if snr_gt_arr.size else float("nan")
+    mean_pred = float(np.mean(snr_pred_list)) if snr_pred_list else float("nan")
+    mean_gt = float(np.mean(snr_gt_list)) if snr_gt_list else float("nan")
     mean_time = float(np.mean(times)) if times else float("nan")
-    print(f"[INFO] Average prediction time per frame: {mean_time:.10f} seconds")
 
-   # Save CSV with both
+    # save SNR CSV
     snr_csv_path = os.path.join(outdir, snr_csv_name)
     with open(snr_csv_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["frame", "snr_pred", "snr_gt", "snr_pred_minus_gt"])
         for i in range(F):
-            sp = float(snr_pred_arr[i])
-            sg = float(snr_gt_arr[i])
+            sp = float(snr_pred_list[i])
+            sg = float(snr_gt_list[i])
             w.writerow([i, sp, sg, sp - sg])
         w.writerow([])
         w.writerow(["mean_snr_pred", mean_pred])
         w.writerow(["mean_snr_gt", mean_gt])
         w.writerow(["mean_pred_minus_gt", (mean_pred - mean_gt) if np.isfinite(mean_pred) and np.isfinite(mean_gt) else float("nan")])
 
+
+    print(f"[INFO] Average prediction time per frame: {mean_time:.10f} seconds")
     print(f"[OK] Saved SNR CSV: {snr_csv_path}")
     print(f"[OK] Mean SNR pred: {mean_pred:.4f}")
     print(f"[OK] Mean SNR gt  : {mean_gt:.4f}")
-    print(f"[OK] Saved ROI plots (frame 0): snr_rois_frame0_pred.png, snr_rois_frame0_gt.png")
 
-    # Save TIFFs
-    pred_stack = preds[:, 0, :, :]
-    gt_stack = Y[:, 0, :, :]
-    w1_stack = X[:, 0, :, :]
-    w2_stack = X[:, 1, :, :]
-
-    # pred_reg, gt_reg, _ = register_stack_keypoints_to_pred0(pred_stack, gt_stack, scale_locked=True)
-    # pred_reg_mean  = pred_reg.mean(axis=0).astype(np.float32)
-    # gt_reg_mean    = gt_reg.mean(axis=0).astype(np.float32)
-    
-    # save_tiff_stack(os.path.join(outdir, "input_w1.tif"), w1_stack, dtype=tiff_dtype, scale_per_slice=True)
-    # save_tiff_stack(os.path.join(outdir, "input_w2.tif"), w2_stack, dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(os.path.join(outdir, "pred.tif"), pred_stack, dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(os.path.join(outdir, "gt.tif"), gt_stack, dtype=tiff_dtype, scale_per_slice=True)
-
-    # save_tiff_stack(os.path.join(outdir, "pred_registered.tif"), pred_reg, dtype=tiff_dtype, scale_per_slice=True)
-    # save_tiff_stack(os.path.join(outdir, "gt_registered.tif"), gt_reg, dtype=tiff_dtype, scale_per_slice=True)
-    # save_tiff_stack(os.path.join(outdir, "pred_registered_mean.tif"), pred_reg_mean, dtype=tiff_dtype, scale_per_slice=True)
-    # save_tiff_stack(os.path.join(outdir, "gt_registered_mean.tif"), gt_reg_mean, dtype=tiff_dtype, scale_per_slice=True)
+    # save TIFFs
+    save_tiff_stack(os.path.join(outdir, "pred.tif"), preds[:, 0], dtype=tiff_dtype, scale_per_slice=True)
+    save_tiff_stack(os.path.join(outdir, "gt.tif"),   gts[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
-        # save_tiff_stack(os.path.join(outdir, "input_w1_float32.tif"), w1_stack, dtype="float32", scale_per_slice=True)
-        # save_tiff_stack(os.path.join(outdir, "input_w2_float32.tif"), w2_stack, dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, "pred_float32.tif"), pred_stack, dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, "gt_float32.tif"), gt_stack, dtype="float32", scale_per_slice=True)
-
-        # save_tiff_stack(os.path.join(outdir, "pred_registered_float32.tif"), pred_reg, dtype="float32", scale_per_slice=False)
-        # save_tiff_stack(os.path.join(outdir, "gt_registered_float32.tif"), gt_reg, dtype="float32", scale_per_slice=False)
-        # save_tiff_stack(os.path.join(outdir, "pred_registered_mean_float32.tif"), pred_reg_mean, dtype="float32", scale_per_slice=False)
-        # save_tiff_stack(os.path.join(outdir, "gt_registered_mean_float32.tif"),  gt_reg_mean, dtype="float32", scale_per_slice=False)
+        save_tiff_stack(os.path.join(outdir, "pred_float32.tif"), preds[:, 0], dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, "gt_float32.tif"),   gts[:, 0],   dtype="float32", scale_per_slice=True)

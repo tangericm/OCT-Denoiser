@@ -6,8 +6,9 @@ from typing import Optional, Tuple, List, Dict
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.interpolate import CubicSpline, interp1d
+from scipy.interpolate import CubicSpline
 import scipy.fft as sfft
+import scipy.linalg as sla
 
 
 # -----------------------------
@@ -28,36 +29,22 @@ class Config:
     # Depth handling
     # Typically you only need half-depth; set to (0, 1024) if desired
     crop_depth: Tuple[int, int] = (1024, 2048)
-    apply_fftshift_depth: bool = True  # closer to your MATLAB ifftshift usage
+    apply_fftshift_depth: bool = True
 
     # Spectral gap / windowing
     window_sigma: float = 0.08  # normalized width of Gaussian windows
     gap: float = 0.25           # relative gap in [0, 0.5], you can vary later
 
-    # Dispersion compensation (optional)
-    # In MATLAB you have [a2, a3] used with k^(p+1) style; here we keep it plumbed.
-    dispersion: Optional[List[float]] = None  # e.g. [1.3e-6, 5.4e-10] or None
+    # Dispersion compensation
+    dispersion: Optional[List[float]] = None
     
-    # Debug mode: when True, no output files are written (NPZ, PNGs, etc.)
+    # Debug mode: when True, no output files are written
     debug_mode: bool = False
 
 
 # -----------------------------
 # Low-level IO
 # -----------------------------
-def read_bscan_raw(path: str, pixels: int, alines: int) -> np.ndarray:
-    """
-    Reads uint16 raw bscan file saved in row-major [pixels x alines] like MATLAB fread([pixels alines],'uint16').
-    Returns float32 array [pixels, alines].
-    """
-    data = np.fromfile(path, dtype=np.uint16)
-    expected = pixels * alines
-    if data.size != expected:
-        raise ValueError(f"{os.path.basename(path)} has {data.size} elements; expected {expected}.")
-    data = data.reshape((pixels, alines), order="F")  # MATLAB fread([pixels alines]) fills column-major
-    return data.astype(np.float32)
-
-
 def read_clb_resampling(clb_path: str, pixels: int) -> np.ndarray:
     """
     Reads CLB float32 resampling array.
@@ -82,63 +69,116 @@ def hann_window(pixels: int) -> np.ndarray:
     w = w / (w.max() + 1e-12)
     return w
 
-
-def dc_subtract(spec: np.ndarray) -> np.ndarray:
+def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
     """
-    spec: [pixels, alines]
-    subtract mean across alines for each pixel (row-wise), like MATLAB: OCT - mean(OCT,2)
-    Remove DC spike at first pixels.
+    Precompute everything that depends only on:
+      - uniform grid x in [0,1] with `pixels` points
+      - query points xp (CLB resampling), length `pixels`
+
+    This implements the same natural cubic spline used by CubicSpline(x, y, bc_type="natural")
+    on a uniform grid, but in a way that's fast for many RHS columns (A-lines).
     """
-    spec[0, :] = spec[3, :]
-    spec[1, :] = spec[3, :]
-    spec[2, :] = spec[3, :]
-    return spec - spec.mean(axis=1, keepdims=True)
+    n = int(pixels)
+    if xp.shape[0] != n:
+        raise ValueError(f"xp must have length {n}, got {xp.shape[0]}")
+
+    # uniform spacing
+    h = np.float32(1.0 / (n - 1))
+    inv_h = np.float32((n - 1))  # 1/h
+
+    # Build banded matrix for natural spline second derivatives M:
+    # M0 = Mn-1 = 0 (natural)
+    # interior: M_{i-1} + 4 M_i + M_{i+1} = (6/h^2) * (y_{i+1} - 2y_i + y_{i-1})
+    # (uniform grid; the "h" factors cancel out except in rhs)
+    ab = np.zeros((3, n), dtype=np.float32)  # (upper, diag, lower) for solve_banded((1,1), ab, b)
+
+    # diag
+    ab[1, :] = 4.0
+    ab[1, 0] = 1.0
+    ab[1, -1] = 1.0
+
+    # upper diag (ab[0,1:] corresponds to A[i-1,i])
+    ab[0, 1:] = 1.0
+    ab[0, 1] = 0.0     # because row 0 is boundary
+    ab[0, -1] = 0.0    # last row boundary
+
+    # lower diag (ab[2,:-1] corresponds to A[i+1,i])
+    ab[2, :-1] = 1.0
+    ab[2, -2] = 0.0    # because last row boundary
+    ab[2, 0] = 0.0     # first row boundary
+
+    # Precompute evaluation indices and weights for each xp
+    # Map xp in [0,1] to interval index i in [0, n-2]
+    # i = floor(xp / h) = floor(xp * (n-1))
+    t_raw = (xp.astype(np.float32) * inv_h)
+    i0 = np.floor(t_raw).astype(np.int32)
+    i0 = np.clip(i0, 0, n - 2)
+    # local coordinate t in [0,1]
+    t = (t_raw - i0.astype(np.float32)).astype(np.float32)
+    a = (1.0 - t).astype(np.float32)
+    b = t
+
+    # These appear in the cubic formula:
+    # S = a*y_i + b*y_{i+1} + ((a^3-a) M_i + (b^3-b) M_{i+1}) * h^2 / 6
+    a3ma = (a * a * a - a).astype(np.float32)
+    b3mb = (b * b * b - b).astype(np.float32)
+    c = (h * h / 6.0).astype(np.float32)
+
+    return {
+        "ab": ab,          # banded system matrix for M
+        "h2_over_6": c,
+        "i0": i0,
+        "a": a,
+        "b": b,
+        "a3ma": a3ma,
+        "b3mb": b3mb,
+        "inv_h2_6": np.float32(6.0 / (h * h)),  # rhs scale
+        "n": n,
+    }
 
 
-def resample_klinear(spec: np.ndarray, resampling: np.ndarray) -> np.ndarray:
+def resample_klinear_cubic_operator(spec: np.ndarray, pre: dict) -> np.ndarray:
     """
-    spec: [pixels, alines], sampled at uniform index in [0,1]
-    resampling: [pixels] values in [0,1] mapping to new k-linear index positions
-    Performs cubic spline interpolation per A-line, similar to MATLAB interp1(index, OCT(:,n), resampling, 'cubic')
+    Fast natural cubic spline resampling for many A-lines.
+    spec: float32 [pixels, alines]
+    returns float32 [pixels, alines]
+
+    Exactly matches natural cubic spline on uniform x in [0,1].
     """
-    
-    x = np.linspace(0.0, 1.0, spec.shape[0], dtype=np.float32)
-    xp = resampling.astype(np.float32)
+    n = pre["n"]
+    if spec.shape[0] != n:
+        raise ValueError(f"spec first dim must be {n}, got {spec.shape[0]}")
 
-    # out = np.empty_like(spec, dtype=np.float32)
-    
-    # # Cubic spline interpolation per column
-    # for a in range(spec.shape[1]):
-    #     cs = CubicSpline(x, spec[:, a], bc_type='natural')
-    #     out[:, a] = cs(xp).astype(np.float32)
+    # --- Build rhs for second derivatives M ---
+    # rhs[0] = rhs[-1] = 0
+    # rhs[1:-1] = (6/h^2) * (y[i+1] - 2y[i] + y[i-1])
+    rhs = np.zeros_like(spec, dtype=np.float32)
+    scale = pre["inv_h2_6"]
+    rhs[1:-1, :] = scale * (spec[2:, :] - 2.0 * spec[1:-1, :] + spec[:-2, :])
 
-    # One spline object for all A-lines (axis=0 is the spectral axis)
-    cs = CubicSpline(x, spec, axis=0, bc_type="natural")
-    out = cs(xp).astype(np.float32)  # [pixels, alines]
+    # --- Solve banded tridiagonal for M (second derivatives), for all columns at once ---
+    # sla.solve_banded supports multiple RHS with shape (n, alines)
+    M = sla.solve_banded((1, 1), pre["ab"], rhs, overwrite_ab=False, overwrite_b=False, check_finite=False).astype(np.float32)
 
-    # # Linear interpolation
-    # f = interp1d(x, spec, kind="linear", axis=0, bounds_error=False, fill_value="extrapolate")
-    # out = f(resampling.astype(np.float32)).astype(np.float32)
-    
+    # --- Evaluate spline at xp using precomputed indices/weights ---
+    i0 = pre["i0"]
+    i1 = i0 + 1
+
+    # Gather y_i, y_{i+1}, M_i, M_{i+1}
+    # Use take along axis 0 (vectorized over xp) then broadcast over columns
+    y0 = spec[i0, :]    # [pixels, alines]
+    y1 = spec[i1, :]
+    m0 = M[i0, :]
+    m1 = M[i1, :]
+
+    a = pre["a"][:, None]
+    b = pre["b"][:, None]
+    a3ma = pre["a3ma"][:, None]
+    b3mb = pre["b3mb"][:, None]
+    c = pre["h2_over_6"]
+
+    out = (a * y0 + b * y1 + (a3ma * m0 + b3mb * m1) * c).astype(np.float32)
     return out
-
-
-def apply_dispersion(spec: np.ndarray, dispersion: List[float]) -> np.ndarray:
-    """
-    spec: real-valued spectra [pixels, alines]
-    Returns complex spectra with dispersion phase applied: spec * exp(1j * phase(k))
-    We mimic your MATLAB approach:
-      k = (0:pixels-1)' - pixels/2
-      phase = sum_p dispersion[p] * k^(p+1)
-    """
-    pixels = spec.shape[0]
-    k = (np.arange(pixels, dtype=np.float32) - pixels / 2.0)  # [pixels]
-    phase = np.zeros((pixels,), dtype=np.float32)
-    for p, c in enumerate(dispersion):
-        phase += c * (k ** (p + 2))  # (p+1) in MATLAB with p starting at 1 -> exponent p+1 => here p+2
-    phase_term = np.exp(1j * phase.astype(np.float32)).astype(np.complex64)  # [pixels]
-    return (spec.astype(np.complex64) * phase_term[:, None]).astype(np.complex64)
-
 
 def recon_bscan_from_spectrum(spec_complex: np.ndarray,
                               crop: Tuple[int, int],
@@ -165,9 +205,9 @@ def recon_bscan_from_spectrum(spec_complex: np.ndarray,
         bscan = np.log10(bscan + log_eps).astype(np.float32)
 
     # Normalize per-frame for stable training (you can revise later)
-    # mu = float(bscan.mean())
-    # sd = float(bscan.std()) + 1e-6
-    # bscan = (bscan - mu) / sd
+    mu = float(bscan.mean())
+    sd = float(bscan.std()) + 1e-6
+    bscan = (bscan - mu) / sd
     return bscan.astype(np.float32)
 
 
@@ -259,6 +299,30 @@ class BscanProcessor:
         # Precompute two spectral windows
         self.w1, self.w2 = make_two_window_masks(cfg.pixels, cfg.gap, cfg.window_sigma)
 
+        # Cache reusable grids and buffers
+        self._x = np.linspace(0.0, 1.0, cfg.pixels, dtype=np.float32)           # uniform grid
+        self._xp = self.resampling.astype(np.float32, copy=False)              # CLB grid
+
+        # Precompute cubic spline operator for CLB resampling (natural spline on uniform grid)
+        self._spline_pre = _precompute_natural_cubic_uniform(cfg.pixels, self.resampling.astype(np.float32, copy=False))
+
+        # Precompute dispersion phase term if needed (saves per-frame exp)
+        self._phase_term = None
+        if cfg.dispersion is not None and len(cfg.dispersion) > 0:
+            k = (np.arange(cfg.pixels, dtype=np.float32) - cfg.pixels / 2.0)
+            phase = np.zeros((cfg.pixels,), dtype=np.float32)
+            for p, c in enumerate(cfg.dispersion):
+                phase += c * (k ** (p + 2))
+            self._phase_term = np.exp(1j * phase).astype(np.complex64)  # [pixels]
+
+        # Reuse buffers to reduce allocations (per processor instance)
+        self._raw_u16 = np.empty((cfg.pixels * cfg.alines,), dtype=np.uint16)
+        self._raw_f32 = np.empty((cfg.pixels, cfg.alines), dtype=np.float32)
+        self._resamp_f32 = np.empty((cfg.pixels, cfg.alines), dtype=np.float32)
+        self._spec_full_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
+        self._spec1_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
+        self._spec2_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
+
     def _debug_plot(
         self,
         step_name: str,
@@ -299,7 +363,6 @@ class BscanProcessor:
 
         plt.tight_layout()
 
-        # ---- NEW: save PNG (first frame only) ----
         if (save_png and frame_idx == 0 and hasattr(self, "_debug_out_dir") and self._debug_out_dir is not None):
             safe_name = step_name.replace(" ", "_").replace(".", "")
             # Prefer explicit dataset frame basename if available (set in `process_one`),
@@ -322,59 +385,62 @@ class BscanProcessor:
           - input_w2: [H,W] float32
         """
         cfg = self.cfg
-        # Record the current B-scan basename so `_debug_plot` can use a descriptive filename
-        # e.g. 'frame000_5_...' instead of a generic 'debug' prefix.
         self._current_frame_name = os.path.splitext(os.path.basename(bscan_path))[0]
 
-        raw = read_bscan_raw(bscan_path, cfg.pixels, cfg.alines)  # [pixels, alines]
-        # if cfg.debug_mode:
-            # self._debug_plot("1. Raw Spectrum", raw, frame_idx=frame_idx, save_png=True)
+        pixels = cfg.pixels
+        alines = cfg.alines
 
+        # 1) Read raw spectrum (fast path, minimal allocations)
+        data = np.fromfile(bscan_path, dtype=np.uint16)
+        expected = pixels * alines
+        if data.size != expected:
+            raise ValueError(f"{os.path.basename(bscan_path)} has {data.size} elements; expected {expected}.")
+
+        # Reshape
+        raw = data.reshape((pixels, alines), order="F").astype(np.float32, copy=False)
+
+        # 2) DC subtract (in-place where safe)
         if cfg.do_dc_subtract:
-            raw = dc_subtract(raw)
-            # if cfg.debug_mode:
-                # self._debug_plot("2. After DC Subtraction", raw)
+            raw[0, :] = raw[3, :]
+            raw[1, :] = raw[3, :]
+            raw[2, :] = raw[3, :]
+            raw = raw - raw.mean(axis=1, keepdims=True)
 
-        # Resample to k-linear using CLB LUT
-        resamp = resample_klinear(raw, self.resampling)  # [pixels, alines]
-        # if cfg.debug_mode:
-            # self._debug_plot("3. After Resampling", resamp, frame_idx=frame_idx, save_png=True)
+        # 3) Resample to k-linear (cubic spline, vectorized across A-lines)
+        # Use cached grids self._x and self._xp to avoid per-call linspace/casts
+        # cs = CubicSpline(self._x, raw, axis=0, bc_type="natural")
+        # resamp = cs(self._xp).astype(np.float32, copy=False)  # [pixels, alines]
+        resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
 
-        # Apodization (Hann)
-        resamp = (resamp * self.apod[:, None]).astype(np.float32)
-        # if cfg.debug_mode:
-            # self._debug_plot("4. After Apodization", resamp, frame_idx=frame_idx, save_png=True)
+        # 4) Apodization (in-place multiply)
+        resamp *= self.apod[:, None]
 
-        # Dispersion compensation
-        if cfg.dispersion is not None and len(cfg.dispersion) > 0:
-            spec_full = apply_dispersion(resamp, cfg.dispersion)  # complex64 [pixels,alines]
+        # 5) Build complex spectrum (with optional dispersion)
+        if self._phase_term is not None:
+            spec_full = resamp.astype(np.complex64, copy=True)
+            spec_full *= self._phase_term[:, None]
         else:
-            spec_full = resamp.astype(np.complex64)  # treat as complex with imag=0
+            spec_full = resamp.astype(np.complex64, copy=True)
+
         if cfg.debug_mode:
-            self._debug_plot("5. Full Spectrum (Complex)", spec_full, is_complex=True, 
-                           windows=(self.w1, self.w2), frame_idx=frame_idx, save_png=True)
-        # Full-spectrum target recon
+            self._debug_plot("5. Full Spectrum (Complex)", spec_full, is_complex=True, windows=(self.w1, self.w2), frame_idx=frame_idx, save_png=True)
+
+        # 6) Recon target + two windowed inputs
         target_full = recon_bscan_from_spectrum(spec_full, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
 
-        # Two-window gapped inputs
-        spec1 = (spec_full * self.w1[:, None]).astype(np.complex64)
-        spec2 = (spec_full * self.w2[:, None]).astype(np.complex64)
-        # if cfg.debug_mode:
-            # self._debug_plot("6a. Window 1 Spectrum", spec1, is_complex=True, frame_idx=frame_idx, save_png=True)
-            # self._debug_plot("6b. Window 2 Spectrum", spec2, is_complex=True, frame_idx=frame_idx, save_png=True)
+        # Window spectra (allocate once per call; could reuse buffers if you guarantee no aliasing)
+        spec1 = spec_full * self.w1[:, None]
+        spec2 = spec_full * self.w2[:, None]
 
-        input_w1 = recon_bscan_from_spectrum(spec1, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
-        input_w2 = recon_bscan_from_spectrum(spec2, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
-        # if cfg.debug_mode:
-            # self._debug_plot("7a. Reconstructed Window 1", input_w1, frame_idx=frame_idx, save_png=True)
-            # self._debug_plot("7b. Reconstructed Window 2", input_w2, frame_idx=frame_idx, save_png=True)
-            # self._debug_plot("7c. Full Target", target_full, frame_idx=frame_idx, save_png=True)
+        input_w1 = recon_bscan_from_spectrum(spec1.astype(np.complex64, copy=False), cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
+        input_w2 = recon_bscan_from_spectrum(spec2.astype(np.complex64, copy=False), cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
 
         return {
-            "target_full": target_full,  # [H,W]
-            "input_w1": input_w1,        # [H,W]
-            "input_w2": input_w2,        # [H,W]
+            "target_full": target_full.astype(np.float32, copy=False),
+            "input_w1": input_w1.astype(np.float32, copy=False),
+            "input_w2": input_w2.astype(np.float32, copy=False),
         }
+
 
     def process_all(self,
                     out_npz: Optional[str] = None) -> Dict[str, np.ndarray]:
@@ -472,40 +538,3 @@ def run_sanity_tests(dataset: Dict[str, np.ndarray], cfg: Config):
     ge_2 = grad_energy(X[idx, 1])
     print(f"[TEST] Gradient energy (frame0): target={ge_t:.4f}, w1={ge_1:.4f}, w2={ge_2:.4f}")
     # Not asserting ordering, because normalization/log may affect it. Just reporting.
-
-
-# -----------------------------
-# CLI entrypoint
-# -----------------------------
-def main():
-    project_root = r"images\Maestro3"
-
-    cfg = Config(
-        data_folder="6mm_1024Aline", 
-        # data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165", 
-        pixels=2048,
-        alines=1024,
-        do_dc_subtract=True,
-        window_type="hann",
-        use_log=True,
-        crop_depth=(1024, 2048),
-        apply_fftshift_depth=True,
-        window_sigma=0.08,
-        gap=0.25,
-        dispersion=[1.315892282e-06, 5.459678905e-10], # M3
-        # dispersion=[4.778474717e-06, 6.475358372e-09], # M2
-        debug_mode=True,
-    )
-    
-
-    proc = BscanProcessor(project_root, cfg)
-
-    # Use data_folder name for output NPZ filename
-    out_npz = os.path.join(project_root, "processed", f"{cfg.data_folder}_gapped_dataset_s008_g025.npz")
-
-    dataset = proc.process_all(out_npz=out_npz)
-    run_sanity_tests(dataset, cfg)
-
-
-if __name__ == "__main__":
-    main()

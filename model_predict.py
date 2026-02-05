@@ -1,16 +1,32 @@
-from engine.infer import predict_npz_to_tiffs
+from configs.default import FolderSpec
+from engine.raw_infer import predict_raw_to_tiffs  # this is what your raw training script uses
 
 def main():
-    # npz_path = r"images\Maestro3\processed\6mm_1024Aline_gapped_dataset.npz"
-    # ckpt_path = r"runs\6mm_1024aline\20260204_123731\checkpoints\best.pt"
-    # outdir = r"images\Maestro3\6mm_1024Aline\predictions_tiff"
+    # Pick the dataset folder (contains bscan*.bin/.raw AND the corresponding .CLB)
+    folder_spec = FolderSpec(
+        root_folder=r"images\Maestro2",
+        data_folder="Line_6mm_2048Aline_135degCW_50frame_gain167_widefield_ET",
+        pixels=2048,
+        alines=2048,
+        crop_depth=(1024, 2048),
+        clb_path=None,
 
-    npz_path = r"images\Maestro2\processed\Line_6mm_2048Aline_135degCW_50frame_gain165_gapped_dataset_s008_g050.npz"
-    ckpt_path = r"runs\6mm_1024aline\6mm_1024Aline_gapped_dataset_s008_g055_nonorm\checkpoints\best.pt"
-    outdir = r"images\Maestro2\Line_6mm_2048Aline_135degCW_50frame_gain165\predictions_tiff"
+        # Preprocessing knobs MUST match what you trained with (or what you want to evaluate)
+        do_dc_subtract=True,
+        window_type="hann",
+        use_log=True,
+        log_eps=1e-6,
+        apply_fftshift_depth=True,
+        dispersion=[4.778474717e-06, 6.475358372e-09],  # example (use correct one)
+        window_sigma=0.08,
+        gap=0.25,
+    )
 
-    predict_npz_to_tiffs(
-        npz_path=npz_path,
+    ckpt_path = r"runs\multi_folder_raw\s008_g025_M3+M2\checkpoints\best.pt"
+    outdir = r"images\Maestro2\\" + folder_spec.data_folder + r"\predictions_tiff"
+
+    predict_raw_to_tiffs(
+        folder_spec=folder_spec,
         ckpt_path=ckpt_path,
         outdir=outdir,
         model_name="resunet_pseudo3d",
@@ -18,6 +34,7 @@ def main():
         device="cuda",
         tiff_dtype="uint16",
         also_save_float32=False,
+        max_frames=None, 
     )
 
 if __name__ == "__main__":
