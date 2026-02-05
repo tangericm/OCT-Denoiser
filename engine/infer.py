@@ -127,13 +127,12 @@ def predict_raw_to_tiffs(
       - run model
       - save TIFF stacks + optional SNR CSV + ROI plots (frame 0)
     """
-    from preprocess import Config as PreprocessConfig, BscanProcessor  # your preprocess.py module
+    from preprocess import Config as PreprocessConfig, BscanProcessor
     import csv
     import numpy as np
     import os
     import time
 
-    torch.backends.cudnn.benchmark = True
     ensure_dir(outdir)
 
     # Build processor from FolderSpec
@@ -172,6 +171,8 @@ def predict_raw_to_tiffs(
 
     preds = np.zeros((F, 1, H, W), dtype=np.float32)
     gts   = np.zeros((F, 1, H, W), dtype=np.float32)
+    w1s   = np.zeros((F, 1, H, W), dtype=np.float32)
+    w2s   = np.zeros((F, 1, H, W), dtype=np.float32)
 
     snr_pred_list: list[float] = []
     snr_gt_list: list[float] = []
@@ -243,6 +244,8 @@ def predict_raw_to_tiffs(
 
         preds[i, 0] = pred
         gts[i, 0] = gt
+        w1s[i, 0]   = out["input_w1"].astype(np.float32, copy=False)
+        w2s[i, 0]   = out["input_w2"].astype(np.float32, copy=False)
 
         # SNR on pred + gt
         snr_pred = _roi_snr(pred, sig_roi_c, bg_roi_c)
@@ -279,9 +282,20 @@ def predict_raw_to_tiffs(
     print(f"[OK] Mean SNR gt  : {mean_gt:.4f}")
 
     # save TIFFs
-    save_tiff_stack(os.path.join(outdir, "pred.tif"), preds[:, 0], dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(os.path.join(outdir, "gt.tif"),   gts[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
+    dataset_name = folder_spec.data_folder
+
+    pred_path = os.path.join(outdir, f"{dataset_name}_pred.tiff")
+    gt_path   = os.path.join(outdir, f"{dataset_name}_gt.tiff")
+    w1_path   = os.path.join(outdir, f"{dataset_name}_window1.tiff")
+    w2_path   = os.path.join(outdir, f"{dataset_name}_window2.tiff")
+
+    save_tiff_stack(pred_path, preds[:, 0], dtype=tiff_dtype, scale_per_slice=True)
+    save_tiff_stack(gt_path,   gts[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
+    save_tiff_stack(w1_path,   w1s[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
+    save_tiff_stack(w2_path,   w2s[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
-        save_tiff_stack(os.path.join(outdir, "pred_float32.tif"), preds[:, 0], dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, "gt_float32.tif"),   gts[:, 0],   dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"{dataset_name}_pred_float32.tiff"), preds[:, 0], dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"{dataset_name}_gt_float32.tiff"), gts[:, 0], dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"{dataset_name}_window1_float32.tiff"), w1s[:, 0], dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"{dataset_name}_window2_float32.tiff"), w2s[:, 0], dtype="float32", scale_per_slice=True)

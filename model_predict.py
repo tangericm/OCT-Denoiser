@@ -1,5 +1,5 @@
 from configs.default import FolderSpec
-from engine.raw_infer import predict_raw_to_tiffs  # this is what your raw training script uses
+from engine.infer import predict_raw_to_tiffs  # this is what your raw training script uses
 
 def main():
     # Pick the dataset folder (contains bscan*.bin/.raw AND the corresponding .CLB)
