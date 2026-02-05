@@ -45,9 +45,10 @@ def main():
         lr=3e-4,
         num_workers=4,
 
-        patch_h=288,
+        patch_h=288, # Unused when patch_mode="strip"
         patch_w=288,
         patches_per_frame=16,
+        patch_mode="strip",
 
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,

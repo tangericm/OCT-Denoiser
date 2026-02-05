@@ -39,6 +39,7 @@ class RawBscanPatchDataset(Dataset):
         patch_h: int,
         patch_w: int,
         patches_per_frame: int,
+        patch_mode: str = "strip",
         seed: int = 0,
         cache_frames_per_worker: int = 2,
     ):
@@ -48,6 +49,7 @@ class RawBscanPatchDataset(Dataset):
         self.patch_h = patch_h
         self.patch_w = patch_w
         self.patches_per_frame = patches_per_frame
+        self.patch_mode = patch_mode
         self.seed = seed
         self.cache_frames_per_worker = cache_frames_per_worker
 
@@ -151,15 +153,30 @@ class RawBscanPatchDataset(Dataset):
         tgt  = out["target_full"]
 
         H, W = tgt.shape
-        y0 = np.random.randint(0, H - self.patch_h + 1)
-        x0 = np.random.randint(0, W - self.patch_w + 1)
+        if self.patch_mode == "strip":
+            # full axial, random lateral strip
+            y0 = 0
+            patch_h = H
+            x0 = np.random.randint(0, W - self.patch_w + 1)
 
-        x = np.stack([
-            img1[y0:y0+self.patch_h, x0:x0+self.patch_w],
-            img2[y0:y0+self.patch_h, x0:x0+self.patch_w],
-        ], axis=0).astype(np.float32)
+            x = np.stack([
+                img1[:, x0:x0+self.patch_w],
+                img2[:, x0:x0+self.patch_w],
+            ], axis=0).astype(np.float32)
 
-        y = tgt[y0:y0+self.patch_h, x0:x0+self.patch_w][None, ...].astype(np.float32)
+            y = tgt[:, x0:x0+self.patch_w][None, ...].astype(np.float32)
+
+        else:
+            # standard 2D patch
+            y0 = np.random.randint(0, H - self.patch_h + 1)
+            x0 = np.random.randint(0, W - self.patch_w + 1)
+
+            x = np.stack([
+                img1[y0:y0+self.patch_h, x0:x0+self.patch_w],
+                img2[y0:y0+self.patch_h, x0:x0+self.patch_w],
+            ], axis=0).astype(np.float32)
+
+            y = tgt[y0:y0+self.patch_h, x0:x0+self.patch_w][None, ...].astype(np.float32)
 
         meta = {
             "folder_idx": fidx,

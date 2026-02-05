@@ -11,13 +11,12 @@ def main():
         crop_depth=(1024, 2048),
         clb_path=None,
 
-        # Preprocessing knobs MUST match what you trained with (or what you want to evaluate)
         do_dc_subtract=True,
         window_type="hann",
         use_log=True,
         log_eps=1e-6,
         apply_fftshift_depth=True,
-        dispersion=[4.778474717e-06, 6.475358372e-09],  # example (use correct one)
+        dispersion=[-1.72085982e-05, 9.89412021e-10],
         window_sigma=0.08,
         gap=0.25,
     )

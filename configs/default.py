@@ -24,6 +24,7 @@ class TrainConfig:
     patch_h: int = 128
     patch_w: int = 128
     patches_per_frame: int = 16
+    patch_mode: str = "strip"  # "strip" (random x, full depth) or "patch" (random x and y)
     augment: bool = True
     batch_size: int = 32
     num_workers: int = 8

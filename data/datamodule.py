@@ -14,6 +14,7 @@ class RawDataConfig:
     batch_size: int
     num_workers: int
     seed: int
+    patch_mode: str = "strip"
     cache_frames_per_worker: int = 2
 
 class RawBscanDataModule:
@@ -30,6 +31,7 @@ class RawBscanDataModule:
             patch_h=self.cfg.patch_h,
             patch_w=self.cfg.patch_w,
             patches_per_frame=self.cfg.patches_per_frame,
+            patch_mode=self.cfg.patch_mode,
             seed=self.cfg.seed,
             cache_frames_per_worker=self.cfg.cache_frames_per_worker,
         )
@@ -40,6 +42,7 @@ class RawBscanDataModule:
             patch_h=self.cfg.patch_h,
             patch_w=self.cfg.patch_w,
             patches_per_frame=max(1, self.cfg.patches_per_frame // 2),
+            patch_mode=self.cfg.patch_mode,
             seed=self.cfg.seed + 999,
             cache_frames_per_worker=1,
         )
