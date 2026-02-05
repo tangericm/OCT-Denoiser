@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional, Tuple, List
 
 @dataclass
 class TrainConfig:
@@ -7,6 +8,9 @@ class TrainConfig:
     runs_root: str
     experiment_name: str
 
+    folder_specs: Optional[List["FolderSpec"]] = None
+    cache_frames_per_worker: int = 2
+    
     # Device
     device: str = "cuda"
     amp: bool = True
@@ -50,3 +54,22 @@ class TrainConfig:
     # Inference outputs (relative to run dir)
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False
+
+@dataclass
+class FolderSpec:
+    root_folder: str          # e.g. r"images\Maestro3"
+    data_folder: str          # e.g. "6mm_1024Aline"
+    pixels: int               # 2048
+    alines: int               # 1024 or 2048
+    clb_path: Optional[str] = None  # optional override; if None use existing BscanProcessor logic
+    crop_depth: Tuple[int,int] = (1024, 2048)
+    do_dc_subtract: bool = True
+    window_type: str = "hann"
+    use_log: bool = True
+    log_eps: float = 1e-6
+    apply_fftshift_depth: bool = True
+    dispersion: Optional[List[float]] = None
+
+    # the sweep knobs you care about
+    window_sigma: float = 0.08
+    gap: float = 0.15
