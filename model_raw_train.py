@@ -23,23 +23,23 @@ def main():
                 window_sigma=0.08,
                 gap=0.25,
             ),
-            # FolderSpec(
-            #     root_folder=r"images\Maestro3",
-            #     data_folder="another_2048Aline_folder",
-            #     pixels=2048,
-            #     alines=2048,
-            #     crop_depth=(1024, 2048),
-            #     dispersion=[...],
-            #     window_sigma=0.08,
-            #     gap=0.15,
-            # ),
+            FolderSpec(
+                root_folder=r"images\Maestro2",
+                data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
+                pixels=2048,
+                alines=2048,
+                crop_depth=(1024, 2048),
+                dispersion=[4.778474717e-06, 6.475358372e-09],
+                window_sigma=0.08,
+                gap=0.25,
+            ),
         ],
         cache_frames_per_worker=200,
 
         device="cuda",
         amp=True,
         deterministic=True,
-        epochs=10,
+        epochs=300,
         base=32,
         batch_size=12,
         lr=3e-4,
@@ -61,18 +61,19 @@ def main():
 
     result = run_training(cfg, paths)
 
-    # optional: run inference directly on raw frames
-    predict_raw_to_tiffs(
-        folder_spec=cfg.folder_specs[0],         # or iterate across specs
-        ckpt_path=result["best_ckpt_path"],
-        outdir=paths["pred_tiff"],
-        model_name=cfg.model_name,
-        base=cfg.base,
-        device=cfg.device,
-        tiff_dtype=cfg.tiff_dtype,
-        also_save_float32=cfg.also_save_float32,
-        max_frames=None,  # optional
-    )
+    # Run inference directly on raw frames
+    for folder_spec in cfg.folder_specs:
+        predict_raw_to_tiffs(
+            folder_spec=folder_spec, 
+            ckpt_path=result["best_ckpt_path"],
+            outdir=paths["pred_tiff"],
+            model_name=cfg.model_name,
+            base=cfg.base,
+            device=cfg.device,
+            tiff_dtype=cfg.tiff_dtype,
+            also_save_float32=cfg.also_save_float32,
+            max_frames=None,
+        )
 
 if __name__ == "__main__":
     main()

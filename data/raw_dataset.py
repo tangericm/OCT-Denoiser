@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, get_worker_info
 
-from preprocess import Config as PreprocessConfig, BscanProcessor
+from preprocess2 import Config as PreprocessConfig, BscanProcessor
 
 class _LRU:
     def __init__(self, max_items: int = 4):

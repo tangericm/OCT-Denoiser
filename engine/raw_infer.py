@@ -237,7 +237,9 @@ def predict_raw_to_tiffs(
         pred = _infer_1(x2hw)
         if device.startswith("cuda"):
             torch.cuda.synchronize()
-        times.append(time.time() - t0)
+        elapsed_time = time.time() - t0
+        times.append(elapsed_time)
+        # print(f"[INFO] Prediction time: {elapsed_time:.10f} seconds")
 
         preds[i, 0] = pred
         gts[i, 0] = gt
@@ -252,6 +254,10 @@ def predict_raw_to_tiffs(
             _save_roi_plot_first(pred, sig_roi_c, bg_roi_c, snr_pred, os.path.join(outdir, "snr_rois_frame0_pred.png"))
             _save_roi_plot_first(gt,   sig_roi_c, bg_roi_c, snr_gt,   os.path.join(outdir, "snr_rois_frame0_gt.png"))
 
+    mean_pred = float(np.mean(snr_pred_list)) if snr_pred_list else float("nan")
+    mean_gt = float(np.mean(snr_gt_list)) if snr_gt_list else float("nan")
+    mean_time = float(np.mean(times)) if times else float("nan")
+
     # save SNR CSV
     snr_csv_path = os.path.join(outdir, snr_csv_name)
     with open(snr_csv_path, "w", newline="") as f:
@@ -261,9 +267,16 @@ def predict_raw_to_tiffs(
             sp = float(snr_pred_list[i])
             sg = float(snr_gt_list[i])
             w.writerow([i, sp, sg, sp - sg])
+        w.writerow([])
+        w.writerow(["mean_snr_pred", mean_pred])
+        w.writerow(["mean_snr_gt", mean_gt])
+        w.writerow(["mean_pred_minus_gt", (mean_pred - mean_gt) if np.isfinite(mean_pred) and np.isfinite(mean_gt) else float("nan")])
 
+
+    print(f"[INFO] Average prediction time per frame: {mean_time:.10f} seconds")
     print(f"[OK] Saved SNR CSV: {snr_csv_path}")
-    print(f"[INFO] Mean pred time/frame: {float(np.mean(times)):.6f}s")
+    print(f"[OK] Mean SNR pred: {mean_pred:.4f}")
+    print(f"[OK] Mean SNR gt  : {mean_gt:.4f}")
 
     # save TIFFs
     save_tiff_stack(os.path.join(outdir, "pred.tif"), preds[:, 0], dtype=tiff_dtype, scale_per_slice=True)
