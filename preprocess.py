@@ -28,8 +28,8 @@ class Config:
 
     # Depth handling
     # Typically you only need half-depth; set to (0, 1024) if desired
-    crop_depth: Tuple[int, int] = (1024, 2048)
-    apply_fftshift_depth: bool = True
+    crop_depth: Tuple[int, int] = (0, pixels//2)
+    apply_fftshift_depth: bool = False
 
     # Spectral gap / windowing
     window_sigma: float = 0.08  # normalized width of Gaussian windows

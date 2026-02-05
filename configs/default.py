@@ -68,7 +68,7 @@ class FolderSpec:
     window_type: str = "hann"
     use_log: bool = True
     log_eps: float = 1e-6
-    apply_fftshift_depth: bool = True
+    apply_fftshift_depth: bool = False
     dispersion: Optional[List[float]] = None
 
     # the sweep knobs you care about

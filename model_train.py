@@ -18,7 +18,7 @@ def main():
                 data_folder="6mm_1024Aline",
                 pixels=2048,
                 alines=1024,
-                crop_depth=(1024, 2048),
+                crop_depth=(0, 1024),
                 dispersion=[1.315892282e-06, 5.459678905e-10],
                 window_sigma=0.08,
                 gap=0.25,
@@ -28,7 +28,7 @@ def main():
                 data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
                 pixels=2048,
                 alines=2048,
-                crop_depth=(1024, 2048),
+                crop_depth=(0, 1024),
                 dispersion=[4.778474717e-06, 6.475358372e-09],
                 window_sigma=0.08,
                 gap=0.25,
@@ -46,7 +46,7 @@ def main():
         num_workers=4,
 
         patch_h=288, # Unused when patch_mode="strip"
-        patch_w=288,
+        patch_w=81,
         patches_per_frame=16,
         patch_mode="strip",
 
