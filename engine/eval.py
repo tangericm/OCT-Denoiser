@@ -4,13 +4,21 @@ import torch
 from torch.utils.data import DataLoader
 from .losses import charbonnier_loss, gradient_l1
 
+def _unpack_batch(batch):
+    if isinstance(batch, (tuple, list)) and len(batch) == 3:
+        x, y, meta = batch
+    else:
+        x, y = batch
+        meta = None
+    return x, y, meta
+
 @torch.no_grad()
 def evaluate(model, loader: DataLoader, *, device: str, w_charb: float, w_grad: float) -> float:
     model.eval()
     loss_acc = 0.0
     n = 0
     for batch in loader:
-        x, y = batch
+        x, y, _meta = _unpack_batch(batch)
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
 
