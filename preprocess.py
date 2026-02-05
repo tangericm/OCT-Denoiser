@@ -6,7 +6,8 @@ from typing import Optional, Tuple, List, Dict
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import CubicSpline, interp1d
+import scipy.fft as sfft
 
 
 # -----------------------------
@@ -104,12 +105,20 @@ def resample_klinear(spec: np.ndarray, resampling: np.ndarray) -> np.ndarray:
     x = np.linspace(0.0, 1.0, spec.shape[0], dtype=np.float32)
     xp = resampling.astype(np.float32)
 
-    out = np.empty_like(spec, dtype=np.float32)
+    # out = np.empty_like(spec, dtype=np.float32)
     
-    # Cubic spline interpolation per column
-    for a in range(spec.shape[1]):
-        cs = CubicSpline(x, spec[:, a], bc_type='natural')
-        out[:, a] = cs(xp).astype(np.float32)
+    # # Cubic spline interpolation per column
+    # for a in range(spec.shape[1]):
+    #     cs = CubicSpline(x, spec[:, a], bc_type='natural')
+    #     out[:, a] = cs(xp).astype(np.float32)
+
+    # One spline object for all A-lines (axis=0 is the spectral axis)
+    cs = CubicSpline(x, spec, axis=0, bc_type="natural")
+    out = cs(xp).astype(np.float32)  # [pixels, alines]
+
+    # # Linear interpolation
+    # f = interp1d(x, spec, kind="linear", axis=0, bounds_error=False, fill_value="extrapolate")
+    # out = f(resampling.astype(np.float32)).astype(np.float32)
     
     return out
 
@@ -141,13 +150,13 @@ def recon_bscan_from_spectrum(spec_complex: np.ndarray,
     Returns float32 B-scan [H, W] where H is depth and W is alines.
     """
     # IFFT along spectral axis (pixels)
-    depth_c = np.fft.ifft(spec_complex, axis=0)  # [pixels, alines] complex
+    # depth_c = np.fft.ifft(spec_complex, axis=0)  # [pixels, alines] complex
+    depth_c = sfft.ifft(spec_complex, axis=0, workers=-1)  # [pixels, alines] complex
     mag = np.abs(depth_c).astype(np.float32)     # [pixels, alines]
 
     if apply_fftshift_depth:
-        # MATLAB used ifftshift(...,1) after ifft; depending on convention, fftshift/ifftshift differs.
-        # Empirically, OCT often uses fftshift to center DC; here we'll use fftshift to align structure.
-        mag = np.fft.fftshift(mag, axes=0).astype(np.float32)
+        # mag = np.fft.fftshift(mag, axes=0).astype(np.float32)
+        mag = sfft.fftshift(mag, axes=0).astype(np.float32)
 
     z0, z1 = crop
     bscan = mag[z0:z1, :]  # [H,W]
@@ -345,9 +354,7 @@ class BscanProcessor:
             self._debug_plot("5. Full Spectrum (Complex)", spec_full, is_complex=True, 
                            windows=(self.w1, self.w2), frame_idx=frame_idx, save_png=True)
         # Full-spectrum target recon
-        target_full = recon_bscan_from_spectrum(
-            spec_full, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth
-        )
+        target_full = recon_bscan_from_spectrum(spec_full, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
 
         # Two-window gapped inputs
         spec1 = (spec_full * self.w1[:, None]).astype(np.complex64)
@@ -356,12 +363,8 @@ class BscanProcessor:
             # self._debug_plot("6a. Window 1 Spectrum", spec1, is_complex=True, frame_idx=frame_idx, save_png=True)
             # self._debug_plot("6b. Window 2 Spectrum", spec2, is_complex=True, frame_idx=frame_idx, save_png=True)
 
-        input_w1 = recon_bscan_from_spectrum(
-            spec1, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth
-        )
-        input_w2 = recon_bscan_from_spectrum(
-            spec2, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth
-        )
+        input_w1 = recon_bscan_from_spectrum(spec1, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
+        input_w2 = recon_bscan_from_spectrum(spec2, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
         # if cfg.debug_mode:
             # self._debug_plot("7a. Reconstructed Window 1", input_w1, frame_idx=frame_idx, save_png=True)
             # self._debug_plot("7b. Reconstructed Window 2", input_w2, frame_idx=frame_idx, save_png=True)
