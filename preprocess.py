@@ -145,7 +145,6 @@ def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
     t_raw = (xp.astype(np.float32) * inv_h)
     i0 = np.floor(t_raw).astype(np.int32)
     i0 = np.clip(i0, 0, n - 2)
-    i1 = (i0 + 1).astype(np.int32)
     # local coordinate t in [0,1]
     t = (t_raw - i0.astype(np.float32)).astype(np.float32)
     a = (1.0 - t).astype(np.float32)
@@ -172,21 +171,7 @@ def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
         "du_f": du_f,
         "du2": du2,
         "ipiv": ipiv,
-        "gttrs": sla.lapack.get_lapack_funcs(("gttrs",), (d_f,))[0],
         "_rhs": None, 
-        "_a_col": a[:, None],
-        "_b_col": b[:, None],
-        "_a3ma_col": a3ma[:, None],
-        "_b3mb_col": b3mb[:, None],
-        "_i0": i0,
-        "_i1": i1,
-        "_y0": None,
-        "_y1": None,
-        "_m0": None,
-        "_m1": None,
-        "_tmp1": None,
-        "_tmp2": None,
-        "_out": None,
     }
 
 
@@ -211,69 +196,37 @@ def resample_klinear_cubic_operator(spec: np.ndarray, pre: dict) -> np.ndarray:
         pre["_rhs"] = rhs
     rhs.fill(0.0)
     scale = pre["inv_h2_6"]
-    rhs_mid = rhs[1:-1, :]
-    np.subtract(spec[2:, :], spec[1:-1, :], out=rhs_mid)
-    rhs_mid -= spec[1:-1, :]
-    rhs_mid += spec[:-2, :]
-    rhs_mid *= scale
+    rhs[1:-1, :] = scale * (spec[2:, :] - 2.0 * spec[1:-1, :] + spec[:-2, :])
 
     # --- Solve banded tridiagonal for M (second derivatives), for all columns at once ---
     # sla.solve_banded supports multiple RHS with shape (n, alines)
     # M = sla.solve_banded((1, 1), pre["ab"], rhs, overwrite_ab=False, overwrite_b=False, check_finite=False).astype(np.float32)
 
     # Use precomputed factors to solve for M (faster than solve_banded)
-    M, info = pre["gttrs"](pre["dl_f"], pre["d_f"], pre["du_f"], pre["du2"], pre["ipiv"], rhs, trans='N')
+    gttrs, = sla.lapack.get_lapack_funcs(("gttrs",), (pre["d_f"],))
+    M, info = gttrs(pre["dl_f"], pre["d_f"], pre["du_f"], pre["du2"], pre["ipiv"], rhs, trans='N')
     if info != 0:
         raise RuntimeError(f"gttrs failed with info={info}")
     M = M.astype(np.float32, copy=False)
 
     # --- Evaluate spline at xp using precomputed indices/weights ---
-    i0 = pre["_i0"]
-    i1 = pre["_i1"]
+    i0 = pre["i0"]
+    i1 = i0 + 1
 
-    # Gather y_i, y_{i+1}, M_i, M_{i+1} into reusable buffers
-    y0 = pre.get("_y0")
-    y1 = pre.get("_y1")
-    m0 = pre.get("_m0")
-    m1 = pre.get("_m1")
-    tmp1 = pre.get("_tmp1")
-    tmp2 = pre.get("_tmp2")
-    out = pre.get("_out")
-    if y0 is None or y0.shape != spec.shape:
-        y0 = np.empty_like(spec, dtype=np.float32)
-        y1 = np.empty_like(spec, dtype=np.float32)
-        m0 = np.empty_like(spec, dtype=np.float32)
-        m1 = np.empty_like(spec, dtype=np.float32)
-        tmp1 = np.empty_like(spec, dtype=np.float32)
-        tmp2 = np.empty_like(spec, dtype=np.float32)
-        out = np.empty_like(spec, dtype=np.float32)
-        pre["_y0"] = y0
-        pre["_y1"] = y1
-        pre["_m0"] = m0
-        pre["_m1"] = m1
-        pre["_tmp1"] = tmp1
-        pre["_tmp2"] = tmp2
-        pre["_out"] = out
+    # Gather y_i, y_{i+1}, M_i, M_{i+1}
+    # Use take along axis 0 (vectorized over xp) then broadcast over columns
+    y0 = spec[i0, :]    # [pixels, alines]
+    y1 = spec[i1, :]
+    m0 = M[i0, :]
+    m1 = M[i1, :]
 
-    np.take(spec, i0, axis=0, out=y0)
-    np.take(spec, i1, axis=0, out=y1)
-    np.take(M, i0, axis=0, out=m0)
-    np.take(M, i1, axis=0, out=m1)
-
-    a = pre["_a_col"]
-    b = pre["_b_col"]
-    a3ma = pre["_a3ma_col"]
-    b3mb = pre["_b3mb_col"]
+    a = pre["a"][:, None]
+    b = pre["b"][:, None]
+    a3ma = pre["a3ma"][:, None]
+    b3mb = pre["b3mb"][:, None]
     c = pre["h2_over_6"]
 
-    np.multiply(a, y0, out=out)
-    np.multiply(b, y1, out=tmp1)
-    out += tmp1
-    np.multiply(a3ma, m0, out=tmp1)
-    np.multiply(b3mb, m1, out=tmp2)
-    tmp1 += tmp2
-    tmp1 *= c
-    out += tmp1
+    out = (a * y0 + b * y1 + (a3ma * m0 + b3mb * m1) * c).astype(np.float32)
     return out
 
 def recon_bscan_from_spectrum(spec_complex: np.ndarray,
