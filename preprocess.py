@@ -1,6 +1,8 @@
 import os
 import glob
 import tifffile
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict
 
@@ -41,6 +43,15 @@ class Config:
     # Debug mode: when True, no output files are written
     debug_mode: bool = False
 
+@contextmanager
+def timer(name: str, enabled: bool = True):
+    if not enabled:
+        yield
+        return
+    t0 = time.perf_counter()
+    yield
+    dt = time.perf_counter() - t0
+    print(f"[TIMER] {name}: {dt*1e3:.2f} ms")
 
 # -----------------------------
 # Low-level IO
@@ -107,6 +118,27 @@ def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
     ab[2, -2] = 0.0    # because last row boundary
     ab[2, 0] = 0.0     # first row boundary
 
+    # Build explicit tridiagonal arrays (dl, d, du) and factorize once.
+    # This avoids refactorizing the same system every frame (major speed-up vs solve_banded).
+    # Matrix corresponds to the banded 'ab' above (natural spline: M0=Mn-1=0, dropped from first/last interior eqs).
+    dl = np.ones(n - 1, dtype=np.float32)   # sub-diagonal: A[i+1,i]
+    d  = np.full(n, 4.0, dtype=np.float32) # main diagonal
+    du = np.ones(n - 1, dtype=np.float32)   # super-diagonal: A[i,i+1]
+
+    # Natural boundary rows as identity, and decouple first/last interior from boundary unknowns.
+    d[0] = 1.0
+    d[-1] = 1.0
+    du[0] = 0.0        # A[0,1] = 0
+    dl[0] = 0.0        # A[1,0] = 0 (since M0 fixed to 0)
+    du[-1] = 0.0       # A[n-2,n-1] = 0 (since Mn-1 fixed to 0)
+    dl[-1] = 0.0       # A[n-1,n-2] = 0
+
+    # Factorize tridiagonal once (LAPACK gttrf); store factors for fast repeated solves (gttrs).
+    gttrf, = sla.lapack.get_lapack_funcs(("gttrf",), (d,))
+    dl_f, d_f, du_f, du2, ipiv, info = gttrf(dl.copy(), d.copy(), du.copy())
+    if info != 0:
+        raise RuntimeError(f"gttrf failed with info={info}")
+    
     # Precompute evaluation indices and weights for each xp
     # Map xp in [0,1] to interval index i in [0, n-2]
     # i = floor(xp / h) = floor(xp * (n-1))
@@ -134,6 +166,12 @@ def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
         "b3mb": b3mb,
         "inv_h2_6": np.float32(6.0 / (h * h)),  # rhs scale
         "n": n,
+        "dl_f": dl_f,
+        "d_f": d_f,
+        "du_f": du_f,
+        "du2": du2,
+        "ipiv": ipiv,
+        "_rhs": None, 
     }
 
 
@@ -152,13 +190,24 @@ def resample_klinear_cubic_operator(spec: np.ndarray, pre: dict) -> np.ndarray:
     # --- Build rhs for second derivatives M ---
     # rhs[0] = rhs[-1] = 0
     # rhs[1:-1] = (6/h^2) * (y[i+1] - 2y[i] + y[i-1])
-    rhs = np.zeros_like(spec, dtype=np.float32)
+    rhs = pre.get("_rhs", None)
+    if rhs is None or rhs.shape != spec.shape:
+        rhs = np.empty_like(spec, dtype=np.float32)
+        pre["_rhs"] = rhs
+    rhs.fill(0.0)
     scale = pre["inv_h2_6"]
     rhs[1:-1, :] = scale * (spec[2:, :] - 2.0 * spec[1:-1, :] + spec[:-2, :])
 
     # --- Solve banded tridiagonal for M (second derivatives), for all columns at once ---
     # sla.solve_banded supports multiple RHS with shape (n, alines)
-    M = sla.solve_banded((1, 1), pre["ab"], rhs, overwrite_ab=False, overwrite_b=False, check_finite=False).astype(np.float32)
+    # M = sla.solve_banded((1, 1), pre["ab"], rhs, overwrite_ab=False, overwrite_b=False, check_finite=False).astype(np.float32)
+
+    # Use precomputed factors to solve for M (faster than solve_banded)
+    gttrs, = sla.lapack.get_lapack_funcs(("gttrs",), (pre["d_f"],))
+    M, info = gttrs(pre["dl_f"], pre["d_f"], pre["du_f"], pre["du2"], pre["ipiv"], rhs, trans='N')
+    if info != 0:
+        raise RuntimeError(f"gttrs failed with info={info}")
+    M = M.astype(np.float32, copy=False)
 
     # --- Evaluate spline at xp using precomputed indices/weights ---
     i0 = pre["i0"]
@@ -384,6 +433,7 @@ class BscanProcessor:
           - input_w1: [H,W] float32
           - input_w2: [H,W] float32
         """
+        prof = False
         cfg = self.cfg
         self._current_frame_name = os.path.splitext(os.path.basename(bscan_path))[0]
 
@@ -391,49 +441,58 @@ class BscanProcessor:
         alines = cfg.alines
 
         # 1) Read raw spectrum (fast path, minimal allocations)
-        data = np.fromfile(bscan_path, dtype=np.uint16)
+        with timer("read raw", prof):
+            data = np.fromfile(bscan_path, dtype=np.uint16)
         expected = pixels * alines
         if data.size != expected:
             raise ValueError(f"{os.path.basename(bscan_path)} has {data.size} elements; expected {expected}.")
 
         # Reshape
-        raw = data.reshape((pixels, alines), order="F").astype(np.float32, copy=False)
+        with timer("reshape raw", prof):
+            raw = data.reshape((pixels, alines), order="F").astype(np.float32, copy=False)
 
         # 2) DC subtract (in-place where safe)
-        if cfg.do_dc_subtract:
-            raw[0, :] = raw[3, :]
-            raw[1, :] = raw[3, :]
-            raw[2, :] = raw[3, :]
-            raw = raw - raw.mean(axis=1, keepdims=True)
+        with timer("DC subtract", prof):
+            if cfg.do_dc_subtract:
+                raw[0, :] = raw[3, :]
+                raw[1, :] = raw[3, :]
+                raw[2, :] = raw[3, :]
+                raw = raw - raw.mean(axis=1, keepdims=True)
 
         # 3) Resample to k-linear (cubic spline, vectorized across A-lines)
         # Use cached grids self._x and self._xp to avoid per-call linspace/casts
         # cs = CubicSpline(self._x, raw, axis=0, bc_type="natural")
         # resamp = cs(self._xp).astype(np.float32, copy=False)  # [pixels, alines]
-        resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
+        with timer("resample cubic", prof):
+            resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
 
         # 4) Apodization (in-place multiply)
-        resamp *= self.apod[:, None]
+        with timer("apodization", prof):
+            resamp *= self.apod[:, None]
 
         # 5) Build complex spectrum (with optional dispersion)
-        if self._phase_term is not None:
-            spec_full = resamp.astype(np.complex64, copy=True)
-            spec_full *= self._phase_term[:, None]
-        else:
-            spec_full = resamp.astype(np.complex64, copy=True)
+        with timer("build complex spectrum", prof):
+            if self._phase_term is not None:
+                spec_full = resamp.astype(np.complex64, copy=True)
+                spec_full *= self._phase_term[:, None]
+            else:
+                spec_full = resamp.astype(np.complex64, copy=True)
 
         if cfg.debug_mode:
             self._debug_plot("5. Full Spectrum (Complex)", spec_full, is_complex=True, windows=(self.w1, self.w2), frame_idx=frame_idx, save_png=True)
 
         # 6) Recon target + two windowed inputs
-        target_full = recon_bscan_from_spectrum(spec_full, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
+        with timer("reconstruct B-scan", prof):
+            target_full = recon_bscan_from_spectrum(spec_full, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
 
         # Window spectra (allocate once per call; could reuse buffers if you guarantee no aliasing)
-        spec1 = spec_full * self.w1[:, None]
-        spec2 = spec_full * self.w2[:, None]
+        with timer("apply spectral windows", prof):
+            spec1 = spec_full * self.w1[:, None]
+            spec2 = spec_full * self.w2[:, None]
 
-        input_w1 = recon_bscan_from_spectrum(spec1.astype(np.complex64, copy=False), cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
-        input_w2 = recon_bscan_from_spectrum(spec2.astype(np.complex64, copy=False), cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
+        with timer("reconstruct windowed B-scans", prof):
+            input_w1 = recon_bscan_from_spectrum(spec1.astype(np.complex64, copy=False), cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
+            input_w2 = recon_bscan_from_spectrum(spec2.astype(np.complex64, copy=False), cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
 
         return {
             "target_full": target_full.astype(np.float32, copy=False),

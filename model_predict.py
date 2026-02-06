@@ -21,7 +21,7 @@ def main():
         gap=0.25,
     )
 
-    ckpt_path = r"runs\multi_folder_raw\s008_g025_M3+M2\checkpoints\best.pt"
+    ckpt_path = r"runs\multi_folder_raw\s008_g025_M3_strip\checkpoints\best.pt"
     outdir = r"images\Maestro2\\" + folder_spec.data_folder + r"\predictions_tiff"
 
     predict_raw_to_tiffs(
@@ -33,7 +33,7 @@ def main():
         device="cuda",
         tiff_dtype="uint16",
         also_save_float32=False,
-        max_frames=None, 
+        max_frames=2, 
     )
 
 if __name__ == "__main__":

@@ -23,16 +23,16 @@ def main():
                 window_sigma=0.08,
                 gap=0.25,
             ),
-            FolderSpec(
-                root_folder=r"images\Maestro2",
-                data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
-                pixels=2048,
-                alines=2048,
-                crop_depth=(0, 1024),
-                dispersion=[4.778474717e-06, 6.475358372e-09],
-                window_sigma=0.08,
-                gap=0.25,
-            ),
+            # FolderSpec(
+            #     root_folder=r"images\Maestro2",
+            #     data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
+            #     pixels=2048,
+            #     alines=2048,
+            #     crop_depth=(0, 1024),
+            #     dispersion=[4.778474717e-06, 6.475358372e-09],
+            #     window_sigma=0.08,
+            #     gap=0.25,
+            # ),
         ],
         cache_frames_per_worker=200,
 
@@ -45,9 +45,14 @@ def main():
         lr=3e-4,
         num_workers=4,
 
+        # patch_h=288, # Unused when patch_mode="strip"
+        # patch_w=288,
+        # patches_per_frame=16,
+        # patch_mode="patch",
+
         patch_h=288, # Unused when patch_mode="strip"
-        patch_w=81,
-        patches_per_frame=16,
+        patch_w=16,
+        patches_per_frame=80,
         patch_mode="strip",
 
         w_charb=0.010307111599432855,
