@@ -253,7 +253,7 @@ def recon_bscan_from_spectrum(spec_complex: np.ndarray,
     if use_log:
         bscan = np.log10(bscan + log_eps).astype(np.float32)
 
-    # Normalize per-frame for stable training (you can revise later)
+    # Normalize per-frame for stable training
     mu = float(bscan.mean())
     sd = float(bscan.std()) + 1e-6
     bscan = (bscan - mu) / sd
@@ -433,7 +433,7 @@ class BscanProcessor:
           - input_w1: [H,W] float32
           - input_w2: [H,W] float32
         """
-        prof = True
+        prof = False
         cfg = self.cfg
         self._current_frame_name = os.path.splitext(os.path.basename(bscan_path))[0]
 

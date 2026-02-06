@@ -47,14 +47,16 @@ def _roi_snr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> float:
     std_bg_per_x  = np.std(bg, axis=0)           # [Wx]
 
     # Compute per-A-line SNR in dB
-    snr_per_x = 20.0 * np.log10((max_sig_per_x + eps) / (std_bg_per_x + eps))
+    # snr_per_x = 20.0 * np.log10((max_sig_per_x + eps) / (std_bg_per_x + eps))
+    snr_per_x = 20.0 * np.log10((np.mean(max_sig_per_x) + eps) / (np.std(bg) + eps))
 
-    # Robustness: ignore any non-finite values (can happen if img2d contains NaNs/Infs)
-    snr_per_x = snr_per_x[np.isfinite(snr_per_x)]
-    if snr_per_x.size == 0:
-        return float("nan")
+    # # Robustness: ignore any non-finite values (can happen if img2d contains NaNs/Infs)
+    # snr_per_x = snr_per_x[np.isfinite(snr_per_x)]
+    # if snr_per_x.size == 0:
+    #     return float("nan")
 
-    return float(np.mean(snr_per_x))
+    # return float(np.mean(snr_per_x))
+    return float(snr_per_x)
 
 
 def _save_roi_plot_first(
@@ -119,7 +121,6 @@ def predict_raw_to_tiffs(
     # ROI boxes (y0, y1, x0, x1)
     sig_roi: tuple[int, int, int, int] = (111, 600, 20, 1020),
     bg_roi: tuple[int, int, int, int] = (1000, 1020, 20, 1020),
-    snr_csv_name: str = "snr_per_frame.csv",
 ) -> None:
     """
     Raw-folder inference:
@@ -134,6 +135,7 @@ def predict_raw_to_tiffs(
     import time
 
     ensure_dir(outdir)
+    print(f"[START] predict_raw_to_tiffs: outdir={outdir}")
 
     # Build processor from FolderSpec
     pcfg = PreprocessConfig(
@@ -154,10 +156,13 @@ def predict_raw_to_tiffs(
     proc = BscanProcessor(folder_spec.root_folder, pcfg)
 
     # Load model
+    print(f"[INFO] Loading checkpoint from: {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location="cpu")
+    print(f"[INFO] Creating model: {model_name}")
     model = create_model(model_name, base=base).to(device)
     model.load_state_dict(ckpt["model"], strict=True)
     model.eval()
+    print(f"[INFO] Model loaded and set to eval mode")
 
     # Determine frame count + shape
     paths = proc.bscan_paths
@@ -166,8 +171,10 @@ def predict_raw_to_tiffs(
     F = len(paths)
 
     # Pre-run first frame to get H,W
+    print(f"[INFO] Total frames to process: {F}")
     out0 = proc.process_one(paths[0], frame_idx=0)
     H, W = out0["target_full"].shape
+    print(f"[INFO] Frame 0 processed; image shape: {H}x{W}")
 
     preds = np.zeros((F, 1, H, W), dtype=np.float32)
     gts   = np.zeros((F, 1, H, W), dtype=np.float32)
@@ -177,6 +184,12 @@ def predict_raw_to_tiffs(
     snr_pred_list: list[float] = []
     snr_gt_list: list[float] = []
     times: list[float] = []
+
+    # Format filename with sigma and gap parameters
+    sigma = int(round(folder_spec.window_sigma * 100))  # e.g., 0.08 -> 080
+    gap = int(round(folder_spec.gap * 100))              # e.g., 0.25 -> 250
+    param_suffix = f"s{sigma:03d}_g{gap:03d}"
+
 
     # helper: full-frame or tiled inference
     def _infer_1(x2hw: np.ndarray) -> np.ndarray:
@@ -225,9 +238,11 @@ def predict_raw_to_tiffs(
     bg_roi_c  = _clip_roi(bg_roi)
 
     # Warmup
+    print(f"[INFO] Running warmup inference...")
     _ = _infer_1(np.stack([out0["input_w1"], out0["input_w2"]], axis=0).astype(np.float32))
     if device.startswith("cuda"):
         torch.cuda.synchronize()
+    print(f"[INFO] Warmup complete, starting predictions...")
 
     for i, p in enumerate(paths):
         out = proc.process_one(p, frame_idx=i)
@@ -252,17 +267,19 @@ def predict_raw_to_tiffs(
         snr_gt   = _roi_snr(gt,   sig_roi_c, bg_roi_c)
         snr_pred_list.append(snr_pred)
         snr_gt_list.append(snr_gt)
+        print(f"[PROGRESS] Frame {i+1}/{F}: inference={elapsed_time:.4f}s, SNR_pred={snr_pred:.2f}dB, SNR_gt={snr_gt:.2f}dB")
 
         if i == 0:
-            _save_roi_plot_first(pred, sig_roi_c, bg_roi_c, snr_pred, os.path.join(outdir, "snr_rois_frame0_pred.png"))
-            _save_roi_plot_first(gt,   sig_roi_c, bg_roi_c, snr_gt,   os.path.join(outdir, "snr_rois_frame0_gt.png"))
+            _save_roi_plot_first(pred, sig_roi_c, bg_roi_c, snr_pred, os.path.join(outdir, f"snr_rois_frame0_pred_{param_suffix}.png"))
+            _save_roi_plot_first(gt,   sig_roi_c, bg_roi_c, snr_gt,   os.path.join(outdir, f"snr_rois_frame0_gt_{param_suffix}.png"))
 
     mean_pred = float(np.mean(snr_pred_list)) if snr_pred_list else float("nan")
     mean_gt = float(np.mean(snr_gt_list)) if snr_gt_list else float("nan")
     mean_time = float(np.mean(times)) if times else float("nan")
 
     # save SNR CSV
-    snr_csv_path = os.path.join(outdir, snr_csv_name)
+    snr_csv_path = os.path.join(outdir, f"snr_per_frame_{param_suffix}.csv")
+
     with open(snr_csv_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["frame", "snr_pred", "snr_gt", "snr_pred_minus_gt"])
@@ -280,14 +297,16 @@ def predict_raw_to_tiffs(
     print(f"[OK] Saved SNR CSV: {snr_csv_path}")
     print(f"[OK] Mean SNR pred: {mean_pred:.4f}")
     print(f"[OK] Mean SNR gt  : {mean_gt:.4f}")
+    print(f"[OK] Mean dSNR: {(mean_pred - mean_gt) if np.isfinite(mean_pred) and np.isfinite(mean_gt) else float('nan'):.4f}")
 
     # save TIFFs
-    dataset_name = folder_spec.data_folder
-
-    pred_path = os.path.join(outdir, f"{dataset_name}_pred.tiff")
-    gt_path   = os.path.join(outdir, f"{dataset_name}_gt.tiff")
-    w1_path   = os.path.join(outdir, f"{dataset_name}_window1.tiff")
-    w2_path   = os.path.join(outdir, f"{dataset_name}_window2.tiff")
+    print(f"[INFO] Saving TIFF stacks to {outdir}...")
+    
+    
+    pred_path = os.path.join(outdir, f"pred_{param_suffix}.tiff")
+    gt_path   = os.path.join(outdir, f"gt_{param_suffix}.tiff")
+    w1_path   = os.path.join(outdir, f"window1_{param_suffix}.tiff")
+    w2_path   = os.path.join(outdir, f"window2_{param_suffix}.tiff")
 
     save_tiff_stack(pred_path, preds[:, 0], dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(gt_path,   gts[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
@@ -295,7 +314,7 @@ def predict_raw_to_tiffs(
     save_tiff_stack(w2_path,   w2s[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
-        save_tiff_stack(os.path.join(outdir, f"{dataset_name}_pred_float32.tiff"), preds[:, 0], dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, f"{dataset_name}_gt_float32.tiff"), gts[:, 0], dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, f"{dataset_name}_window1_float32.tiff"), w1s[:, 0], dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, f"{dataset_name}_window2_float32.tiff"), w2s[:, 0], dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds[:, 0], dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"gt_{param_suffix}_float32.tiff"), gts[:, 0], dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"window1_{param_suffix}_float32.tiff"), w1s[:, 0], dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"window2_{param_suffix}_float32.tiff"), w2s[:, 0], dtype="float32", scale_per_slice=True)
