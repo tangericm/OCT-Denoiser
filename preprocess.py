@@ -240,7 +240,7 @@ def recon_bscan_from_spectrum(spec_complex: np.ndarray,
     """
     # IFFT along spectral axis (pixels)
     # depth_c = np.fft.ifft(spec_complex, axis=0)  # [pixels, alines] complex
-    depth_c = sfft.ifft(spec_complex, axis=0, workers=-1)  # [pixels, alines] complex
+    depth_c = sfft.ifft(spec_complex, axis=0, workers=-1, overwrite_x=True)  # [pixels, alines] complex
     mag = np.abs(depth_c).astype(np.float32)     # [pixels, alines]
 
     if apply_fftshift_depth:
@@ -259,6 +259,31 @@ def recon_bscan_from_spectrum(spec_complex: np.ndarray,
     bscan = (bscan - mu) / sd
     return bscan.astype(np.float32)
 
+def recon_bscan_from_spectrum_stack(spec_stack: np.ndarray,
+                                    crop: Tuple[int, int],
+                                    use_log: bool,
+                                    log_eps: float,
+                                    apply_fftshift_depth: bool) -> np.ndarray:
+    """
+    spec_stack: complex64 [pixels, alines, N]
+    Returns float32 B-scans [H, W, N].
+    """
+    depth_c = sfft.ifft(spec_stack, axis=0, workers=-1, overwrite_x=True)
+    mag = np.abs(depth_c).astype(np.float32)
+
+    if apply_fftshift_depth:
+        mag = sfft.fftshift(mag, axes=0).astype(np.float32)
+
+    z0, z1 = crop
+    bscan = mag[z0:z1, :, :]
+
+    if use_log:
+        bscan = np.log10(bscan + log_eps).astype(np.float32)
+
+    mu = bscan.mean(axis=(0, 1), keepdims=True)
+    sd = bscan.std(axis=(0, 1), keepdims=True) + 1e-6
+    bscan = (bscan - mu) / sd
+    return bscan.astype(np.float32)
 
 def gaussian_window_1d(pixels: int, center: float, sigma: float) -> np.ndarray:
     x = np.linspace(0.0, 1.0, pixels, dtype=np.float32)
@@ -369,8 +394,7 @@ class BscanProcessor:
         self._raw_f32 = np.empty((cfg.pixels, cfg.alines), dtype=np.float32)
         self._resamp_f32 = np.empty((cfg.pixels, cfg.alines), dtype=np.float32)
         self._spec_full_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
-        self._spec1_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
-        self._spec2_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
+        self._spec_stack_c64 = np.empty((cfg.pixels, cfg.alines, 3), dtype=np.complex64)
 
     def _debug_plot(
         self,
@@ -472,27 +496,26 @@ class BscanProcessor:
 
         # 5) Build complex spectrum (with optional dispersion)
         with timer("build complex spectrum", prof):
+            spec_full = self._spec_full_c64
+            spec_full[...] = resamp
             if self._phase_term is not None:
-                spec_full = resamp.astype(np.complex64, copy=True)
                 spec_full *= self._phase_term[:, None]
-            else:
-                spec_full = resamp.astype(np.complex64, copy=True)
 
         if cfg.debug_mode:
             self._debug_plot("5. Full Spectrum (Complex)", spec_full, is_complex=True, windows=(self.w1, self.w2), frame_idx=frame_idx, save_png=True)
 
-        # 6) Recon target + two windowed inputs
-        with timer("reconstruct B-scan", prof):
-            target_full = recon_bscan_from_spectrum(spec_full, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
-
-        # Window spectra (allocate once per call; could reuse buffers if you guarantee no aliasing)
+        # 6) Recon target + two windowed inputs (single batched IFFT)
         with timer("apply spectral windows", prof):
-            spec1 = spec_full * self.w1[:, None]
-            spec2 = spec_full * self.w2[:, None]
+            spec_stack = self._spec_stack_c64
+            spec_stack[..., 0] = spec_full
+            np.multiply(spec_full, self.w1[:, None], out=spec_stack[..., 1])
+            np.multiply(spec_full, self.w2[:, None], out=spec_stack[..., 2])
 
-        with timer("reconstruct windowed B-scans", prof):
-            input_w1 = recon_bscan_from_spectrum(spec1.astype(np.complex64, copy=False), cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
-            input_w2 = recon_bscan_from_spectrum(spec2.astype(np.complex64, copy=False), cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
+        with timer("reconstruct B-scans", prof):
+            bscans = recon_bscan_from_spectrum_stack(spec_stack, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
+            target_full = bscans[:, :, 0]
+            input_w1 = bscans[:, :, 1]
+            input_w2 = bscans[:, :, 2]
 
         return {
             "target_full": target_full.astype(np.float32, copy=False),
