@@ -1,57 +1,17 @@
-# tune_optuna.py
+# tune.py
 from __future__ import annotations
 
 import os
 import csv
 import time
-from dataclasses import dataclass, asdict
-from typing import Dict
+import copy
+import optuna
+from dataclasses import asdict
+from typing import Dict, List
 
+from configs.default import TrainConfig, FolderSpec
 from engine.train import run_training  # uses run_training(cfg, paths)
-
-# -----------------------------
-# Config (mirror the fields run_training uses)
-# -----------------------------
-@dataclass
-class TuneConfig:
-    # data
-    npz_path: str
-    train_frac: float = 0.85
-    patch_h: int = 192
-    patch_w: int = 320
-    patches_per_frame: int = 24
-    augment: bool = True
-    batch_size: int = 12
-    num_workers: int = 4
-    seed: int = 42
-
-    # model
-    model_name: str = "resunet_pseudo3d"
-    base: int = 32
-
-    # optimization
-    epochs: int = 30            # short runs for tuning
-    lr: float = 3e-04
-    weight_decay: float = 8e-05
-    amp: bool = True
-    grad_clip: float = 1.0
-
-    # loss weights 
-    w_charb: float = 0.5
-    w_grad: float = 0.1
-
-    # logging/checkpoint cadence
-    val_every: int = 5
-    save_every: int = 999999    # disable periodic saves during tuning
-
-    # Early stopping
-    early_stop_patience: int = 5
-    early_stop_min_delta: float = 1e-4
-    early_stop_warmup_checks: int = 1
-
-    # misc
-    device: str = "cuda"
-    experiment_name: str = "optuna_tune"
+from utils.seed import seed_all
 
 
 def ensure_dir(p: str) -> None:
@@ -75,38 +35,105 @@ def write_results_csv(path: str, rows: list[dict]) -> None:
         for r in rows:
             w.writerow(r)
 
+def _apply_folder_knobs(folder_specs: List[FolderSpec], *, window_sigma: float, gap: float) -> None:
+    # Apply the same spectral-window knobs to all folders (common case).
+    # If you want per-folder tuning later, sample separate values per folder.
+    for fs in folder_specs:
+        fs.window_sigma = float(window_sigma)
+        fs.gap = float(gap)
+        
 
 def main():
     # -----------------------------
     # User edits
     # -----------------------------
-    NPZ_PATH = r"C:\Users\erict\OneDrive\Desktop\Projects\OCT Denoiser\images\processed\6mm_1024Aline_gapped_dataset.npz"
     TUNE_ROOT = os.path.join(r"runs\optuna", "optuna_tune_" + time.strftime("%Y%m%d_%H%M%S"))
     ensure_dir(TUNE_ROOT)
-
-    # Lazy import so script still runs without optuna installed
-    try:
-        import optuna
-    except ImportError as e:
-        raise SystemExit("pip install optuna") from e
 
     # Store per-trial summary
     results_rows: list[dict] = []
 
+    # -----------------------------
+    # Base config
+    # -----------------------------
+    base_cfg = TrainConfig(
+        npz_path=None,                 # not used in raw-folder pipeline
+        runs_root=TUNE_ROOT,            # not strictly used by run_training, but kept consistent
+        experiment_name="optuna",   # overwritten per trial
+
+        folder_specs=[
+            FolderSpec(
+                root_folder=r"images\Maestro3",
+                data_folder="6mm_1024Aline",
+                pixels=2048,
+                alines=1024,
+                crop_depth=(0, 1024),
+                dispersion=[1.315892282e-06, 5.459678905e-10],
+                window_sigma=0.08,
+                gap=0.25,
+                apply_fftshift_depth=False,
+                do_dc_subtract=True,
+                window_type="hann",
+                use_log=True,
+                log_eps=1e-6,
+            ),
+        ],
+
+        cache_frames_per_worker=200,
+
+        device="cuda",
+        amp=True,
+        deterministic=True,
+
+        # keep tuning runs short-ish
+        epochs=30,
+        val_every=5,
+        save_every=999999,  # effectively disable periodic checkpoint spam during tuning
+
+        # patching
+        patch_mode="strip",
+        patch_h=288,        # unused when patch_mode="strip" (kept for completeness)
+        patch_w=16,
+        patches_per_frame=80,
+
+        # model
+        model_name="resunet_pseudo3d",
+        base=32,
+
+        # optim
+        lr=3e-4,
+        weight_decay=8e-5,
+        grad_clip=1.0,
+
+        # loss
+        w_charb=0.01,
+        w_grad=0.01,
+
+        # loader
+        batch_size=12,
+        num_workers=4,
+
+        # early stopping
+        early_stop_patience=5,
+        early_stop_min_delta=1e-4,
+        early_stop_warmup_checks=1,
+    )
+
     def objective(trial: "optuna.Trial") -> float:
         # Sample hyperparameters (conservative ranges to start)
-        cfg = TuneConfig(npz_path=NPZ_PATH)
+        cfg = copy.deepcopy(base_cfg)
 
-        # # Core optimizer params
-        # cfg.lr = trial.suggest_float("lr", 4e-5, 4e-4, log=True)
-        # cfg.weight_decay = trial.suggest_float("weight_decay", 1e-6, 9e-5, log=True)
+        # Spectral-window knobs (the physics knobs you care about)
+        window_sigma = trial.suggest_float("window_sigma", 0.02, 0.16)
+        gap = trial.suggest_float("gap", 0.00, 0.50)
+        _apply_folder_knobs(cfg.folder_specs, window_sigma=window_sigma, gap=gap)
 
-        # Patch params
-        # Keep multiples of 32 for tensor cores / conv efficiency
-        ph = trial.suggest_categorical("patch_h", [192, 224, 256, 288, 320])
-        pw = trial.suggest_categorical("patch_w", [192, 224, 256, 288, 320])
-        cfg.patch_h, cfg.patch_w = int(ph), int(pw)
-        cfg.patches_per_frame = trial.suggest_categorical("patches_per_frame", [16, 24, 32, 48])
+        pw = trial.suggest_categorical("patch_w", [8, 16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 288])
+        cfg.patch_w = int(pw)
+        cfg.patches_per_frame = trial.suggest_categorical("patches_per_frame", [16, 24, 32, 48, 64, 80])
+        
+        # Model capacity
+        cfg.base = int(trial.suggest_categorical("base", [24, 32, 40, 48, 64]))
 
         # Batch size (optional: comment out if you often OOM)
         cfg.batch_size = trial.suggest_categorical("batch_size", [4, 8, 12, 16])
@@ -115,12 +142,16 @@ def main():
         cfg.w_charb = trial.suggest_float("w_charb", 0.01, 0.8)
         cfg.w_grad = trial.suggest_float("w_grad", 0.01, 0.8)
 
-        # Model capacity (optional knob)
-        cfg.base = trial.suggest_categorical("base", [24, 32, 40])
+        # Optimizer
+        cfg.lr = float(trial.suggest_float("lr", 4e-5, 6e-4, log=True))
+        cfg.weight_decay = float(trial.suggest_float("weight_decay", 1e-6, 2e-4, log=True))
 
         # Reduce variance for fair comparisons
         cfg.seed = 42
         cfg.experiment_name = f"trial_{trial.number:04d}"
+
+        # Important: seed before loaders/workers get created
+        seed_all(cfg.seed, deterministic=cfg.deterministic)
 
         paths = make_trial_paths(TUNE_ROOT, trial.number)
 
@@ -148,14 +179,24 @@ def main():
 
         final_val = best_val
 
-        # Save a small trial summary row
+        # Write a row summary
         row = {
             "trial": trial.number,
             "best_val_loss": best_val,
             "best_epoch": best_epoch,
             "stop_epoch": stop_epoch,
-            **{k: v for k, v in asdict(cfg).items() if k != "npz_path"},
             "run_dir": paths["run"],
+            # record the key trial params explicitly
+            "window_sigma": window_sigma,
+            "gap": gap,
+            "patch_w": cfg.patch_w,
+            "patches_per_frame": cfg.patches_per_frame,
+            "base": cfg.base,
+            "w_charb": cfg.w_charb,
+            "w_grad": cfg.w_grad,
+            "lr": cfg.lr,
+            "weight_decay": cfg.weight_decay,
+            "batch_size": cfg.batch_size,
         }
         results_rows.append(row)
         write_results_csv(os.path.join(TUNE_ROOT, "study_results.csv"), results_rows)
