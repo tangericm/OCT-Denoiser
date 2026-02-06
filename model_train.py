@@ -20,8 +20,8 @@ def main():
                 alines=1024,
                 crop_depth=(0, 1024),
                 dispersion=[1.315892282e-06, 5.459678905e-10],
-                window_sigma=0.107831154,
-                gap=0.005907899,
+                window_sigma=0.08,
+                gap=0.25,
             ),
             # FolderSpec(
             #     root_folder=r"images\Maestro2",
@@ -34,7 +34,7 @@ def main():
             #     gap=0.25,
             # ),
         ],
-        cache_frames_per_worker=1000,
+        cache_frames_per_worker=200,
 
         device="cuda",
         amp=True,
@@ -42,7 +42,7 @@ def main():
         epochs=300,
         base=32,
         batch_size=12,
-        lr=0.0000649267434045653,
+        lr=3e-4,
         num_workers=4,
 
         # patch_h=288, # Unused when patch_mode="strip"
@@ -51,13 +51,13 @@ def main():
         # patch_mode="patch",
 
         patch_h=288, # Unused when patch_mode="strip"
-        patch_w=160,
-        patches_per_frame=48,
+        patch_w=16,
+        patches_per_frame=80,
         patch_mode="strip",
 
-        w_charb=0.0105448640343948,
-        w_grad=0.0406831396087861,
-        weight_decay=3.35E-06,
+        w_charb=0.010307111599432855,
+        w_grad=0.010163544565911599,
+        weight_decay=8e-05,
     )
 
     seed_all(cfg.seed, deterministic=cfg.deterministic)
