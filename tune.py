@@ -128,12 +128,9 @@ def main():
         gap = trial.suggest_float("gap", 0.00, 0.50)
         _apply_folder_knobs(cfg.folder_specs, window_sigma=window_sigma, gap=gap)
 
-        pw = trial.suggest_categorical("patch_w", [8, 16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 288])
+        pw = trial.suggest_categorical("patch_w", [8, 16, 32, 48, 64, 80, 96, 128, 160])
         cfg.patch_w = int(pw)
         cfg.patches_per_frame = trial.suggest_categorical("patches_per_frame", [16, 24, 32, 48, 64, 80])
-        
-        # Model capacity
-        cfg.base = int(trial.suggest_categorical("base", [24, 32, 40, 48, 64]))
 
         # Batch size (optional: comment out if you often OOM)
         cfg.batch_size = trial.suggest_categorical("batch_size", [4, 8, 12, 16])
