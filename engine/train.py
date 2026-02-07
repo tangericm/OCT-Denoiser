@@ -116,7 +116,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             if cfg.grad_clip and cfg.grad_clip > 0:
                 scaler.unscale_(opt)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.grad_clip)
-
+            
             scaler.step(opt)
             scaler.update()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 
 def _select_hw(t: torch.Tensor) -> torch.Tensor:
     if t.dim() == 4:
@@ -37,7 +38,7 @@ def _bg_bounds(
     return y0, y1, x0c, x1c
 
 
-def _roi_snr_cnr_db(
+def _roi_snr_cnr(
     img: torch.Tensor,
     *,
     sig_y0: int,
@@ -106,8 +107,12 @@ def snr_cnr_loss(
     sig_y1: int,
     eps: float = 1e-6,
 ) -> torch.Tensor:
-    pred_snr, pred_cnr = _roi_snr_cnr_db(pred, sig_y0=sig_y0, sig_y1=sig_y1, bg_y0=0, bg_y1=0)
-    target_snr, target_cnr = _roi_snr_cnr_db(target, sig_y0=sig_y0, sig_y1=sig_y1, bg_y0=0, bg_y1=0)
-    inv_snr = 1.0 / pred_snr.clamp(min=eps)
-    inv_cnr = 1.0 / pred_cnr.clamp(min=eps)
-    return (inv_snr + inv_cnr).mean()
+    pred_snr, pred_cnr = _roi_snr_cnr(pred, sig_y0=sig_y0, sig_y1=sig_y1, bg_y0=0, bg_y1=0)
+    target_snr, target_cnr = _roi_snr_cnr(target, sig_y0=sig_y0, sig_y1=sig_y1, bg_y0=0, bg_y1=0)
+    mask = torch.isfinite(pred_snr) & torch.isfinite(pred_cnr) & torch.isfinite(target_snr) & torch.isfinite(target_cnr)
+    if mask.sum() == 0:
+        return pred.new_tensor(0.0)
+    delta_snr = pred_snr[mask] - target_snr[mask]
+    delta_cnr = pred_cnr[mask] - target_cnr[mask]  
+    snr_cnr_loss = (F.softplus(-delta_snr) + F.softplus(-delta_cnr)).mean()
+    return snr_cnr_loss
