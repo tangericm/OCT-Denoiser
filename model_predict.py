@@ -2,30 +2,11 @@ from configs.default import FolderSpec
 from engine.infer import predict_raw_to_tiffs  # this is what your raw training script uses
 
 def main():
-    folder_spec = FolderSpec(
-        root_folder=r"images\Maestro2",
-        data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
-        pixels=2048,
-        alines=2048,
-        crop_depth=(1024, 2048),
-        clb_path=None,
-
-        do_dc_subtract=True,
-        window_type="hann",
-        use_log=True,
-        log_eps=1e-6,
-        apply_fftshift_depth=True,
-        # dispersion=[-1.72085982e-05, 9.89412021e-10], # widefield
-        dispersion=[4.778474717e-06, 6.475358372e-09],
-        window_sigma=0.08,
-        gap=0.25,
-    )
-
     # folder_spec = FolderSpec(
-    #     root_folder=r"images\Maestro3",
-    #     data_folder="6mm_1024Aline",
+    #     root_folder=r"images\Maestro2",
+    #     data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
     #     pixels=2048,
-    #     alines=1024,
+    #     alines=2048,
     #     crop_depth=(1024, 2048),
     #     clb_path=None,
 
@@ -34,10 +15,29 @@ def main():
     #     use_log=True,
     #     log_eps=1e-6,
     #     apply_fftshift_depth=True,
-    #     dispersion=[1.315892282e-06, 5.459678905e-10],
+    #     # dispersion=[-1.72085982e-05, 9.89412021e-10], # widefield
+    #     dispersion=[4.778474717e-06, 6.475358372e-09],
     #     window_sigma=0.08,
     #     gap=0.25,
     # )
+
+    folder_spec = FolderSpec(
+        root_folder=r"images\Maestro3",
+        data_folder="6mm_1024Aline",
+        pixels=2048,
+        alines=1024,
+        crop_depth=(1024, 2048),
+        clb_path=None,
+
+        do_dc_subtract=True,
+        window_type="hann",
+        use_log=True,
+        log_eps=1e-6,
+        apply_fftshift_depth=True,
+        dispersion=[1.315892282e-06, 5.459678905e-10],
+        window_sigma=0.08,
+        gap=0.25,
+    )
 
     ckpt_path = r"runs\6mm_1024Aline\Backup\Normalized\6mm_1024Aline_gapped_dataset_s008_g025\checkpoints\best.pt"
     outdir = r"images\\" + folder_spec.root_folder.split("\\")[-1] + r"\\" + folder_spec.data_folder + r"\predictions_tiff"

@@ -10,7 +10,7 @@ def _select_hw(t: torch.Tensor) -> torch.Tensor:
     raise ValueError(f"Expected tensor with shape [B,1,H,W] or [B,H,W], got {t.shape}")
 
 
-def _roi_bounds(height: int, width: int, y0: int, y1: int, x_pad: int = 10) -> tuple[int, int, int, int]:
+def _roi_bounds(height: int, width: int, y0: int, y1: int, x_pad: int = 0) -> tuple[int, int, int, int]:
     """Clamp ROI with fixed x-range [x_pad, width - x_pad]."""
     x0 = max(0, x_pad)
     x1 = max(x0 + 1, width - x_pad)
@@ -26,7 +26,7 @@ def _bg_bounds(
     x0: int,
     x1: int,
     rows: int = 20,
-    x_pad: int = 10,
+    x_pad: int = 0,
 ) -> tuple[int, int, int, int]:
     y1 = height
     y0 = max(0, height - rows)
@@ -61,15 +61,17 @@ def _roi_snr_cnr_db(
     sig = img_hw[:, sy0:sy1, x0:x1]
     bg = img_hw[:, by0:by1, x0:x1]
 
-    sig_lin = (10 ** sig) - 1e-6
-    bg_lin = (10 ** bg) - 1e-6
+    # sig_lin = (10 ** sig) - 1e-6
+    # bg_lin = (10 ** bg) - 1e-6
+    sig_lin = sig
+    bg_lin = bg
 
     max_sig_per_x = sig_lin.max(dim=1).values
     mean_peak = max_sig_per_x.mean(dim=1)
     std_bg = bg_lin.flatten(1).std(dim=1)
-    snr_db = 20.0 * torch.log10((mean_peak + eps) / (std_bg + eps))
+    snr_db = mean_peak / (std_bg + eps) 
     mean_sig = sig_lin.flatten(1).mean(dim=1)
-    cnr_db = 20.0 * torch.log10((mean_sig + eps) / (std_bg + eps))
+    cnr_db = mean_sig / (std_bg + eps) 
     return snr_db, cnr_db
 
 def charbonnier_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
@@ -105,6 +107,7 @@ def snr_cnr_loss(
     eps: float = 1e-6,
 ) -> torch.Tensor:
     pred_snr, pred_cnr = _roi_snr_cnr_db(pred, sig_y0=sig_y0, sig_y1=sig_y1, bg_y0=0, bg_y1=0)
+    target_snr, target_cnr = _roi_snr_cnr_db(target, sig_y0=sig_y0, sig_y1=sig_y1, bg_y0=0, bg_y1=0)
     inv_snr = 1.0 / pred_snr.clamp(min=eps)
     inv_cnr = 1.0 / pred_cnr.clamp(min=eps)
     return (inv_snr + inv_cnr).mean()
