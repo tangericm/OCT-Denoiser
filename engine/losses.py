@@ -67,9 +67,9 @@ def _roi_snr_cnr(
     sig_lin = sig
     bg_lin = bg
 
-    max_sig_per_x = sig_lin.max(dim=1).values
+    max_sig_per_x = torch.logsumexp(sig_lin * 10.0, dim=1) / 10.0
     mean_peak = max_sig_per_x.mean(dim=1)
-    std_bg = bg_lin.flatten(1).std(dim=1)
+    std_bg = bg_lin.flatten(1).var(dim=1, unbiased=False).sqrt()
     snr_db = mean_peak / (std_bg + eps) 
     mean_sig = sig_lin.flatten(1).mean(dim=1)
     cnr_db = mean_sig / (std_bg + eps) 
