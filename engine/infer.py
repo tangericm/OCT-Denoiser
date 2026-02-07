@@ -12,6 +12,10 @@ from networks import create_model
 from utils.io_tiff import save_tiff_stack
 from utils.run_manager import ensure_dir
 from utils.keypoint_registration import register_stack_keypoints_to_pred0
+from configs.default import TrainConfig
+
+DEFAULT_SNR_SIG_Y0 = TrainConfig.__dataclass_fields__["snr_sig_y0"].default
+DEFAULT_SNR_SIG_Y1 = TrainConfig.__dataclass_fields__["snr_sig_y1"].default
 
 
 def _roi_snr_cnr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> tuple[float, float]:
@@ -59,6 +63,32 @@ def _roi_snr_cnr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> tuple
 
     # return float(np.mean(snr_per_x))
     return float(snr_per_x), float(cnr)
+
+def _roi_bounds(height: int, width: int, y0: int, y1: int, x_pad: int = 10) -> tuple[int, int, int, int]:
+    """Clamp ROI with fixed x-range [x_pad, width - x_pad]."""
+    x0 = max(0, x_pad)
+    x1 = max(x0 + 1, width - x_pad)
+    y0c = max(0, min(height - 1, int(y0)))
+    y1c = max(y0c + 1, min(height, int(y1)))
+    return y0c, y1c, x0, x1
+
+
+def _bg_bounds(
+    height: int,
+    width: int,
+    *,
+    x0: int,
+    x1: int,
+    rows: int = 20,
+    x_pad: int = 10,
+) -> tuple[int, int, int, int]:
+    y1 = height
+    y0 = max(0, height - rows)
+    x_min = max(0, x_pad)
+    x_max = max(x_min + 1, width - x_pad)
+    x0c = max(x_min, min(x_max - 1, int(x0)))
+    x1c = max(x0c + 1, min(x_max, int(x1)))
+    return y0, y1, x0c, x1c
 
 
 def _save_roi_plot_first(
@@ -120,9 +150,9 @@ def predict_raw_to_tiffs(
     tile_hw: tuple[int, int] | None = None,   # e.g. (512, 512)
     overlap: int = 32,
 
-    # ROI boxes (y0, y1, x0, x1)
-    sig_roi: tuple[int, int, int, int] = (111, 600, 20, 1020),
-    bg_roi: tuple[int, int, int, int] = (1000, 1020, 20, 1020),
+    # ROI y-range for SNR/CNR (x-range and background rows match training config)
+    snr_sig_y0: int | None = None,
+    snr_sig_y1: int | None = None,
 ) -> None:
     """
     Raw-folder inference:
@@ -229,30 +259,14 @@ def predict_raw_to_tiffs(
 
         return y_out / np.maximum(w_out, 1e-6)
 
-    def _clip_roi(r):
-        y0, y1, x0, x1 = r
-        y0 = int(np.clip(y0, 0, H - 1))
-        y1 = int(np.clip(y1, y0 + 1, H))
-        x0 = int(np.clip(x0, 0, W - 1))
-        x1 = int(np.clip(x1, x0 + 1, W))
-        return (y0, y1, x0, x1)
+    if snr_sig_y0 is None:
+        snr_sig_y0 = DEFAULT_SNR_SIG_Y0
+    if snr_sig_y1 is None:
+        snr_sig_y1 = DEFAULT_SNR_SIG_Y1
 
-    def _clip_sig_roi(r):
-        y0, y1, _, _ = r
-        y0 = int(np.clip(y0, 0, H - 1))
-        y1 = int(np.clip(y1, y0 + 1, H))
-        x0 = max(0, 10)
-        x1 = max(x0 + 1, W - 10)
-        return (y0, y1, x0, x1)
-
-    def _clip_bg_roi(sig_r):
-        y0 = max(0, H - 20)
-        y1 = H
-        _, _, x0, x1 = sig_r
-        return (y0, y1, x0, x1)
-
-    sig_roi_c = _clip_sig_roi(sig_roi)
-    bg_roi_c = _clip_bg_roi(sig_roi_c)
+    sig_roi_c = _roi_bounds(H, W, snr_sig_y0, snr_sig_y1)
+    sy0, sy1, sx0, sx1 = sig_roi_c
+    bg_roi_c = _bg_bounds(H, W, x0=sx0, x1=sx1)
 
     # Warmup
     print(f"[INFO] Running warmup inference...")
