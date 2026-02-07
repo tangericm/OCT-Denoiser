@@ -94,7 +94,7 @@ def main():
         patch_mode="strip",
         patch_h=288,        # unused when patch_mode="strip" (kept for completeness)
         patch_w=16,
-        patches_per_frame=80,
+        patches_per_frame=16,
 
         # model
         model_name="resunet_pseudo3d",
@@ -128,20 +128,20 @@ def main():
         gap = trial.suggest_float("gap", 0.00, 0.50)
         _apply_folder_knobs(cfg.folder_specs, window_sigma=window_sigma, gap=gap)
 
-        pw = trial.suggest_categorical("patch_w", [8, 16, 32, 48, 64, 80, 96, 128, 160])
-        cfg.patch_w = int(pw)
-        cfg.patches_per_frame = trial.suggest_categorical("patches_per_frame", [16, 24, 32, 48, 64, 80])
+        # pw = trial.suggest_categorical("patch_w", [8, 16, 32, 48, 64, 80, 96, 128, 160])
+        # cfg.patch_w = int(pw)
+        # cfg.patches_per_frame = trial.suggest_categorical("patches_per_frame", [16, 24, 32, 48, 64, 80])
 
-        # Batch size (optional: comment out if you often OOM)
-        cfg.batch_size = trial.suggest_categorical("batch_size", [4, 8, 12, 16])
+        # # Batch size (optional: comment out if you often OOM)
+        # cfg.batch_size = trial.suggest_categorical("batch_size", [4, 8, 12, 16])
 
         # Loss balance
         cfg.w_charb = trial.suggest_float("w_charb", 0.01, 0.8)
         cfg.w_grad = trial.suggest_float("w_grad", 0.01, 0.8)
 
-        # Optimizer
-        cfg.lr = float(trial.suggest_float("lr", 4e-5, 6e-4, log=True))
-        cfg.weight_decay = float(trial.suggest_float("weight_decay", 1e-6, 2e-4, log=True))
+        # # Optimizer
+        # cfg.lr = float(trial.suggest_float("lr", 4e-5, 6e-4, log=True))
+        # cfg.weight_decay = float(trial.suggest_float("weight_decay", 1e-6, 2e-4, log=True))
 
         # Reduce variance for fair comparisons
         cfg.seed = 42

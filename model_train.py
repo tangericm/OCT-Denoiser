@@ -10,7 +10,7 @@ def main():
     cfg = TrainConfig(
         npz_path = None,
         runs_root=runs_root,
-        experiment_name="6mm_1024Aline_strip",
+        experiment_name="6mm_1024Aline",
 
         folder_specs=[
             FolderSpec(
@@ -39,7 +39,7 @@ def main():
         device="cuda",
         amp=True,
         deterministic=True,
-        epochs=300,
+        epochs=10,
         base=32,
         batch_size=12,
         lr=3e-4,
@@ -51,7 +51,7 @@ def main():
         # patch_mode="patch",
 
         patch_h=288, # Unused when patch_mode="strip"
-        patch_w=16,
+        patch_w=288,
         patches_per_frame=16,
         patch_mode="strip",
 
