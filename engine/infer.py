@@ -14,9 +14,9 @@ from utils.run_manager import ensure_dir
 from utils.keypoint_registration import register_stack_keypoints_to_pred0
 
 
-def _roi_snr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> float:
+def _roi_snr_cnr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> tuple[float, float]:
     """
-    Per-A-line SNR, then average across A-lines within the ROI.
+    Compute SNR and CNR in dB using shared ROIs.
 
     For each A-line (x column) in the ROI:
       SNR_x(dB) = 20*log10( (max(signal_y_range, x) + eps) / (std(background_y_range, x) + eps) )
@@ -33,7 +33,7 @@ def _roi_snr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> float:
     x0 = max(x0s, x0b)
     x1 = min(x1s, x1b)
     if x1 <= x0:
-        return float("nan")
+        return float("nan"), float("nan")
 
     # Extract ROIs, aligned in x
     sig = img2d[y0s:y1s, x0:x1]  # shape [Hs, Wx]
@@ -46,9 +46,11 @@ def _roi_snr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> float:
     max_sig_per_x = np.max(sig, axis=0)          # [Wx]
     std_bg_per_x  = np.std(bg, axis=0)           # [Wx]
 
-    # Compute per-A-line SNR in dB
-    # snr_per_x = 20.0 * np.log10((max_sig_per_x + eps) / (std_bg_per_x + eps))
+    # Compute SNR/CNR in dB (match training loss)
     snr_per_x = 20.0 * np.log10((np.mean(max_sig_per_x) + eps) / (np.std(bg) + eps))
+    mean_sig = float(np.mean(sig))
+    std_bg = float(np.std(bg))
+    cnr = 20.0 * np.log10((mean_sig + eps) / (std_bg + eps))
 
     # # Robustness: ignore any non-finite values (can happen if img2d contains NaNs/Infs)
     # snr_per_x = snr_per_x[np.isfinite(snr_per_x)]
@@ -56,7 +58,7 @@ def _roi_snr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> float:
     #     return float("nan")
 
     # return float(np.mean(snr_per_x))
-    return float(snr_per_x)
+    return float(snr_per_x), float(cnr)
 
 
 def _save_roi_plot_first(
@@ -183,6 +185,8 @@ def predict_raw_to_tiffs(
 
     snr_pred_list: list[float] = []
     snr_gt_list: list[float] = []
+    cnr_pred_list: list[float] = []
+    cnr_gt_list: list[float] = []
     times: list[float] = []
 
     # Format filename with sigma and gap parameters
@@ -225,7 +229,6 @@ def predict_raw_to_tiffs(
 
         return y_out / np.maximum(w_out, 1e-6)
 
-    # ROI clipping (same pattern as your NPZ infer)
     def _clip_roi(r):
         y0, y1, x0, x1 = r
         y0 = int(np.clip(y0, 0, H - 1))
@@ -234,8 +237,22 @@ def predict_raw_to_tiffs(
         x1 = int(np.clip(x1, x0 + 1, W))
         return (y0, y1, x0, x1)
 
-    sig_roi_c = _clip_roi(sig_roi)
-    bg_roi_c  = _clip_roi(bg_roi)
+    def _clip_sig_roi(r):
+        y0, y1, _, _ = r
+        y0 = int(np.clip(y0, 0, H - 1))
+        y1 = int(np.clip(y1, y0 + 1, H))
+        x0 = max(0, 10)
+        x1 = max(x0 + 1, W - 10)
+        return (y0, y1, x0, x1)
+
+    def _clip_bg_roi(sig_r):
+        y0 = max(0, H - 20)
+        y1 = H
+        _, _, x0, x1 = sig_r
+        return (y0, y1, x0, x1)
+
+    sig_roi_c = _clip_sig_roi(sig_roi)
+    bg_roi_c = _clip_bg_roi(sig_roi_c)
 
     # Warmup
     print(f"[INFO] Running warmup inference...")
@@ -262,12 +279,18 @@ def predict_raw_to_tiffs(
         w1s[i, 0]   = out["input_w1"].astype(np.float32, copy=False)
         w2s[i, 0]   = out["input_w2"].astype(np.float32, copy=False)
 
-        # SNR on pred + gt
-        snr_pred = _roi_snr(pred, sig_roi_c, bg_roi_c)
-        snr_gt   = _roi_snr(gt,   sig_roi_c, bg_roi_c)
+        # SNR/CNR on pred + gt
+        snr_pred, cnr_pred = _roi_snr_cnr(pred, sig_roi_c, bg_roi_c)
+        snr_gt, cnr_gt = _roi_snr_cnr(gt, sig_roi_c, bg_roi_c)
         snr_pred_list.append(snr_pred)
         snr_gt_list.append(snr_gt)
-        print(f"[PROGRESS] Frame {i+1}/{F}: inference={elapsed_time:.4f}s, SNR_pred={snr_pred:.2f}dB, SNR_gt={snr_gt:.2f}dB")
+        cnr_pred_list.append(cnr_pred)
+        cnr_gt_list.append(cnr_gt)
+        print(
+            f"[PROGRESS] Frame {i+1}/{F}: inference={elapsed_time:.4f}s, "
+            f"SNR_pred={snr_pred:.2f}dB, SNR_gt={snr_gt:.2f}dB, "
+            f"CNR_pred={cnr_pred:.2f}dB, CNR_gt={cnr_gt:.2f}dB"
+        )
 
         if i == 0:
             _save_roi_plot_first(pred, sig_roi_c, bg_roi_c, snr_pred, os.path.join(outdir, f"snr_rois_frame0_pred_{param_suffix}.png"))
@@ -275,6 +298,8 @@ def predict_raw_to_tiffs(
 
     mean_pred = float(np.mean(snr_pred_list)) if snr_pred_list else float("nan")
     mean_gt = float(np.mean(snr_gt_list)) if snr_gt_list else float("nan")
+    mean_cnr_pred = float(np.mean(cnr_pred_list)) if cnr_pred_list else float("nan")
+    mean_cnr_gt = float(np.mean(cnr_gt_list)) if cnr_gt_list else float("nan")
     mean_time = float(np.mean(times)) if times else float("nan")
 
     # save SNR CSV
@@ -282,15 +307,20 @@ def predict_raw_to_tiffs(
 
     with open(snr_csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["frame", "snr_pred", "snr_gt", "snr_pred_minus_gt"])
+        w.writerow(["frame", "snr_pred", "snr_gt", "snr_pred_minus_gt", "cnr_pred", "cnr_gt", "cnr_pred_minus_gt"])
         for i in range(F):
             sp = float(snr_pred_list[i])
             sg = float(snr_gt_list[i])
-            w.writerow([i, sp, sg, sp - sg])
+            cp = float(cnr_pred_list[i])
+            cg = float(cnr_gt_list[i])
+            w.writerow([i, sp, sg, sp - sg, cp, cg, cp - cg])
         w.writerow([])
         w.writerow(["mean_snr_pred", mean_pred])
         w.writerow(["mean_snr_gt", mean_gt])
         w.writerow(["mean_pred_minus_gt", (mean_pred - mean_gt) if np.isfinite(mean_pred) and np.isfinite(mean_gt) else float("nan")])
+        w.writerow(["mean_cnr_pred", mean_cnr_pred])
+        w.writerow(["mean_cnr_gt", mean_cnr_gt])
+        w.writerow(["mean_cnr_pred_minus_gt", (mean_cnr_pred - mean_cnr_gt) if np.isfinite(mean_cnr_pred) and np.isfinite(mean_cnr_gt) else float("nan")])
 
 
     print(f"[INFO] Average prediction time per frame: {mean_time:.10f} seconds")
@@ -298,6 +328,9 @@ def predict_raw_to_tiffs(
     print(f"[OK] Mean SNR pred: {mean_pred:.4f}")
     print(f"[OK] Mean SNR gt  : {mean_gt:.4f}")
     print(f"[OK] Mean dSNR: {(mean_pred - mean_gt) if np.isfinite(mean_pred) and np.isfinite(mean_gt) else float('nan'):.4f}")
+    print(f"[OK] Mean CNR pred: {mean_cnr_pred:.4f}")
+    print(f"[OK] Mean CNR gt  : {mean_cnr_gt:.4f}")
+    print(f"[OK] Mean dCNR: {(mean_cnr_pred - mean_cnr_gt) if np.isfinite(mean_cnr_pred) and np.isfinite(mean_cnr_gt) else float('nan'):.4f}")
 
     # save TIFFs
     print(f"[INFO] Saving TIFF stacks to {outdir}...")
