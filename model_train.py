@@ -79,6 +79,8 @@ def main():
             tiff_dtype=cfg.tiff_dtype,
             also_save_float32=cfg.also_save_float32,
             max_frames=None,
+            snr_sig_y0=cfg.snr_sig_y0,
+            snr_sig_y1=cfg.snr_sig_y1,
         )
 
 if __name__ == "__main__":
