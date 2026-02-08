@@ -28,31 +28,15 @@ def _batch_to_device(batch, device: str):
 @torch.no_grad()
 def _save_val_pred_image(model, loader, device: str, out_path: str) -> None:
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    dataset = getattr(loader, "dataset", None)
-    img = None
-    if isinstance(dataset, RawBscanPatchDataset):
-        dataset._init_worker_state()
-        if dataset._index:
-            fidx, frame_idx, _ = dataset._index[0]
-            proc = dataset._procs[fidx]
-            path = dataset._paths[fidx][frame_idx]
-            out = proc.process_one(path, frame_idx=frame_idx)
-            x_full = np.stack([out["input_w1"], out["input_w2"]], axis=0).astype(np.float32)
-            x_full = torch.from_numpy(x_full).unsqueeze(0).to(device, non_blocking=True)
-            pred = model(x_full)
+    for batch in loader:
+        x, _, _ = _batch_to_device(batch, device)
+        pred = model(x)
+        if pred.ndim == 4:
             img = pred[0, 0].detach().cpu().float().numpy()
-
-    if img is None:
-        for batch in loader:
-            x, _, _ = _batch_to_device(batch, device)
-            pred = model(x)
-            if pred.ndim == 4:
-                img = pred[0, 0].detach().cpu().float().numpy()
-            else:
-                img = pred[0].detach().cpu().float().numpy()
-            break
-
-    if img is None:
+        else:
+            img = pred[0].detach().cpu().float().numpy()
+        break
+    else:
         return
 
     p1, p99 = np.percentile(img, [1, 99])
