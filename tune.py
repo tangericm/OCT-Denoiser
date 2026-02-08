@@ -21,8 +21,10 @@ def ensure_dir(p: str) -> None:
 def make_trial_paths(root: str, trial_number: int) -> Dict[str, str]:
     run_dir = os.path.join(root, f"trial_{trial_number:04d}")
     ckpt_dir = os.path.join(run_dir, "checkpoints")
+    val_dir = os.path.join(run_dir, "val_outputs")
     ensure_dir(ckpt_dir)
-    return {"run": run_dir, "checkpoints": ckpt_dir}
+    ensure_dir(val_dir)
+    return {"run": run_dir, "checkpoints": ckpt_dir, "val_outputs": val_dir}   
 
 
 def write_results_csv(path: str, rows: list[dict]) -> None:
