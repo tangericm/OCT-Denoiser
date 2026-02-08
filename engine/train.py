@@ -205,7 +205,16 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 snr_sig_y1=cfg.snr_sig_y1,
             )
 
-            history["val_loss"].append({"epoch": epoch, "loss": val_loss})
+            history["val_loss"].append(
+                {
+                    "epoch": epoch,
+                    "loss": val_loss,
+                    "snr_pred": val_full["snr_pred"],
+                    "snr_gt": val_full["snr_gt"],
+                    "cnr_pred": val_full["cnr_pred"],
+                    "cnr_gt": val_full["cnr_gt"],
+                }
+            )
             history["val_full"].append(
                 {
                     "epoch": epoch,

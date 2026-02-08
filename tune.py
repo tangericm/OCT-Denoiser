@@ -165,6 +165,17 @@ def main():
         best_entry = min(val_entries, key=lambda d: float(d["loss"]))
         best_val = float(best_entry["loss"])
         best_epoch = int(best_entry.get("epoch", -1))
+        last_entry = val_entries[-1]
+
+        best_snr_pred = best_entry.get("snr_pred")
+        best_snr_gt = best_entry.get("snr_gt")
+        best_cnr_pred = best_entry.get("cnr_pred")
+        best_cnr_gt = best_entry.get("cnr_gt")
+
+        last_snr_pred = last_entry.get("snr_pred")
+        last_snr_gt = last_entry.get("snr_gt")
+        last_cnr_pred = last_entry.get("cnr_pred")
+        last_cnr_gt = last_entry.get("cnr_gt")
 
         # Pull early-stop metadata saved by train.py (if present)
         es_meta = history.get("early_stop", {})
@@ -173,6 +184,14 @@ def main():
         trial.set_user_attr("best_val_loss", best_val)
         trial.set_user_attr("best_epoch", best_epoch)
         trial.set_user_attr("stop_epoch", stop_epoch)
+        trial.set_user_attr("best_snr_pred", best_snr_pred)
+        trial.set_user_attr("best_snr_gt", best_snr_gt)
+        trial.set_user_attr("best_cnr_pred", best_cnr_pred)
+        trial.set_user_attr("best_cnr_gt", best_cnr_gt)
+        trial.set_user_attr("last_snr_pred", last_snr_pred)
+        trial.set_user_attr("last_snr_gt", last_snr_gt)
+        trial.set_user_attr("last_cnr_pred", last_cnr_pred)
+        trial.set_user_attr("last_cnr_gt", last_cnr_gt)
 
         final_val = best_val
 
@@ -182,6 +201,14 @@ def main():
             "best_val_loss": best_val,
             "best_epoch": best_epoch,
             "stop_epoch": stop_epoch,
+            "best_snr_pred": best_snr_pred,
+            "best_snr_gt": best_snr_gt,
+            "best_cnr_pred": best_cnr_pred,
+            "best_cnr_gt": best_cnr_gt,
+            "last_snr_pred": last_snr_pred,
+            "last_snr_gt": last_snr_gt,
+            "last_cnr_pred": last_cnr_pred,
+            "last_cnr_gt": last_cnr_gt,
             "run_dir": paths["run"],
             # record the key trial params explicitly
             "window_sigma": window_sigma,
