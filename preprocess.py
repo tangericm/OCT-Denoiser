@@ -398,31 +398,26 @@ class BscanProcessor:
 
         aline_idx = spec_full.shape[1] // 2
         spectrum_mag = np.abs(spec_full[:, aline_idx])
+        spectrum_max = float(np.max(spectrum_mag)) if spectrum_mag.size else 1.0
+        spectrum_norm = spectrum_mag / max(spectrum_max, 1e-12)
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-        ax1.plot(self.apod, color="black", linewidth=1.2, label="Apodization")
-        ax1.plot(self.w1, color="red", alpha=0.8, label="Window 1")
-        ax1.plot(self.w2, color="orange", alpha=0.8, label="Window 2")
-        ax1.set_xlabel("Pixel")
-        ax1.set_ylabel("Amplitude")
-        ax1.set_title("Apodization + Spectral Windows")
-        ax1.set_ylim([-0.05, 1.1])
-        ax1.grid(True, alpha=0.3)
-        ax1.legend(loc="upper right")
+        fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+        ax.plot(spectrum_norm, color="steelblue", linewidth=0.9, label="Spectrum (center A-line)")
+        ax.plot(self.w1, color="red", alpha=0.8, label="Window 1")
+        ax.plot(self.w2, color="orange", alpha=0.8, label="Window 2")
+        ax.set_xlabel("Pixel")
+        ax.set_ylabel("Normalized amplitude")
+        ax.set_title(f"window_sigma={cfg.window_sigma:.4f}  gap={cfg.gap:.4f}")
+        ax.set_ylim([-0.05, 1.1])
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="upper right")
 
-        ax2.semilogy(spectrum_mag + 1e-12, color="steelblue", linewidth=0.9)
-        ax2.set_xlabel("Pixel")
-        ax2.set_ylabel("Magnitude (log)")
-        ax2.set_title("Representative Spectrum (center A-line)")
-        ax2.grid(True, alpha=0.3)
-
-        fig.suptitle(f"window_sigma={cfg.window_sigma:.4f}  gap={cfg.gap:.4f}", fontsize=12)
-        fig.tight_layout(rect=[0, 0.02, 1, 0.92])
+        fig.tight_layout()
 
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
-
+        
     def process_one(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, np.ndarray]:
         """
         Returns dict containing:
