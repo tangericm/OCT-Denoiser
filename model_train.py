@@ -20,8 +20,8 @@ def main():
                 alines=1024,
                 crop_depth=(0, 1024),
                 dispersion=[1.315892282e-06, 5.459678905e-10],
-                window_sigma=0.08,
-                gap=0.25,
+                window_sigma=0.15991777082335454,
+                gap=0.001344445808505533,
             ),
             # FolderSpec(
             #     root_folder=r"images\Maestro2",
