@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 from torch.utils.data import DataLoader
-from .losses import charbonnier_loss, gradient_l1, snr_cnr_loss, _roi_snr_cnr
+from .losses import charbonnier_loss, gradient_l1, snr_cnr_loss, roi_snr_cnr_infer_style
 
 def _unpack_batch(batch):
     if isinstance(batch, (tuple, list)) and len(batch) == 3:
@@ -46,8 +46,8 @@ def evaluate(
             #     sig_y1=snr_sig_y1,
             # )
         )
-        pred_snr, _ = _roi_snr_cnr(pred, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1, bg_y0=0, bg_y1=0)
-        gt_snr, _ = _roi_snr_cnr(y, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1, bg_y0=0, bg_y1=0)
+        pred_snr, _ = roi_snr_cnr_infer_style(pred, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1)
+        gt_snr, _ = roi_snr_cnr_infer_style(y, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1)
         mask = torch.isfinite(pred_snr) & torch.isfinite(gt_snr)
         if mask.any():
             snr_pred_sum += pred_snr[mask].sum().item()

@@ -75,6 +75,43 @@ def _roi_snr_cnr(
     cnr_db = mean_sig / (std_bg + eps) 
     return snr_db, cnr_db
 
+
+def roi_snr_cnr_infer_style(
+    img: torch.Tensor,
+    *,
+    sig_y0: int,
+    sig_y1: int,
+    eps: float = 1e-8,
+    x_pad: int = 10,
+    bg_rows: int = 20,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    img_hw = _select_hw(img)
+    b, h, w = img_hw.shape
+    sy0, sy1, sx0, sx1 = _roi_bounds(h, w, sig_y0, sig_y1, x_pad=x_pad)
+    x0 = sx0
+    x1 = sx1
+    by0, by1, bx0, bx1 = _bg_bounds(h, w, x0=x0, x1=x1, rows=bg_rows, x_pad=x_pad)
+    x0 = max(x0, bx0)
+    x1 = min(x1, bx1)
+    if x1 <= x0:
+        nan = img_hw.new_full((b,), float("nan"))
+        return nan, nan
+
+    sig = img_hw[:, sy0:sy1, x0:x1]
+    bg = img_hw[:, by0:by1, x0:x1]
+
+    sig_lin = (10 ** sig) - 1e-6
+    bg_lin = (10 ** bg) - 1e-6
+
+    max_sig_per_x = sig_lin.max(dim=1).values
+    mean_max = max_sig_per_x.mean(dim=1)
+    std_bg = bg_lin.flatten(1).std(dim=1, unbiased=False)
+    mean_sig = sig_lin.flatten(1).mean(dim=1)
+
+    snr = 20.0 * torch.log10((mean_max + eps) / (std_bg + eps))
+    cnr = 20.0 * torch.log10((mean_sig + eps) / (std_bg + eps))
+    return snr, cnr
+
 def charbonnier_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
     pred_linear = (10 ** pred) - 1e-6
     target_linear = (10 ** target) - 1e-6

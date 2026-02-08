@@ -183,9 +183,12 @@ def predict_raw_to_tiffs(
         window_sigma=folder_spec.window_sigma,
         gap=folder_spec.gap,
         dispersion=getattr(folder_spec, "dispersion", None),
-        debug_mode=False,
+        debug_mode=True,
     )
     proc = BscanProcessor(folder_spec.root_folder, pcfg)
+    proc._debug_out_dir = os.path.join(outdir, "preprocess_debug")
+    proc._dataset_name = folder_spec.data_folder
+    ensure_dir(proc._debug_out_dir)
 
     # Load model
     print(f"[INFO] Loading checkpoint from: {ckpt_path}")
