@@ -155,7 +155,8 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             dt = time.time() - t0
             print(
                 f"[E{epoch:04d}] train={train_loss:.10f}  val={val_loss:.10f}  "
-                f"val_snr_pred={val_snr_pred:.4f}  val_snr_gt={val_snr_gt:.4f}  time={dt:.5f}s"
+                f"val_snr_pred={val_snr_pred:.4f}  val_snr_gt={val_snr_gt:.4f}  "
+                f"dval_snr={val_snr_pred - val_snr_gt:.4f}  time={dt:.5f}s"
             )
 
             if val_loss < best_val:
