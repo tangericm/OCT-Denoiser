@@ -165,6 +165,18 @@ def main():
         best_entry = min(val_entries, key=lambda d: float(d["loss"]))
         best_val = float(best_entry["loss"])
         best_epoch = int(best_entry.get("epoch", -1))
+        val_snr_entries = {
+            int(entry.get("epoch", -1)): entry for entry in history.get("val_snr", [])
+        }
+        val_cnr_entries = {
+            int(entry.get("epoch", -1)): entry for entry in history.get("val_cnr", [])
+        }
+        best_snr_entry = val_snr_entries.get(best_epoch, {})
+        best_cnr_entry = val_cnr_entries.get(best_epoch, {})
+        best_snr_pred = float(best_snr_entry.get("pred_snr", float("nan")))
+        best_snr_gt = float(best_snr_entry.get("gt_snr", float("nan")))
+        best_cnr_pred = float(best_cnr_entry.get("pred_cnr", float("nan")))
+        best_cnr_gt = float(best_cnr_entry.get("gt_cnr", float("nan")))
 
         # Pull early-stop metadata saved by train.py (if present)
         es_meta = history.get("early_stop", {})
@@ -182,6 +194,12 @@ def main():
             "best_val_loss": best_val,
             "best_epoch": best_epoch,
             "stop_epoch": stop_epoch,
+            "val_snr_pred": best_snr_pred,
+            "val_snr_gt": best_snr_gt,
+            "val_snr_diff": best_snr_pred - best_snr_gt,
+            "val_cnr_pred": best_cnr_pred,
+            "val_cnr_gt": best_cnr_gt,
+            "val_cnr_diff": best_cnr_pred - best_cnr_gt,
             "run_dir": paths["run"],
             # record the key trial params explicitly
             "window_sigma": window_sigma,

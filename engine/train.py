@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import time
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 from dataclasses import asdict
 from typing import Dict, Any
 
@@ -10,6 +12,7 @@ from engine.early_stopping import EarlyStopping
 from utils.json_logging import save_json
 from utils.live_plot import LiveLossPlot
 from data.datamodule import RawBscanDataModule, RawDataConfig
+from data.dataset import RawBscanPatchDataset
 from engine.losses import charbonnier_loss, gradient_l1, snr_cnr_loss
 from engine.eval import evaluate
 from networks import create_model  # registers via networks/__init__.py
@@ -21,6 +24,48 @@ def _batch_to_device(batch, device: str):
     else:
         x, y, meta = batch
     return x.to(device, non_blocking=True), y.to(device, non_blocking=True), meta
+
+@torch.no_grad()
+def _save_val_pred_image(model, loader, device: str, out_path: str) -> None:
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    dataset = getattr(loader, "dataset", None)
+    img = None
+    if isinstance(dataset, RawBscanPatchDataset):
+        dataset._init_worker_state()
+        if dataset._index:
+            fidx, frame_idx, _ = dataset._index[0]
+            proc = dataset._procs[fidx]
+            path = dataset._paths[fidx][frame_idx]
+            out = proc.process_one(path, frame_idx=frame_idx)
+            x_full = np.stack([out["input_w1"], out["input_w2"]], axis=0).astype(np.float32)
+            x_full = torch.from_numpy(x_full).unsqueeze(0).to(device, non_blocking=True)
+            pred = model(x_full)
+            img = pred[0, 0].detach().cpu().float().numpy()
+
+    if img is None:
+        for batch in loader:
+            x, _, _ = _batch_to_device(batch, device)
+            pred = model(x)
+            if pred.ndim == 4:
+                img = pred[0, 0].detach().cpu().float().numpy()
+            else:
+                img = pred[0].detach().cpu().float().numpy()
+            break
+
+    if img is None:
+        return
+
+    p1, p99 = np.percentile(img, [1, 99])
+    vmin, vmax = float(p1), float(p99)
+    if vmax <= vmin:
+        vmin, vmax = float(img.min()), float(img.max())
+    fig = plt.figure(figsize=(6, 5))
+    ax = fig.add_subplot(111)
+    ax.imshow(img, cmap="gray", vmin=vmin, vmax=vmax)
+    ax.set_axis_off()
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
 
 def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     """
@@ -69,7 +114,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     best_val = float("inf")
     best_ckpt_path = os.path.join(paths["checkpoints"], "best.pt")
 
-    history = {"train_loss": [], "val_loss": [], "val_snr": []}
+    history = {"train_loss": [], "val_loss": [], "val_snr": [], "val_cnr": []}
 
     # Early stopping (defaults if cfg doesn't define them)
     early_stop = EarlyStopping(
@@ -133,7 +178,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         history["train_loss"].append({"epoch": epoch, "loss": train_loss})
 
         if epoch == 1 or (epoch % cfg.val_every) == 0:
-            val_loss, val_snr_pred, val_snr_gt = evaluate(
+            val_loss, val_snr_pred, val_snr_gt, val_cnr_pred, val_cnr_gt = evaluate(
                 model,
                 val_loader,
                 device=device,
@@ -143,17 +188,28 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
             )
+            _save_val_pred_image(
+                model,
+                val_loader,
+                device,
+                os.path.join(paths["run"], "val_predictions", f"val_pred_epoch_{epoch:04d}.png"),
+            )
             
             history["val_loss"].append({"epoch": epoch, "loss": val_loss})
             history["val_snr"].append(
                 {"epoch": epoch, "pred_snr": val_snr_pred, "gt_snr": val_snr_gt}
+            )
+            history["val_cnr"].append(
+                {"epoch": epoch, "pred_cnr": val_cnr_pred, "gt_cnr": val_cnr_gt}
             )
             plotter.update(epoch=epoch, train_loss=train_loss, val_loss=val_loss)
             dt = time.time() - t0
             print(
                 f"[E{epoch:04d}] train={train_loss:.10f}  val={val_loss:.10f}  "
                 f"val_snr_pred={val_snr_pred:.4f}  val_snr_gt={val_snr_gt:.4f}  "
-                f"dval_snr={val_snr_pred - val_snr_gt:.4f}  time={dt:.5f}s"
+                f"dval_snr={val_snr_pred - val_snr_gt:.4f}  "
+                f"val_cnr_pred={val_cnr_pred:.4f}  val_cnr_gt={val_cnr_gt:.4f}  "
+                f"dval_cnr={val_cnr_pred - val_cnr_gt:.4f}  time={dt:.5f}s"
             )
 
             if val_loss < best_val:
