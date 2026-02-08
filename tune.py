@@ -124,7 +124,7 @@ def main():
         cfg = copy.deepcopy(base_cfg)
 
         # Spectral-window knobs (the physics knobs you care about)
-        window_sigma = trial.suggest_float("window_sigma", 0.02, 0.16)
+        window_sigma = trial.suggest_float("window_sigma", 0.01, 0.16)
         gap = trial.suggest_float("gap", 0.00, 0.50)
         _apply_folder_knobs(cfg.folder_specs, window_sigma=window_sigma, gap=gap)
 
@@ -135,9 +135,9 @@ def main():
         # # Batch size (optional: comment out if you often OOM)
         # cfg.batch_size = trial.suggest_categorical("batch_size", [4, 8, 12, 16])
 
-        # Loss balance
-        cfg.w_charb = trial.suggest_float("w_charb", 0.01, 0.8)
-        cfg.w_grad = trial.suggest_float("w_grad", 0.01, 0.8)
+        # # Loss balance
+        # cfg.w_charb = trial.suggest_float("w_charb", 0.01, 0.8)
+        # cfg.w_grad = trial.suggest_float("w_grad", 0.01, 0.8)
 
         # # Optimizer
         # cfg.lr = float(trial.suggest_float("lr", 4e-5, 6e-4, log=True))
