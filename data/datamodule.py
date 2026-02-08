@@ -3,6 +3,7 @@ from typing import List, Any
 from torch.utils.data import DataLoader
 
 from data.dataset import RawBscanPatchDataset
+from data.full_frame_dataset import RawBscanFullFrameDataset
 
 @dataclass
 class RawDataConfig:
@@ -22,6 +23,7 @@ class RawBscanDataModule:
         self.cfg = cfg
         self._train = None
         self._val = None
+        self._val_full = None
 
     def setup(self):
         self._train = RawBscanPatchDataset(
@@ -46,6 +48,14 @@ class RawBscanDataModule:
             seed=self.cfg.seed + 999,
             cache_frames_per_worker=1,
         )
+        self._val_full = RawBscanFullFrameDataset(
+            folder_specs=self.cfg.folder_specs,
+            split="val",
+            train_frac=self.cfg.train_frac,
+            max_frames=1,
+            seed=self.cfg.seed + 2024,
+            cache_frames_per_worker=1,
+        )
 
     def train_loader(self):
         return DataLoader(
@@ -68,6 +78,17 @@ class RawBscanDataModule:
             pin_memory=True,
             persistent_workers=(self.cfg.num_workers > 0),
             prefetch_factor=2 if self.cfg.num_workers > 0 else None,
+            collate_fn=self._collate,
+        )
+
+    def val_full_loader(self):
+        return DataLoader(
+            self._val_full,
+            batch_size=1,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=True,
+            persistent_workers=False,
             collate_fn=self._collate,
         )
 
