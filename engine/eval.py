@@ -23,12 +23,14 @@ def evaluate(
     w_snr_cnr: float,
     snr_sig_y0: int,
     snr_sig_y1: int,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float, float]:
     model.eval()
     loss_acc = 0.0
     n = 0
     snr_pred_sum = 0.0
     snr_gt_sum = 0.0
+    cnr_pred_sum = 0.0
+    cnr_gt_sum = 0.0
     snr_count = 0
     for batch in loader:
         x, y, _meta = _unpack_batch(batch)
@@ -46,16 +48,25 @@ def evaluate(
             #     sig_y1=snr_sig_y1,
             # )
         )
-        pred_snr, _ = roi_snr_cnr_infer_style(pred, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1)
-        gt_snr, _ = roi_snr_cnr_infer_style(y, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1)
-        mask = torch.isfinite(pred_snr) & torch.isfinite(gt_snr)
+        pred_snr, pred_cnr = roi_snr_cnr_infer_style(pred, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1)
+        gt_snr, gt_cnr = roi_snr_cnr_infer_style(y, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1)
+        mask = (
+            torch.isfinite(pred_snr)
+            & torch.isfinite(gt_snr)
+            & torch.isfinite(pred_cnr)
+            & torch.isfinite(gt_cnr)
+        )
         if mask.any():
             snr_pred_sum += pred_snr[mask].sum().item()
             snr_gt_sum += gt_snr[mask].sum().item()
+            cnr_pred_sum += pred_cnr[mask].sum().item()
+            cnr_gt_sum += gt_cnr[mask].sum().item()
             snr_count += int(mask.sum().item())
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
 
     avg_pred_snr = snr_pred_sum / snr_count if snr_count else float("nan")
     avg_gt_snr = snr_gt_sum / snr_count if snr_count else float("nan")
-    return loss_acc / max(n, 1), avg_pred_snr, avg_gt_snr
+    avg_pred_cnr = cnr_pred_sum / snr_count if snr_count else float("nan")
+    avg_gt_cnr = cnr_gt_sum / snr_count if snr_count else float("nan")
+    return loss_acc / max(n, 1), avg_pred_snr, avg_gt_snr, avg_pred_cnr, avg_gt_cnr
