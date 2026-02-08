@@ -16,8 +16,7 @@ class RawDataConfig:
     seed: int
     patch_mode: str = "strip"
     cache_frames_per_worker: int = 2
-    preprocess_debug: bool = False
-    preprocess_debug_dir: str | None = None
+    preprocess_plot_dir: str | None = None
 
 class RawBscanDataModule:
     def __init__(self, cfg: RawDataConfig):
@@ -36,8 +35,7 @@ class RawBscanDataModule:
             patch_mode=self.cfg.patch_mode,
             seed=self.cfg.seed,
             cache_frames_per_worker=self.cfg.cache_frames_per_worker,
-            preprocess_debug=self.cfg.preprocess_debug,
-            preprocess_debug_dir=self.cfg.preprocess_debug_dir,
+            preprocess_plot_dir=self.cfg.preprocess_plot_dir,
         )
         self._val = RawBscanPatchDataset(
             folder_specs=self.cfg.folder_specs,
@@ -49,8 +47,7 @@ class RawBscanDataModule:
             patch_mode=self.cfg.patch_mode,
             seed=self.cfg.seed + 999,
             cache_frames_per_worker=1,
-            preprocess_debug=self.cfg.preprocess_debug,
-            preprocess_debug_dir=self.cfg.preprocess_debug_dir,
+            preprocess_plot_dir=self.cfg.preprocess_plot_dir,
         )
 
     def train_loader(self):

@@ -57,10 +57,6 @@ class TrainConfig:
     early_stop_min_delta: float = 0.0
     early_stop_warmup_checks: int = 0
 
-    # Preprocess debug output
-    preprocess_debug: bool = True
-    preprocess_debug_dir: str = "preprocess_debug"
-
     # Inference outputs (relative to run dir)
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False
