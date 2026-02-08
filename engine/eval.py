@@ -36,12 +36,12 @@ def evaluate(
         loss = (
             w_charb * charbonnier_loss(pred, y)
             + w_grad * gradient_l1(pred, y)
-            + w_snr_cnr * snr_cnr_loss(
-                pred,
-                y,
-                sig_y0=snr_sig_y0,
-                sig_y1=snr_sig_y1,
-            )
+            # + w_snr_cnr * snr_cnr_loss(
+            #     pred,
+            #     y,
+            #     sig_y0=snr_sig_y0,
+            #     sig_y1=snr_sig_y1,
+            # )
         )
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)

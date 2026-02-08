@@ -57,7 +57,7 @@ def main():
 
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
-        w_snr_cnr=0.5,
+        w_snr_cnr=0.01,
         weight_decay=8e-05,
     )
 

@@ -104,12 +104,12 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 loss = (
                     cfg.w_charb * charbonnier_loss(pred, y)
                     + cfg.w_grad * gradient_l1(pred, y)
-                    + cfg.w_snr_cnr * snr_cnr_loss(
-                        pred,
-                        y,
-                        sig_y0=cfg.snr_sig_y0,
-                        sig_y1=cfg.snr_sig_y1,
-                    )
+                    # + cfg.w_snr_cnr * snr_cnr_loss(
+                    #     pred,
+                    #     y,
+                    #     sig_y0=cfg.snr_sig_y0,
+                    #     sig_y1=cfg.snr_sig_y1,
+                    # )
                 )
 
             scaler.scale(loss).backward()

@@ -45,7 +45,7 @@ def _roi_snr_cnr(
     sig_y1: int,
     bg_y0: int,
     bg_y1: int,
-    eps: float = 1e-8,
+    eps: float = 1e-3,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     img_hw = _select_hw(img)
     b, h, w = img_hw.shape
