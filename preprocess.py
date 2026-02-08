@@ -41,7 +41,7 @@ class Config:
     dispersion: Optional[List[float]] = None
     
     # Debug mode: when True, no output files are written
-    debug_mode: bool = False
+    debug_mode: bool = True
 
 @contextmanager
 def timer(name: str, enabled: bool = True):
