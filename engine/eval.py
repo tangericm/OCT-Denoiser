@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 from torch.utils.data import DataLoader
-from .losses import charbonnier_loss, gradient_l1, snr_cnr_loss
+from .losses import charbonnier_loss, gradient_l1, snr_cnr_loss, _roi_snr_cnr
 
 def _unpack_batch(batch):
     if isinstance(batch, (tuple, list)) and len(batch) == 3:
@@ -23,10 +23,13 @@ def evaluate(
     w_snr_cnr: float,
     snr_sig_y0: int,
     snr_sig_y1: int,
-) -> float:
+) -> tuple[float, float, float]:
     model.eval()
     loss_acc = 0.0
     n = 0
+    snr_pred_sum = 0.0
+    snr_gt_sum = 0.0
+    snr_count = 0
     for batch in loader:
         x, y, _meta = _unpack_batch(batch)
         x = x.to(device, non_blocking=True)
@@ -43,7 +46,16 @@ def evaluate(
             #     sig_y1=snr_sig_y1,
             # )
         )
+        pred_snr, _ = _roi_snr_cnr(pred, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1, bg_y0=0, bg_y1=0)
+        gt_snr, _ = _roi_snr_cnr(y, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1, bg_y0=0, bg_y1=0)
+        mask = torch.isfinite(pred_snr) & torch.isfinite(gt_snr)
+        if mask.any():
+            snr_pred_sum += pred_snr[mask].sum().item()
+            snr_gt_sum += gt_snr[mask].sum().item()
+            snr_count += int(mask.sum().item())
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
 
-    return loss_acc / max(n, 1)
+    avg_pred_snr = snr_pred_sum / snr_count if snr_count else float("nan")
+    avg_gt_snr = snr_gt_sum / snr_count if snr_count else float("nan")
+    return loss_acc / max(n, 1), avg_pred_snr, avg_gt_snr
