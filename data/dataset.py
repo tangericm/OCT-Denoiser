@@ -1,3 +1,4 @@
+import os
 import random
 from collections import OrderedDict
 from typing import List, Dict, Any, Tuple
@@ -42,6 +43,8 @@ class RawBscanPatchDataset(Dataset):
         patch_mode: str = "strip",
         seed: int = 0,
         cache_frames_per_worker: int = 2,
+        preprocess_debug: bool = False,
+        preprocess_debug_dir: str | None = None,
     ):
         self.folder_specs = folder_specs
         self.split = split
@@ -52,6 +55,8 @@ class RawBscanPatchDataset(Dataset):
         self.patch_mode = patch_mode
         self.seed = seed
         self.cache_frames_per_worker = cache_frames_per_worker
+        self.preprocess_debug = preprocess_debug
+        self.preprocess_debug_dir = preprocess_debug_dir
 
         # Will be created lazily per worker:
         self._procs = None
@@ -96,9 +101,13 @@ class RawBscanPatchDataset(Dataset):
                 window_sigma=fs.window_sigma,
                 gap=fs.gap,
                 dispersion=fs.dispersion,
-                debug_mode=False,
+                debug_mode=self.preprocess_debug,
             )
             proc = BscanProcessor(fs.root_folder, cfg)
+            if self.preprocess_debug and self.preprocess_debug_dir:
+                os.makedirs(self.preprocess_debug_dir, exist_ok=True)
+                proc._debug_out_dir = self.preprocess_debug_dir
+                proc._dataset_name = f"{fs.data_folder}_{self.split}"
             self._procs.append(proc)
             self._paths.append(proc.bscan_paths)
 

@@ -35,6 +35,11 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     save_json(os.path.join(paths["run"], "config.json"), asdict(cfg))
 
     # Data
+    preprocess_debug_dir = None
+    if getattr(cfg, "preprocess_debug", False):
+        preprocess_debug_dir = os.path.join(paths["run"], cfg.preprocess_debug_dir)
+        os.makedirs(preprocess_debug_dir, exist_ok=True)
+
     dm = RawBscanDataModule(RawDataConfig(
         folder_specs=cfg.folder_specs,  # List[FolderSpec]
         train_frac=cfg.train_frac,
@@ -45,6 +50,8 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         num_workers=cfg.num_workers,
         seed=cfg.seed,
         cache_frames_per_worker=getattr(cfg, "cache_frames_per_worker", 2),
+        preprocess_debug=getattr(cfg, "preprocess_debug", False),
+        preprocess_debug_dir=preprocess_debug_dir,
     ))
     dm.setup()
     train_loader = dm.train_loader()
@@ -65,7 +72,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     best_val = float("inf")
     best_ckpt_path = os.path.join(paths["checkpoints"], "best.pt")
 
-    history = {"train_loss": [], "val_loss": []}
+    history = {"train_loss": [], "val_loss": [], "val_snr": []}
 
     # Early stopping (defaults if cfg doesn't define them)
     early_stop = EarlyStopping(
@@ -129,7 +136,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         history["train_loss"].append({"epoch": epoch, "loss": train_loss})
 
         if epoch == 1 or (epoch % cfg.val_every) == 0:
-            val_loss = evaluate(
+            val_loss, val_snr_pred, val_snr_gt = evaluate(
                 model,
                 val_loader,
                 device=device,
@@ -141,9 +148,15 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             )
             
             history["val_loss"].append({"epoch": epoch, "loss": val_loss})
+            history["val_snr"].append(
+                {"epoch": epoch, "pred_snr": val_snr_pred, "gt_snr": val_snr_gt}
+            )
             plotter.update(epoch=epoch, train_loss=train_loss, val_loss=val_loss)
             dt = time.time() - t0
-            print(f"[E{epoch:04d}] train={train_loss:.10f}  val={val_loss:.10f}  time={dt:.5f}s")
+            print(
+                f"[E{epoch:04d}] train={train_loss:.10f}  val={val_loss:.10f}  "
+                f"val_snr_pred={val_snr_pred:.4f}  val_snr_gt={val_snr_gt:.4f}  time={dt:.5f}s"
+            )
 
             if val_loss < best_val:
                 best_val = val_loss
