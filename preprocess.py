@@ -40,8 +40,6 @@ class Config:
     # Dispersion compensation
     dispersion: Optional[List[float]] = None
     
-    # Debug mode: when True, no output files are written
-    debug_mode: bool = True
 
 @contextmanager
 def timer(name: str, enabled: bool = True):
@@ -371,6 +369,7 @@ class BscanProcessor:
         self._spec_full_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
         self._spec1_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
         self._spec2_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
+        self._debug_plot_saved = False
 
     def _debug_plot(
         self,
@@ -381,6 +380,14 @@ class BscanProcessor:
         frame_idx: Optional[int] = None,
         save_png: bool = False,
     ) -> None:
+        if (
+            not save_png
+            or frame_idx != 0
+            or self._debug_plot_saved
+            or not hasattr(self, "_debug_out_dir")
+            or self._debug_out_dir is None
+        ):
+            return
         if is_complex:
             mag = np.abs(data)
         else:
@@ -412,17 +419,17 @@ class BscanProcessor:
 
         plt.tight_layout()
 
-        if (save_png and frame_idx == 0 and hasattr(self, "_debug_out_dir") and self._debug_out_dir is not None):
-            safe_name = step_name.replace(" ", "_").replace(".", "")
-            # Prefer explicit dataset frame basename if available (set in `process_one`),
-            # otherwise fall back to numeric frame index.
-            frame_name = getattr(self, "_current_frame_name", f"frame{frame_idx:03d}")
-            dataset_name = getattr(self, "_dataset_name", None)
-            if dataset_name:
-                out_path = os.path.join(self._debug_out_dir, f"{dataset_name}_{frame_name}_{safe_name}.png")
-            else:
-                out_path = os.path.join(self._debug_out_dir, f"{frame_name}_{safe_name}.png")
-            plt.savefig(out_path, dpi=150)
+        safe_name = step_name.replace(" ", "_").replace(".", "")
+        # Prefer explicit dataset frame basename if available (set in `process_one`),
+        # otherwise fall back to numeric frame index.
+        frame_name = getattr(self, "_current_frame_name", f"frame{frame_idx:03d}")
+        dataset_name = getattr(self, "_dataset_name", None)
+        if dataset_name:
+            out_path = os.path.join(self._debug_out_dir, f"{dataset_name}_{frame_name}_{safe_name}.png")
+        else:
+            out_path = os.path.join(self._debug_out_dir, f"{frame_name}_{safe_name}.png")
+        plt.savefig(out_path, dpi=150)
+        self._debug_plot_saved = True
 
         plt.close(fig)
 
@@ -478,8 +485,14 @@ class BscanProcessor:
             else:
                 spec_full = resamp.astype(np.complex64, copy=True)
 
-        if cfg.debug_mode:
-            self._debug_plot("5. Full Spectrum (Complex)", spec_full, is_complex=True, windows=(self.w1, self.w2), frame_idx=frame_idx, save_png=True)
+        self._debug_plot(
+            "5. Full Spectrum (Complex)",
+            spec_full,
+            is_complex=True,
+            windows=(self.w1, self.w2),
+            frame_idx=frame_idx,
+            save_png=True,
+        )
 
         # 6) Recon target + two windowed inputs
         with timer("reconstruct B-scan", prof):

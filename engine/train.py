@@ -35,10 +35,8 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     save_json(os.path.join(paths["run"], "config.json"), asdict(cfg))
 
     # Data
-    preprocess_debug_dir = None
-    if getattr(cfg, "preprocess_debug", False):
-        preprocess_debug_dir = os.path.join(paths["run"], cfg.preprocess_debug_dir)
-        os.makedirs(preprocess_debug_dir, exist_ok=True)
+    preprocess_plot_dir = os.path.join(paths["run"], "preprocess_plots")
+    os.makedirs(preprocess_plot_dir, exist_ok=True)
 
     dm = RawBscanDataModule(RawDataConfig(
         folder_specs=cfg.folder_specs,  # List[FolderSpec]
@@ -50,8 +48,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         num_workers=cfg.num_workers,
         seed=cfg.seed,
         cache_frames_per_worker=getattr(cfg, "cache_frames_per_worker", 2),
-        preprocess_debug=getattr(cfg, "preprocess_debug", False),
-        preprocess_debug_dir=preprocess_debug_dir,
+        preprocess_plot_dir=preprocess_plot_dir,
     ))
     dm.setup()
     train_loader = dm.train_loader()
