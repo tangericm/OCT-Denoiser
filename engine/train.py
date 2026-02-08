@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import time
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 from dataclasses import asdict
 from typing import Dict, Any
 
@@ -11,7 +13,7 @@ from utils.json_logging import save_json
 from utils.live_plot import LiveLossPlot
 from data.datamodule import RawBscanDataModule, RawDataConfig
 from engine.losses import charbonnier_loss, gradient_l1, snr_cnr_loss
-from engine.eval import evaluate
+from engine.eval import evaluate, evaluate_full_frames
 from networks import create_model  # registers via networks/__init__.py
 
 def _batch_to_device(batch, device: str):
@@ -21,6 +23,36 @@ def _batch_to_device(batch, device: str):
     else:
         x, y, meta = batch
     return x.to(device, non_blocking=True), y.to(device, non_blocking=True), meta
+
+
+def _save_full_frame_val_png(
+    pred_img: np.ndarray,
+    *,
+    snr_pred: float,
+    snr_gt: float,
+    cnr_pred: float,
+    cnr_gt: float,
+    out_path: str,
+) -> None:
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    p1, p99 = np.percentile(pred_img, [1, 99])
+    vmin, vmax = float(p1), float(p99)
+    if vmax <= vmin:
+        vmin, vmax = float(pred_img.min()), float(pred_img.max())
+
+    fig = plt.figure(figsize=(6, 5))
+    ax = fig.add_subplot(111)
+    ax.imshow(pred_img, cmap="gray", vmin=vmin, vmax=vmax)
+    ax.set_axis_off()
+    ax.set_title(
+        "Validation Prediction\n"
+        f"SNR_pred={snr_pred:.2f}dB  SNR_gt={snr_gt:.2f}dB  "
+        f"CNR_pred={cnr_pred:.2f}dB  CNR_gt={cnr_gt:.2f}dB",
+        fontsize=11,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
 
 def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     """
@@ -49,6 +81,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     dm.setup()
     train_loader = dm.train_loader()
     val_loader = dm.val_loader()
+    val_full_loader = dm.val_full_loader()
 
     # Model
     model = create_model(cfg.model_name, base=cfg.base).to(device)
@@ -65,7 +98,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     best_val = float("inf")
     best_ckpt_path = os.path.join(paths["checkpoints"], "best.pt")
 
-    history = {"train_loss": [], "val_loss": []}
+    history = {"train_loss": [], "val_loss": [], "val_full": []}
 
     # Early stopping (defaults if cfg doesn't define them)
     early_stop = EarlyStopping(
@@ -139,11 +172,48 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
             )
-            
+            val_full = evaluate_full_frames(
+                model,
+                val_full_loader,
+                device=device,
+                w_charb=cfg.w_charb,
+                w_grad=cfg.w_grad,
+                w_snr_cnr=cfg.w_snr_cnr,
+                snr_sig_y0=cfg.snr_sig_y0,
+                snr_sig_y1=cfg.snr_sig_y1,
+            )
+
             history["val_loss"].append({"epoch": epoch, "loss": val_loss})
+            history["val_full"].append(
+                {
+                    "epoch": epoch,
+                    "loss": val_full["val_loss"],
+                    "snr_pred": val_full["snr_pred"],
+                    "snr_gt": val_full["snr_gt"],
+                    "cnr_pred": val_full["cnr_pred"],
+                    "cnr_gt": val_full["cnr_gt"],
+                }
+            )
             plotter.update(epoch=epoch, train_loss=train_loss, val_loss=val_loss)
             dt = time.time() - t0
-            print(f"[E{epoch:04d}] train={train_loss:.10f}  val={val_loss:.10f}  time={dt:.5f}s")
+            print(
+                f"[E{epoch:04d}] train={train_loss:.10f}  "
+                f"val_patch={val_loss:.10f}  val_full={val_full['val_loss']:.10f}  "
+                f"SNR_pred/gt={val_full['snr_pred']:.2f}/{val_full['snr_gt']:.2f}  "
+                f"CNR_pred/gt={val_full['cnr_pred']:.2f}/{val_full['cnr_gt']:.2f}  "
+                f"time={dt:.5f}s"
+            )
+
+            if val_full["sample_pred"] is not None:
+                out_path = os.path.join(paths["val_outputs"], f"val_pred_epoch_{epoch:04d}.png")
+                _save_full_frame_val_png(
+                    val_full["sample_pred"],
+                    snr_pred=float(val_full["snr_pred"]),
+                    snr_gt=float(val_full["snr_gt"]),
+                    cnr_pred=float(val_full["cnr_pred"]),
+                    cnr_gt=float(val_full["cnr_gt"]),
+                    out_path=out_path,
+                )
 
             if val_loss < best_val:
                 best_val = val_loss

@@ -34,6 +34,7 @@ def setup_run_dirs(run_dir: str) -> Dict[str, str]:
         "run": run_dir,
         "checkpoints": os.path.join(run_dir, "checkpoints"),
         "pred_tiff": os.path.join(run_dir, "predictions_tiff"),
+        "val_outputs": os.path.join(run_dir, "val_outputs"),
     }
     for p in paths.values():
         ensure_dir(p)
