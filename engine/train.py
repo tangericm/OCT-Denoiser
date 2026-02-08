@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import time
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 from dataclasses import asdict
 from typing import Dict, Any
 
@@ -21,6 +23,32 @@ def _batch_to_device(batch, device: str):
     else:
         x, y, meta = batch
     return x.to(device, non_blocking=True), y.to(device, non_blocking=True), meta
+
+@torch.no_grad()
+def _save_val_pred_image(model, loader, device: str, out_path: str) -> None:
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    for batch in loader:
+        x, _, _ = _batch_to_device(batch, device)
+        pred = model(x)
+        if pred.ndim == 4:
+            img = pred[0, 0].detach().cpu().float().numpy()
+        else:
+            img = pred[0].detach().cpu().float().numpy()
+        break
+    else:
+        return
+
+    p1, p99 = np.percentile(img, [1, 99])
+    vmin, vmax = float(p1), float(p99)
+    if vmax <= vmin:
+        vmin, vmax = float(img.min()), float(img.max())
+    fig = plt.figure(figsize=(6, 5))
+    ax = fig.add_subplot(111)
+    ax.imshow(img, cmap="gray", vmin=vmin, vmax=vmax)
+    ax.set_axis_off()
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
 
 def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     """
@@ -142,6 +170,12 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 w_snr_cnr=cfg.w_snr_cnr,
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
+            )
+            _save_val_pred_image(
+                model,
+                val_loader,
+                device,
+                os.path.join(paths["run"], "val_predictions", f"val_pred_epoch_{epoch:04d}.png"),
             )
             
             history["val_loss"].append({"epoch": epoch, "loss": val_loss})
