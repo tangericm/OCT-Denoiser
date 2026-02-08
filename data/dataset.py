@@ -96,7 +96,6 @@ class RawBscanPatchDataset(Dataset):
                 window_sigma=fs.window_sigma,
                 gap=fs.gap,
                 dispersion=fs.dispersion,
-                debug_mode=False,
             )
             proc = BscanProcessor(fs.root_folder, cfg)
             self._procs.append(proc)
