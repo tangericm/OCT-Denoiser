@@ -111,7 +111,6 @@ def predict_raw_to_tiffs(
         window_sigma=folder_spec.window_sigma,
         gap=folder_spec.gap,
         dispersion=getattr(folder_spec, "dispersion", None),
-        debug_mode=False,
     )
     proc = BscanProcessor(folder_spec.root_folder, pcfg)
 

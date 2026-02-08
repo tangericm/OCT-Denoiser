@@ -39,9 +39,6 @@ class Config:
 
     # Dispersion compensation
     dispersion: Optional[List[float]] = None
-    
-    # Debug mode: when True, no output files are written
-    debug_mode: bool = False
 
 @contextmanager
 def timer(name: str, enabled: bool = True):
@@ -372,58 +369,58 @@ class BscanProcessor:
         self._spec1_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
         self._spec2_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
 
-    def _debug_plot(
-        self,
-        step_name: str,
-        data: np.ndarray,
-        is_complex: bool = False,
-        windows: Optional[Tuple[np.ndarray, np.ndarray]] = None,
-        frame_idx: Optional[int] = None,
-        save_png: bool = False,
-    ) -> None:
-        if is_complex:
-            mag = np.abs(data)
-        else:
-            mag = np.abs(data)
+    def save_window_figure(self, out_path: str, bscan_path: Optional[str] = None) -> None:
+        cfg = self.cfg
+        if bscan_path is None:
+            if not self.bscan_paths:
+                raise ValueError("No bscan paths available to build a representative spectrum.")
+            bscan_path = self.bscan_paths[0]
+
+        data = np.fromfile(bscan_path, dtype=np.uint16)
+        expected = cfg.pixels * cfg.alines
+        if data.size != expected:
+            raise ValueError(f"{os.path.basename(bscan_path)} has {data.size} elements; expected {expected}.")
+
+        raw = data.reshape((cfg.pixels, cfg.alines), order="F").astype(np.float32, copy=False)
+        if cfg.do_dc_subtract:
+            raw[0, :] = raw[3, :]
+            raw[1, :] = raw[3, :]
+            raw[2, :] = raw[3, :]
+            raw = raw - raw.mean(axis=1, keepdims=True)
+
+        resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
+        resamp *= self.apod[:, None]
+
+        spec_full = resamp.astype(np.complex64, copy=False)
+        if self._phase_term is not None:
+            spec_full = spec_full.copy()
+            spec_full *= self._phase_term[:, None]
+
+        aline_idx = spec_full.shape[1] // 2
+        spectrum_mag = np.abs(spec_full[:, aline_idx])
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-
-        aline_idx = mag.shape[1] // 2
-        ax1.semilogy(mag[:, aline_idx], linewidth=0.8, color="steelblue")
-
-        if windows is not None:
-            w1, w2 = windows
-            ax1_twin = ax1.twinx()
-            ax1_twin.plot(w1, color="red", alpha=0.7, label="Window 1")
-            ax1_twin.plot(w2, color="orange", alpha=0.7, label="Window 2")
-            ax1_twin.set_ylim([0, 1.1])
-            ax1_twin.legend(loc="upper right")
-
-        ax1.set_title(f"{step_name} – Center A-line")
+        ax1.plot(self.apod, color="black", linewidth=1.2, label="Apodization")
+        ax1.plot(self.w1, color="red", alpha=0.8, label="Window 1")
+        ax1.plot(self.w2, color="orange", alpha=0.8, label="Window 2")
         ax1.set_xlabel("Pixel")
-        ax1.set_ylabel("Magnitude (log)")
+        ax1.set_ylabel("Amplitude")
+        ax1.set_title("Apodization + Spectral Windows")
+        ax1.set_ylim([-0.05, 1.1])
         ax1.grid(True, alpha=0.3)
+        ax1.legend(loc="upper right")
 
-        im = ax2.imshow(np.log10(mag + 1e-6), aspect="auto", cmap="gray", origin="upper")
-        ax2.set_title(f"{step_name} – All A-lines")
-        ax2.set_xlabel("A-line")
-        ax2.set_ylabel("Pixel")
-        plt.colorbar(im, ax=ax2, label="Log Magnitude")
+        ax2.semilogy(spectrum_mag + 1e-12, color="steelblue", linewidth=0.9)
+        ax2.set_xlabel("Pixel")
+        ax2.set_ylabel("Magnitude (log)")
+        ax2.set_title("Representative Spectrum (center A-line)")
+        ax2.grid(True, alpha=0.3)
 
-        plt.tight_layout()
+        fig.suptitle(f"window_sigma={cfg.window_sigma:.4f}  gap={cfg.gap:.4f}", fontsize=12)
+        fig.tight_layout(rect=[0, 0.02, 1, 0.92])
 
-        if (save_png and frame_idx == 0 and hasattr(self, "_debug_out_dir") and self._debug_out_dir is not None):
-            safe_name = step_name.replace(" ", "_").replace(".", "")
-            # Prefer explicit dataset frame basename if available (set in `process_one`),
-            # otherwise fall back to numeric frame index.
-            frame_name = getattr(self, "_current_frame_name", f"frame{frame_idx:03d}")
-            dataset_name = getattr(self, "_dataset_name", None)
-            if dataset_name:
-                out_path = os.path.join(self._debug_out_dir, f"{dataset_name}_{frame_name}_{safe_name}.png")
-            else:
-                out_path = os.path.join(self._debug_out_dir, f"{frame_name}_{safe_name}.png")
-            plt.savefig(out_path, dpi=150)
-
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
     def process_one(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, np.ndarray]:
@@ -478,9 +475,6 @@ class BscanProcessor:
             else:
                 spec_full = resamp.astype(np.complex64, copy=True)
 
-        if cfg.debug_mode:
-            self._debug_plot("5. Full Spectrum (Complex)", spec_full, is_complex=True, windows=(self.w1, self.w2), frame_idx=frame_idx, save_png=True)
-
         # 6) Recon target + two windowed inputs
         with timer("reconstruct B-scan", prof):
             target_full = recon_bscan_from_spectrum(spec_full, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
@@ -510,14 +504,6 @@ class BscanProcessor:
         """
         cfg = self.cfg
         F = len(self.bscan_paths)
-
-        self._debug_out_dir = None
-        self._dataset_name = None
-        if out_npz is not None:
-            self._debug_out_dir = os.path.dirname(out_npz)
-            os.makedirs(self._debug_out_dir, exist_ok=True)
-            # Dataset basename (used to prefix debug PNG filenames)
-            self._dataset_name = os.path.splitext(os.path.basename(out_npz))[0]
 
         # Determine H,W by running first frame
         first = self.process_one(self.bscan_paths[0], frame_idx=0)

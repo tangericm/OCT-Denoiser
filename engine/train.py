@@ -79,6 +79,28 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         cache_frames_per_worker=getattr(cfg, "cache_frames_per_worker", 2),
     ))
     dm.setup()
+    if cfg.folder_specs:
+        window_path = os.path.join(paths["run"], "window_figure.png")
+        if not os.path.exists(window_path):
+            from preprocess import Config as PreprocessConfig, BscanProcessor
+
+            fs = cfg.folder_specs[0]
+            pcfg = PreprocessConfig(
+                pixels=fs.pixels,
+                alines=fs.alines,
+                data_folder=fs.data_folder,
+                do_dc_subtract=fs.do_dc_subtract,
+                window_type=fs.window_type,
+                use_log=fs.use_log,
+                log_eps=fs.log_eps,
+                crop_depth=fs.crop_depth,
+                apply_fftshift_depth=fs.apply_fftshift_depth,
+                window_sigma=fs.window_sigma,
+                gap=fs.gap,
+                dispersion=fs.dispersion,
+            )
+            proc = BscanProcessor(fs.root_folder, pcfg)
+            proc.save_window_figure(window_path)
     train_loader = dm.train_loader()
     val_loader = dm.val_loader()
     val_full_loader = dm.val_full_loader()
