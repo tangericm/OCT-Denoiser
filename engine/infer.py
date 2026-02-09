@@ -284,11 +284,11 @@ def predict_raw_to_tiffs(
 
     save_tiff_stack(pred_path, preds[:, 0], dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(gt_path,   gts[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(w1_path,   w1s[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(w2_path,   w2s[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
+    # save_tiff_stack(w1_path,   w1s[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
+    # save_tiff_stack(w2_path,   w2s[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
         save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds[:, 0], dtype="float32", scale_per_slice=True)
         save_tiff_stack(os.path.join(outdir, f"gt_{param_suffix}_float32.tiff"), gts[:, 0], dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, f"window1_{param_suffix}_float32.tiff"), w1s[:, 0], dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, f"window2_{param_suffix}_float32.tiff"), w2s[:, 0], dtype="float32", scale_per_slice=True)
+        # save_tiff_stack(os.path.join(outdir, f"window1_{param_suffix}_float32.tiff"), w1s[:, 0], dtype="float32", scale_per_slice=True)
+        # save_tiff_stack(os.path.join(outdir, f"window2_{param_suffix}_float32.tiff"), w2s[:, 0], dtype="float32", scale_per_slice=True)

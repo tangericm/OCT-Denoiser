@@ -39,8 +39,9 @@ def main():
         gap=0.25,
     )
 
-    ckpt_path = r"runs\6mm_1024Aline\Backup\Normalized\6mm_1024Aline_gapped_dataset_s008_g025\checkpoints\best.pt"
-    outdir = r"images\\" + folder_spec.root_folder.split("\\")[-1] + r"\\" + folder_spec.data_folder + r"\predictions_tiff"
+    ckpt_path = r"runs\6mm_1024Aline\6mm_1024Aline_patch_s008_g025\checkpoints\best.pt"
+    # outdir = r"images\\" + folder_spec.root_folder.split("\\")[-1] + r"\\" + folder_spec.data_folder + r"\predictions_tiff"
+    outdir = r"runs\6mm_1024Aline\6mm_1024Aline_patch_s008_g025\predictions_tiff"
 
     # ckpt_path = r"runs\multi_folder_raw\s008_g025_M3_strip\checkpoints\best.pt"
     # outdir = r"images\\" + folder_spec.root_folder.split("\\")[-1] + r"\\" + folder_spec.data_folder + r"\predictions_tiff"
@@ -54,7 +55,7 @@ def main():
         device="cuda",
         tiff_dtype="uint16",
         also_save_float32=False,
-        max_frames=50, 
+        max_frames=None, 
     )
 
 if __name__ == "__main__":
