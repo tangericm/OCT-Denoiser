@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from .losses import charbonnier_loss, gradient_l1
+from .losses import charbonnier_loss, gradient_l1, roi_snr_loss
 from .metrics import roi_bounds, bg_bounds, roi_snr_cnr
 
 def _unpack_batch(batch):
@@ -22,9 +22,15 @@ def evaluate(
     device: str,
     w_charb: float,
     w_grad: float,
+    w_snr: float,
+    snr_sig_y0: int,
+    snr_sig_y1: int,
+    snr_weight_bg: float,
+    snr_eps: float,
 ) -> float:
     model.eval()
     loss_acc = 0.0
+    snr_loss_acc = 0.0
     n = 0
     for batch in loader:
         x, y, _meta = _unpack_batch(batch)
@@ -32,14 +38,26 @@ def evaluate(
         y = y.to(device, non_blocking=True)
 
         pred = model(x)
+        snr_loss = roi_snr_loss(
+            pred,
+            snr_sig_y0=snr_sig_y0,
+            snr_sig_y1=snr_sig_y1,
+            weight_bg=snr_weight_bg,
+            eps=snr_eps,
+        )
         loss = (
             w_charb * charbonnier_loss(pred, y)
             + w_grad * gradient_l1(pred, y)
+            + w_snr * snr_loss
         )
         loss_acc += float(loss.item()) * x.size(0)
+        snr_loss_acc += float(snr_loss.item()) * x.size(0)
         n += x.size(0)
 
-    return loss_acc / max(n, 1)
+    return {
+        "loss": loss_acc / max(n, 1),
+        "snr_loss": snr_loss_acc / max(n, 1),
+    }
 
 
 @torch.no_grad()
@@ -50,11 +68,15 @@ def evaluate_full_frames(
     device: str,
     w_charb: float,
     w_grad: float,
+    w_snr: float,
     snr_sig_y0: int,
     snr_sig_y1: int,
+    snr_weight_bg: float,
+    snr_eps: float,
 ) -> dict[str, float | np.ndarray | None]:
     model.eval()
     loss_acc = 0.0
+    snr_loss_acc = 0.0
     snr_cnr_acc = 0.0
     n = 0
     snr_pred_list: list[float] = []
@@ -69,11 +91,20 @@ def evaluate_full_frames(
         y = y.to(device, non_blocking=True)
 
         pred = model(x)
+        snr_loss = roi_snr_loss(
+            pred,
+            snr_sig_y0=snr_sig_y0,
+            snr_sig_y1=snr_sig_y1,
+            weight_bg=snr_weight_bg,
+            eps=snr_eps,
+        )
         loss = (
             w_charb * charbonnier_loss(pred, y)
             + w_grad * gradient_l1(pred, y)
+            + w_snr * snr_loss
         )
         loss_acc += float(loss.item()) * x.size(0)
+        snr_loss_acc += float(snr_loss.item()) * x.size(0)
         n += x.size(0)
 
         pred_np = pred.detach().cpu().numpy()
@@ -98,6 +129,7 @@ def evaluate_full_frames(
                 sample_pred = pred_img.copy()
 
     val_loss = loss_acc / max(n, 1)
+    snr_loss_val = snr_loss_acc / max(n, 1)
     snr_cnr_loss_val = snr_cnr_acc / max(n, 1)
     snr_pred = float(np.mean(snr_pred_list)) if snr_pred_list else float("nan")
     snr_gt = float(np.mean(snr_gt_list)) if snr_gt_list else float("nan")
@@ -106,6 +138,7 @@ def evaluate_full_frames(
 
     return {
         "val_loss": val_loss,
+        "snr_loss": snr_loss_val,
         "snr_cnr_loss": snr_cnr_loss_val,
         "snr_pred": snr_pred,
         "snr_gt": snr_gt,
