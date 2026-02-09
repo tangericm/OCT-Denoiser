@@ -43,7 +43,6 @@ def main():
         base=32,
         batch_size=12,
         lr=3e-4,
-        weight_decay=8e-05,
         num_workers=4,
         augment=True,
 
@@ -59,10 +58,7 @@ def main():
 
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
-        w_perceptual=0.05,
-        perceptual_use_vgg19=False,
-        perceptual_use_charbonnier=True,
-
+        weight_decay=8e-05,
     )
 
     seed_all(cfg.seed, deterministic=cfg.deterministic)
