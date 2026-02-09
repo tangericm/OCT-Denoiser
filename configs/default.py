@@ -50,7 +50,7 @@ class TrainConfig:
 
     # Logging/checkpoint cadence
     val_every: int = 5
-    save_every: int = 5
+    save_every: int = 25
 
     # Early stopping
     early_stop_patience: int = 5
