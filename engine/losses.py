@@ -6,7 +6,8 @@ from torch import nn
 from torchvision.models import VGG16_Weights, VGG19_Weights, vgg16, vgg19
 
 def charbonnier_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
-    return torch.mean(torch.sqrt((pred - target) ** 2 + eps**2))
+    return (pred - target).abs().mean()
+    # return torch.mean(torch.sqrt((pred - target) ** 2 + eps**2))
 
 
 def gradient_l1(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
