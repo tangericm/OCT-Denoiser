@@ -43,6 +43,10 @@ class TrainConfig:
     # Loss weights
     w_charb: float = 0.8
     w_grad: float = 0.5
+    w_snr: float = 0.1
+
+    snr_weight_bg: float = 1.0
+    snr_eps: float = 1e-6
 
     # ROI (y ranges) for SNR/CNR loss
     snr_sig_y0: int = 111
