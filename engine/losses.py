@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torchvision.models import VGG16_Weights, VGG19_Weights, vgg16, vgg19
 
