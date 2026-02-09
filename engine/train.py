@@ -78,7 +78,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         seed=cfg.seed,
         patch_mode=cfg.patch_mode,
         augment=cfg.augment,
-        cache_frames_per_worker=getattr(cfg, "cache_frames_per_worker", 2),
+        cache_frames_per_worker=cfg.cache_frames_per_worker,
     ))
     dm.setup()
     if cfg.folder_specs:

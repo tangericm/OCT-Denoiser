@@ -24,10 +24,11 @@ class TrainConfig:
     patch_h: int = 128
     patch_w: int = 128
     patches_per_frame: int = 16
-    patch_mode: str = "strip"  # "strip" (random x, full depth) or "patch" (random x and y)
+    patch_mode: str = "patch"  # "strip" (random x, full depth) or "patch" (random x and y)
     augment: bool = True
     batch_size: int = 32
     num_workers: int = 8
+    cache_frames_per_worker: int = 1000,
 
     # Model selection
     model_name: str = "resunet_pseudo3d"

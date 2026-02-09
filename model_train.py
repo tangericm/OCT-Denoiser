@@ -49,6 +49,7 @@ def main():
         patch_w=288,
         patches_per_frame=16,
         patch_mode="patch",
+        augment=True,
 
         # patch_h=288, # Unused when patch_mode="strip"
         # patch_w=16,

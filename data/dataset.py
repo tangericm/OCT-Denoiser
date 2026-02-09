@@ -200,6 +200,8 @@ class RawBscanPatchDataset(Dataset):
         x, y = self._random_crop(img1, img2, tgt)
         if self.augment:
             x, y = self._random_flips(x, y)
+        x = np.ascontiguousarray(x)
+        y = np.ascontiguousarray(y)
 
         meta = {
             "folder_idx": fidx,
