@@ -73,15 +73,10 @@ def main():
                 dispersion=[1.315892282e-06, 5.459678905e-10],
                 window_sigma=0.08,
                 gap=0.25,
-                apply_fftshift_depth=False,
-                do_dc_subtract=True,
-                window_type="hann",
-                use_log=True,
-                log_eps=1e-6,
             ),
         ],
 
-        cache_frames_per_worker=200,
+        cache_frames_per_worker=1000,
 
         device="cuda",
         amp=True,
@@ -106,10 +101,11 @@ def main():
         lr=3e-4,
         weight_decay=8e-5,
         grad_clip=1.0,
+        augment=True,
 
         # loss
-        w_charb=0.01,
-        w_grad=0.01,
+        w_charb=0.010307111599432855,
+        w_grad=0.010163544565911599,
 
         # loader
         batch_size=12,
@@ -127,7 +123,7 @@ def main():
 
         # Spectral-window knobs (the physics knobs you care about)
         window_sigma = trial.suggest_float("window_sigma", 0.01, 0.16)
-        gap = trial.suggest_float("gap", 0.00, 0.50)
+        gap = trial.suggest_float("gap", -0.10, 0.50)
         _apply_folder_knobs(cfg.folder_specs, window_sigma=window_sigma, gap=gap)
 
         # pw = trial.suggest_categorical("patch_w", [8, 16, 32, 48, 64, 80, 96, 128, 160])
