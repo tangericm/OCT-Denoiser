@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from .losses import charbonnier_loss, gradient_l1
+from .losses import PerceptualLoss, charbonnier_loss, gradient_l1
 from .metrics import roi_bounds, bg_bounds, roi_snr_cnr
 
 def _unpack_batch(batch):
@@ -22,6 +22,8 @@ def evaluate(
     device: str,
     w_charb: float,
     w_grad: float,
+    perceptual_loss: PerceptualLoss | None = None,
+    w_perceptual: float = 0.0,
 ) -> float:
     model.eval()
     loss_acc = 0.0
@@ -36,6 +38,8 @@ def evaluate(
             w_charb * charbonnier_loss(pred, y)
             + w_grad * gradient_l1(pred, y)
         )
+        if perceptual_loss is not None and w_perceptual > 0:
+            loss = loss + w_perceptual * perceptual_loss(pred, y)
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
 
@@ -50,6 +54,8 @@ def evaluate_full_frames(
     device: str,
     w_charb: float,
     w_grad: float,
+    perceptual_loss: PerceptualLoss | None = None,
+    w_perceptual: float = 0.0,
     snr_sig_y0: int,
     snr_sig_y1: int,
 ) -> dict[str, float | np.ndarray | None]:
@@ -73,6 +79,8 @@ def evaluate_full_frames(
             w_charb * charbonnier_loss(pred, y)
             + w_grad * gradient_l1(pred, y)
         )
+        if perceptual_loss is not None and w_perceptual > 0:
+            loss = loss + w_perceptual * perceptual_loss(pred, y)
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
 
