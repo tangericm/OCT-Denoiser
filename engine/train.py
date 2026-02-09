@@ -221,7 +221,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             dt = time.time() - t0
             print(
                 f"[E{epoch:04d}] train={train_loss:.10f}  "
-                f"val_patch={val_loss:.10f}  val_full={val_full['val_loss']:.10f}  "
+                f"val_loss={val_loss:.10f} "
                 f"SNR_pred/gt={val_full['snr_pred']:.2f}/{val_full['snr_gt']:.2f}  "
                 f"CNR_pred/gt={val_full['cnr_pred']:.2f}/{val_full['cnr_gt']:.2f}  "
                 f"time={dt:.5f}s"
