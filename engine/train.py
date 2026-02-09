@@ -161,12 +161,12 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 loss = (
                     cfg.w_charb * charbonnier_loss(pred, y)
                     + cfg.w_grad * gradient_l1(pred, y)
-                    # + cfg.w_snr_cnr * snr_cnr_loss(
-                    #     pred,
-                    #     y,
-                    #     sig_y0=cfg.snr_sig_y0,
-                    #     sig_y1=cfg.snr_sig_y1,
-                    # )
+                    + cfg.w_snr_cnr * snr_cnr_loss(
+                        pred,
+                        y,
+                        sig_y0=cfg.snr_sig_y0,
+                        sig_y1=cfg.snr_sig_y1,
+                    )
                 )
 
             scaler.scale(loss).backward()
@@ -211,6 +211,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 {
                     "epoch": epoch,
                     "loss": val_loss,
+                    "snr_cnr_loss": val_full["snr_cnr_loss"],
                     "snr_pred": val_full["snr_pred"],
                     "snr_gt": val_full["snr_gt"],
                     "cnr_pred": val_full["cnr_pred"],
@@ -221,6 +222,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 {
                     "epoch": epoch,
                     "loss": val_full["val_loss"],
+                    "snr_cnr_loss": val_full["snr_cnr_loss"],
                     "snr_pred": val_full["snr_pred"],
                     "snr_gt": val_full["snr_gt"],
                     "cnr_pred": val_full["cnr_pred"],
@@ -232,6 +234,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             print(
                 f"[E{epoch:04d}] train={train_loss:.10f}  "
                 f"val_patch={val_loss:.10f}  val_full={val_full['val_loss']:.10f}  "
+                f"snr_cnr_loss={val_full['snr_cnr_loss']:.10f}  "
                 f"SNR_pred/gt={val_full['snr_pred']:.2f}/{val_full['snr_gt']:.2f}  "
                 f"CNR_pred/gt={val_full['cnr_pred']:.2f}/{val_full['cnr_gt']:.2f}  "
                 f"time={dt:.5f}s"

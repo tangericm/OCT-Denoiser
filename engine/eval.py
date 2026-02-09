@@ -35,15 +35,11 @@ def evaluate(
         y = y.to(device, non_blocking=True)
 
         pred = model(x)
+        snr_loss = snr_cnr_loss(pred, y, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1)
         loss = (
             w_charb * charbonnier_loss(pred, y)
             + w_grad * gradient_l1(pred, y)
-            # + w_snr_cnr * snr_cnr_loss(
-            #     pred,
-            #     y,
-            #     sig_y0=snr_sig_y0,
-            #     sig_y1=snr_sig_y1,
-            # )
+            + w_snr_cnr * snr_loss
         )
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
@@ -65,6 +61,7 @@ def evaluate_full_frames(
 ) -> dict[str, float | np.ndarray | None]:
     model.eval()
     loss_acc = 0.0
+    snr_cnr_acc = 0.0
     n = 0
     snr_pred_list: list[float] = []
     snr_gt_list: list[float] = []
@@ -78,17 +75,14 @@ def evaluate_full_frames(
         y = y.to(device, non_blocking=True)
 
         pred = model(x)
+        snr_loss = snr_cnr_loss(pred, y, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1)
         loss = (
             w_charb * charbonnier_loss(pred, y)
             + w_grad * gradient_l1(pred, y)
-            # + w_snr_cnr * snr_cnr_loss(
-            #     pred,
-            #     y,
-            #     sig_y0=snr_sig_y0,
-            #     sig_y1=snr_sig_y1,
-            # )
+            + w_snr_cnr * snr_loss
         )
         loss_acc += float(loss.item()) * x.size(0)
+        snr_cnr_acc += float(snr_loss.item()) * x.size(0)
         n += x.size(0)
 
         pred_np = pred.detach().cpu().numpy()
@@ -113,6 +107,7 @@ def evaluate_full_frames(
                 sample_pred = pred_img.copy()
 
     val_loss = loss_acc / max(n, 1)
+    snr_cnr_loss_val = snr_cnr_acc / max(n, 1)
     snr_pred = float(np.mean(snr_pred_list)) if snr_pred_list else float("nan")
     snr_gt = float(np.mean(snr_gt_list)) if snr_gt_list else float("nan")
     cnr_pred = float(np.mean(cnr_pred_list)) if cnr_pred_list else float("nan")
@@ -120,6 +115,7 @@ def evaluate_full_frames(
 
     return {
         "val_loss": val_loss,
+        "snr_cnr_loss": snr_cnr_loss_val,
         "snr_pred": snr_pred,
         "snr_gt": snr_gt,
         "cnr_pred": cnr_pred,
