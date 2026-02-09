@@ -76,7 +76,7 @@ class RawBscanDataModule:
             self._val,
             batch_size=self.cfg.batch_size,
             shuffle=False,
-            num_workers=max(0, self.cfg.num_workers // 2),
+            num_workers=self.cfg.num_workers,
             pin_memory=True,
             persistent_workers=(self.cfg.num_workers > 0),
             prefetch_factor=4 if self.cfg.num_workers > 0 else None,
