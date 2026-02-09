@@ -10,7 +10,7 @@ def main():
     cfg = TrainConfig(
         npz_path = None,
         runs_root=runs_root,
-        experiment_name="6mm_1024Aline_strip",
+        experiment_name="6mm_1024Aline",
 
         folder_specs=[
             FolderSpec(
@@ -45,19 +45,19 @@ def main():
         lr=3e-4,
         num_workers=4,
 
-        # patch_h=288, # Unused when patch_mode="strip"
-        # patch_w=288,
-        # patches_per_frame=16,
-        # patch_mode="patch",
-
         patch_h=288, # Unused when patch_mode="strip"
-        patch_w=16,
+        patch_w=288,
         patches_per_frame=16,
-        patch_mode="strip",
+        patch_mode="patch",
+
+        # patch_h=288, # Unused when patch_mode="strip"
+        # patch_w=16,
+        # patches_per_frame=16,
+        # patch_mode="strip",
 
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
-        w_snr_cnr=0.01,
+        w_snr_cnr=0,
         weight_decay=8e-05,
     )
 

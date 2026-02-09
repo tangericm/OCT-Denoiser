@@ -76,6 +76,8 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         batch_size=cfg.batch_size,
         num_workers=cfg.num_workers,
         seed=cfg.seed,
+        patch_mode=cfg.patch_mode,
+        augment=cfg.augment,
         cache_frames_per_worker=getattr(cfg, "cache_frames_per_worker", 2),
     ))
     dm.setup()
