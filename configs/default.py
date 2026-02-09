@@ -43,11 +43,6 @@ class TrainConfig:
     # Loss weights
     w_charb: float = 0.8
     w_grad: float = 0.5
-    w_perceptual: float = 0.0
-    perceptual_use_vgg19: bool = False
-    perceptual_layer_ids: Optional[List[int]] = None
-    perceptual_layer_weights: Optional[List[float]] = None
-    perceptual_use_charbonnier: bool = False
 
     # ROI (y ranges) for SNR/CNR loss
     snr_sig_y0: int = 111

@@ -12,7 +12,7 @@ from engine.early_stopping import EarlyStopping
 from utils.json_logging import save_json
 from utils.live_plot import LiveLossPlot
 from data.datamodule import RawBscanDataModule, RawDataConfig
-from engine.losses import PerceptualLoss, charbonnier_loss, gradient_l1
+from engine.losses import charbonnier_loss, gradient_l1
 from engine.eval import evaluate, evaluate_full_frames
 from networks import create_model  # registers via networks/__init__.py
 
@@ -139,15 +139,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         save_every_epoch=False,   # set True if you want per-epoch pngs always
         show_window=True,         # set False if you never want an interactive window
     )
-
-    perceptual_loss = None
-    if getattr(cfg, "w_perceptual", 0.0) > 0:
-        perceptual_loss = PerceptualLoss(
-            use_vgg19=getattr(cfg, "perceptual_use_vgg19", False),
-            layer_ids=getattr(cfg, "perceptual_layer_ids", None),
-            layer_weights=getattr(cfg, "perceptual_layer_weights", None),
-            use_charbonnier=getattr(cfg, "perceptual_use_charbonnier", False),
-        ).to(device)
     
     print(f"[INFO] Device={cfg.device}  train_batches={len(train_loader)}  val_batches={len(val_loader)}")
 
@@ -171,8 +162,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                     cfg.w_charb * charbonnier_loss(pred, y)
                     + cfg.w_grad * gradient_l1(pred, y)
                 )
-                if perceptual_loss is not None:
-                    loss = loss + cfg.w_perceptual * perceptual_loss(pred, y)
 
             scaler.scale(loss).backward()
             if cfg.grad_clip and cfg.grad_clip > 0:
@@ -197,8 +186,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 device=device,
                 w_charb=cfg.w_charb,
                 w_grad=cfg.w_grad,
-                perceptual_loss=perceptual_loss,
-                w_perceptual=getattr(cfg, "w_perceptual", 0.0),
             )
             val_full = evaluate_full_frames(
                 model,
@@ -206,8 +193,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 device=device,
                 w_charb=cfg.w_charb,
                 w_grad=cfg.w_grad,
-                perceptual_loss=perceptual_loss,
-                w_perceptual=getattr(cfg, "w_perceptual", 0.0),
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
             )
