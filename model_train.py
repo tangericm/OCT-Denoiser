@@ -52,13 +52,13 @@ def main():
         # patch_mode="patch",
 
         patch_h=288, # Unused when patch_mode="strip"
-        patch_w=8,
+        patch_w=16,
         patches_per_frame=16,
         patch_mode="strip",
 
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
-        w_snr_cnr=0,
+        w_snr_cnr=0.01,
         weight_decay=8e-05,
     )
 
