@@ -45,19 +45,20 @@ def _roi_snr_cnr(
     sig_y1: int,
     bg_y0: int,
     bg_y1: int,
+    bg_rows: int = 20,
     eps: float = 1e-3,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     img_hw = _select_hw(img)
     b, h, w = img_hw.shape
     sy0, sy1, sx0, sx1 = _roi_bounds(h, w, sig_y0, sig_y1)
     x0 = sx0
     x1 = sx1
-    by0, by1, bx0, bx1 = _bg_bounds(h, w, x0=x0, x1=x1)
+    by0, by1, bx0, bx1 = _bg_bounds(h, w, x0=x0, x1=x1, rows=bg_rows)
     x0 = max(x0, bx0)
     x1 = min(x1, bx1)
     if x1 <= x0:
         nan = img_hw.new_full((b,), float("nan"))
-        return nan, nan
+        return nan, nan, nan
 
     sig = img_hw[:, sy0:sy1, x0:x1]
     bg = img_hw[:, by0:by1, x0:x1]
@@ -73,7 +74,7 @@ def _roi_snr_cnr(
     snr_db = mean_peak / (std_bg + eps) 
     mean_sig = sig_lin.flatten(1).mean(dim=1)
     cnr_db = mean_sig / (std_bg + eps) 
-    return snr_db, cnr_db
+    return snr_db, cnr_db, std_bg
 
 def charbonnier_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
     return torch.mean(torch.sqrt((pred - target) ** 2 + eps**2))
@@ -95,12 +96,19 @@ def snr_cnr_loss(
     sig_y1: int,
     eps: float = 1e-6,
 ) -> torch.Tensor:
-    pred_snr, pred_cnr = _roi_snr_cnr(pred, sig_y0=sig_y0, sig_y1=sig_y1, bg_y0=0, bg_y1=0)
-    target_snr, target_cnr = _roi_snr_cnr(target, sig_y0=sig_y0, sig_y1=sig_y1, bg_y0=0, bg_y1=0)
-    mask = torch.isfinite(pred_snr) & torch.isfinite(pred_cnr) & torch.isfinite(target_snr) & torch.isfinite(target_cnr)
+    pred_snr, pred_cnr, pred_bg_std = _roi_snr_cnr(pred, sig_y0=sig_y0, sig_y1=sig_y1, bg_y0=0, bg_y1=0)
+    target_snr, target_cnr, target_bg_std = _roi_snr_cnr(target, sig_y0=sig_y0, sig_y1=sig_y1, bg_y0=0, bg_y1=0)
+    mask = (
+        torch.isfinite(pred_snr)
+        & torch.isfinite(pred_cnr)
+        & torch.isfinite(pred_bg_std)
+        & torch.isfinite(target_snr)
+        & torch.isfinite(target_cnr)
+        & torch.isfinite(target_bg_std)
+    )
     if mask.sum() == 0:
         return pred.new_tensor(0.0)
-    delta_snr = pred_snr[mask] - target_snr[mask]
-    delta_cnr = pred_cnr[mask] - target_cnr[mask]  
-    snr_cnr_loss = (F.softplus(-delta_snr) + F.softplus(-delta_cnr)).mean()
-    return snr_cnr_loss
+    snr_term = F.softplus(target_snr[mask] - pred_snr[mask])
+    cnr_term = F.softplus(target_cnr[mask] - pred_cnr[mask])
+    bg_term = F.relu(target_bg_std[mask] - pred_bg_std[mask])
+    return (snr_term + cnr_term + bg_term).mean()
