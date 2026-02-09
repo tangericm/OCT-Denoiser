@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from .losses import charbonnier_loss, gradient_l1, snr_cnr_loss
+from .losses import charbonnier_loss, gradient_l1
 from .metrics import roi_bounds, bg_bounds, roi_snr_cnr
 
 def _unpack_batch(batch):
@@ -22,9 +22,6 @@ def evaluate(
     device: str,
     w_charb: float,
     w_grad: float,
-    w_snr_cnr: float,
-    snr_sig_y0: int,
-    snr_sig_y1: int,
 ) -> float:
     model.eval()
     loss_acc = 0.0
@@ -35,11 +32,9 @@ def evaluate(
         y = y.to(device, non_blocking=True)
 
         pred = model(x)
-        snr_loss = snr_cnr_loss(pred, y, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1)
         loss = (
             w_charb * charbonnier_loss(pred, y)
             + w_grad * gradient_l1(pred, y)
-            + w_snr_cnr * snr_loss
         )
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
@@ -75,14 +70,11 @@ def evaluate_full_frames(
         y = y.to(device, non_blocking=True)
 
         pred = model(x)
-        snr_loss = snr_cnr_loss(pred, y, sig_y0=snr_sig_y0, sig_y1=snr_sig_y1)
         loss = (
             w_charb * charbonnier_loss(pred, y)
             + w_grad * gradient_l1(pred, y)
-            + w_snr_cnr * snr_loss
         )
         loss_acc += float(loss.item()) * x.size(0)
-        snr_cnr_acc += float(snr_loss.item()) * x.size(0)
         n += x.size(0)
 
         pred_np = pred.detach().cpu().numpy()

@@ -12,7 +12,7 @@ from engine.early_stopping import EarlyStopping
 from utils.json_logging import save_json
 from utils.live_plot import LiveLossPlot
 from data.datamodule import RawBscanDataModule, RawDataConfig
-from engine.losses import charbonnier_loss, gradient_l1, snr_cnr_loss
+from engine.losses import charbonnier_loss, gradient_l1
 from engine.eval import evaluate, evaluate_full_frames
 from networks import create_model  # registers via networks/__init__.py
 
@@ -161,12 +161,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 loss = (
                     cfg.w_charb * charbonnier_loss(pred, y)
                     + cfg.w_grad * gradient_l1(pred, y)
-                    + cfg.w_snr_cnr * snr_cnr_loss(
-                        pred,
-                        y,
-                        sig_y0=cfg.snr_sig_y0,
-                        sig_y1=cfg.snr_sig_y1,
-                    )
                 )
 
             scaler.scale(loss).backward()
@@ -192,9 +186,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 device=device,
                 w_charb=cfg.w_charb,
                 w_grad=cfg.w_grad,
-                w_snr_cnr=cfg.w_snr_cnr,
-                snr_sig_y0=cfg.snr_sig_y0,
-                snr_sig_y1=cfg.snr_sig_y1,
             )
             val_full = evaluate_full_frames(
                 model,
@@ -202,7 +193,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 device=device,
                 w_charb=cfg.w_charb,
                 w_grad=cfg.w_grad,
-                w_snr_cnr=cfg.w_snr_cnr,
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
             )
