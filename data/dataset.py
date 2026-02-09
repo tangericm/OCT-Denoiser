@@ -1,6 +1,6 @@
 import random
 from collections import OrderedDict
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 import numpy as np
 import torch
@@ -41,6 +41,7 @@ class RawBscanPatchDataset(Dataset):
         patches_per_frame: int,
         patch_mode: str = "strip",
         seed: int = 0,
+        augment: bool = False,
         cache_frames_per_worker: int = 2,
     ):
         self.folder_specs = folder_specs
@@ -51,6 +52,7 @@ class RawBscanPatchDataset(Dataset):
         self.patches_per_frame = patches_per_frame
         self.patch_mode = patch_mode
         self.seed = seed
+        self.augment = augment
         self.cache_frames_per_worker = cache_frames_per_worker
 
         # Will be created lazily per worker:
@@ -78,7 +80,7 @@ class RawBscanPatchDataset(Dataset):
 
         wi = get_worker_info()
         wid = 0 if wi is None else wi.id
-        base_seed = self.seed + 1337 * wid
+        base_seed = self.seed + 4242 * wid
 
         self._procs = []
         self._paths = []
@@ -111,12 +113,12 @@ class RawBscanPatchDataset(Dataset):
                 raise ValueError(f"patch_h={self.patch_h} > cropped_depth={z1-z0} for folder={fs.data_folder}")
 
         # Split per folder deterministically
-        rng = np.random.RandomState(base_seed)
+        self._rng = np.random.RandomState(base_seed)
         self._index = []
         for fidx, paths in enumerate(self._paths):
             n = len(paths)
             order = np.arange(n)
-            rng.shuffle(order)
+            self._rng.shuffle(order)
             n_train = int(round(self.train_frac * n))
             if self.split == "train":
                 chosen = order[:n_train]
@@ -130,6 +132,50 @@ class RawBscanPatchDataset(Dataset):
         self._estimated_len = len(self._index)
         self._cache = _LRU(max_items=self.cache_frames_per_worker)
 
+    def _random_crop(
+        self,
+        img1: np.ndarray,
+        img2: np.ndarray,
+        tgt: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        H, W = tgt.shape
+        if self.patch_mode == "strip":
+            x0 = self._rng.randint(0, W - self.patch_w + 1)
+            x = np.stack(
+                [
+                    img1[:, x0:x0 + self.patch_w],
+                    img2[:, x0:x0 + self.patch_w],
+                ],
+                axis=0,
+            ).astype(np.float32)
+            y = tgt[:, x0:x0 + self.patch_w][None, ...].astype(np.float32)
+            return x, y
+
+        y0 = self._rng.randint(0, H - self.patch_h + 1)
+        x0 = self._rng.randint(0, W - self.patch_w + 1)
+        x = np.stack(
+            [
+                img1[y0:y0 + self.patch_h, x0:x0 + self.patch_w],
+                img2[y0:y0 + self.patch_h, x0:x0 + self.patch_w],
+            ],
+            axis=0,
+        ).astype(np.float32)
+        y = tgt[y0:y0 + self.patch_h, x0:x0 + self.patch_w][None, ...].astype(np.float32)
+        return x, y
+
+    def _random_flips(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        if self._rng.rand() < 0.5:
+            x = x[:, :, ::-1]
+            y = y[:, :, ::-1]
+        if self._rng.rand() < 0.5:
+            x = x[:, ::-1, :]
+            y = y[:, ::-1, :]
+        return x, y
+    
     def __len__(self):
         self._init_worker_state()
         return self._estimated_len
@@ -151,31 +197,9 @@ class RawBscanPatchDataset(Dataset):
         img2 = out["input_w2"]
         tgt  = out["target_full"]
 
-        H, W = tgt.shape
-        if self.patch_mode == "strip":
-            # full axial, random lateral strip
-            y0 = 0
-            patch_h = H
-            x0 = np.random.randint(0, W - self.patch_w + 1)
-
-            x = np.stack([
-                img1[:, x0:x0+self.patch_w],
-                img2[:, x0:x0+self.patch_w],
-            ], axis=0).astype(np.float32)
-
-            y = tgt[:, x0:x0+self.patch_w][None, ...].astype(np.float32)
-
-        else:
-            # standard 2D patch
-            y0 = np.random.randint(0, H - self.patch_h + 1)
-            x0 = np.random.randint(0, W - self.patch_w + 1)
-
-            x = np.stack([
-                img1[y0:y0+self.patch_h, x0:x0+self.patch_w],
-                img2[y0:y0+self.patch_h, x0:x0+self.patch_w],
-            ], axis=0).astype(np.float32)
-
-            y = tgt[y0:y0+self.patch_h, x0:x0+self.patch_w][None, ...].astype(np.float32)
+        x, y = self._random_crop(img1, img2, tgt)
+        if self.augment:
+            x, y = self._random_flips(x, y)
 
         meta = {
             "folder_idx": fidx,
