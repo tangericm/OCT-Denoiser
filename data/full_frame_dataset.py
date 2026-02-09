@@ -99,7 +99,7 @@ class RawBscanFullFrameDataset(Dataset):
                 index.append((fidx, int(frame_idx)))
 
         if self.max_frames is not None and len(index) > self.max_frames:
-            subset_rng = np.random.RandomState(base_seed + 12345)
+            subset_rng = np.random.RandomState(base_seed)
             pick = subset_rng.permutation(len(index))[: self.max_frames]
             index = [index[i] for i in pick]
 

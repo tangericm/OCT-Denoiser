@@ -40,9 +40,9 @@ class RawBscanPatchDataset(Dataset):
         patch_w: int,
         patches_per_frame: int,
         patch_mode: str = "strip",
-        seed: int = 0,
+        seed: int = 42,
         augment: bool = False,
-        cache_frames_per_worker: int = 2,
+        cache_frames_per_worker: int = 200,
     ):
         self.folder_specs = folder_specs
         self.split = split
@@ -80,7 +80,7 @@ class RawBscanPatchDataset(Dataset):
 
         wi = get_worker_info()
         wid = 0 if wi is None else wi.id
-        base_seed = self.seed + 4242 * wid
+        base_seed = self.seed * wid
 
         self._procs = []
         self._paths = []
