@@ -15,6 +15,7 @@ class RawDataConfig:
     batch_size: int
     num_workers: int
     seed: int
+    augment: bool = False
     patch_mode: str = "strip"
     cache_frames_per_worker: int = 2
 
@@ -35,6 +36,7 @@ class RawBscanDataModule:
             patches_per_frame=self.cfg.patches_per_frame,
             patch_mode=self.cfg.patch_mode,
             seed=self.cfg.seed,
+            augment=self.cfg.augment,
             cache_frames_per_worker=self.cfg.cache_frames_per_worker,
         )
         self._val = RawBscanPatchDataset(
