@@ -12,7 +12,7 @@ from engine.early_stopping import EarlyStopping
 from utils.json_logging import save_json
 from utils.live_plot import LiveLossPlot
 from data.datamodule import RawBscanDataModule, RawDataConfig
-from engine.losses import charbonnier_loss, gradient_l1, roi_snr_loss
+from engine.losses import charbonnier_loss, gradient_l1
 from engine.eval import evaluate, evaluate_full_frames
 from networks import create_model  # registers via networks/__init__.py
 
@@ -149,7 +149,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         model.train()
         t0 = time.time()
         running = 0.0
-        running_snr = 0.0
         n = 0
 
         for batch in train_loader:
@@ -159,17 +158,9 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             with torch.amp.autocast("cuda", enabled=use_cuda_amp):
 
                 pred = model(x)
-                snr_loss = roi_snr_loss(
-                    pred,
-                    snr_sig_y0=cfg.snr_sig_y0,
-                    snr_sig_y1=cfg.snr_sig_y1,
-                    weight_bg=cfg.snr_weight_bg,
-                    eps=cfg.snr_eps,
-                )
                 loss = (
                     cfg.w_charb * charbonnier_loss(pred, y)
                     + cfg.w_grad * gradient_l1(pred, y)
-                    + cfg.w_snr * snr_loss
                 )
 
             scaler.scale(loss).backward()
@@ -183,14 +174,10 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             scheduler.step()
 
             running += float(loss.item()) * x.size(0)
-            running_snr += float(snr_loss.item()) * x.size(0)
             n += x.size(0)
 
         train_loss = running / max(n, 1)
-        train_snr_loss = running_snr / max(n, 1)
-        history["train_loss"].append(
-            {"epoch": epoch, "loss": train_loss, "snr_loss": train_snr_loss}
-        )
+        history["train_loss"].append({"epoch": epoch, "loss": train_loss})
 
         if epoch == 1 or (epoch % cfg.val_every) == 0:
             val_loss = evaluate(
@@ -199,11 +186,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 device=device,
                 w_charb=cfg.w_charb,
                 w_grad=cfg.w_grad,
-                w_snr=cfg.w_snr,
-                snr_sig_y0=cfg.snr_sig_y0,
-                snr_sig_y1=cfg.snr_sig_y1,
-                snr_weight_bg=cfg.snr_weight_bg,
-                snr_eps=cfg.snr_eps,
             )
             val_full = evaluate_full_frames(
                 model,
@@ -211,18 +193,14 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 device=device,
                 w_charb=cfg.w_charb,
                 w_grad=cfg.w_grad,
-                w_snr=cfg.w_snr,
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
-                snr_weight_bg=cfg.snr_weight_bg,
-                snr_eps=cfg.snr_eps,
             )
 
             history["val_loss"].append(
                 {
                     "epoch": epoch,
-                    "loss": val_loss["loss"],
-                    "snr_loss": val_loss["snr_loss"],
+                    "loss": val_loss,
                     "snr_pred": val_full["snr_pred"],
                     "snr_gt": val_full["snr_gt"],
                     "cnr_pred": val_full["cnr_pred"],
@@ -233,18 +211,17 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 {
                     "epoch": epoch,
                     "loss": val_full["val_loss"],
-                    "snr_loss": val_full["snr_loss"],
                     "snr_pred": val_full["snr_pred"],
                     "snr_gt": val_full["snr_gt"],
                     "cnr_pred": val_full["cnr_pred"],
                     "cnr_gt": val_full["cnr_gt"],
                 }
             )
-            plotter.update(epoch=epoch, train_loss=train_loss, val_loss=val_loss["loss"])
+            plotter.update(epoch=epoch, train_loss=train_loss, val_loss=val_loss)
             dt = time.time() - t0
             print(
                 f"[E{epoch:04d}] train={train_loss:.10f}  "
-                f"val_loss={val_loss['loss']:.10f} "
+                f"val_loss={val_loss:.10f} "
                 f"SNR_pred/gt={val_full['snr_pred']:.2f}/{val_full['snr_gt']:.2f}  "
                 f"CNR_pred/gt={val_full['cnr_pred']:.2f}/{val_full['cnr_gt']:.2f}  "
                 f"time={dt:.5f}s"
@@ -261,8 +238,8 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                     out_path=out_path,
                 )
 
-            if val_loss["loss"] < best_val:
-                best_val = val_loss["loss"]
+            if val_loss < best_val:
+                best_val = val_loss
                 torch.save(
                     {
                         "epoch": epoch,
@@ -275,7 +252,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 )
                 print(f"[OK] Saved best checkpoint: {best_ckpt_path}")
 
-            stop_now = early_stop.update(float(val_loss["loss"]), epoch)
+            stop_now = early_stop.update(float(val_loss), epoch)
             if stop_now:
                 print(
                     f"[EARLY STOP] No val improvement for {early_stop.patience} validation checks. "
