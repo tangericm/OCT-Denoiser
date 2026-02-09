@@ -48,15 +48,15 @@ class RawBscanDataModule:
             patches_per_frame=max(1, self.cfg.patches_per_frame // 2),
             patch_mode=self.cfg.patch_mode,
             seed=self.cfg.seed,
-            cache_frames_per_worker=1,
+            cache_frames_per_worker=self.cfg.cache_frames_per_worker,
         )
         self._val_full = RawBscanFullFrameDataset(
             folder_specs=self.cfg.folder_specs,
             split="val",
             train_frac=self.cfg.train_frac,
             max_frames=1,
-            seed=self.cfg.seed + 2024,
-            cache_frames_per_worker=1,
+            seed=self.cfg.seed,
+            cache_frames_per_worker=self.cfg.cache_frames_per_worker,
         )
 
     def train_loader(self):

@@ -39,7 +39,7 @@ def main():
         device="cuda",
         amp=True,
         deterministic=True,
-        epochs=10,
+        epochs=300,
         base=32,
         batch_size=12,
         lr=3e-4,
