@@ -81,7 +81,7 @@ def main():
             ),
         ],
 
-        cache_frames_per_worker=200,
+        cache_frames_per_worker=1000,
 
         device="cuda",
         amp=True,
