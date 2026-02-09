@@ -50,7 +50,6 @@ def evaluate_full_frames(
     device: str,
     w_charb: float,
     w_grad: float,
-    w_snr_cnr: float,
     snr_sig_y0: int,
     snr_sig_y1: int,
 ) -> dict[str, float | np.ndarray | None]:
