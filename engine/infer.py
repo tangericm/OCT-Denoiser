@@ -16,6 +16,7 @@ from configs.default import TrainConfig
 
 DEFAULT_SNR_SIG_Y0 = TrainConfig.__dataclass_fields__["snr_sig_y0"].default
 DEFAULT_SNR_SIG_Y1 = TrainConfig.__dataclass_fields__["snr_sig_y1"].default
+DEFAULT_SNR_SIG_STAT = TrainConfig.__dataclass_fields__["snr_sig_stat"].default
 
 
 
@@ -81,6 +82,7 @@ def predict_raw_to_tiffs(
     # ROI y-range for SNR/CNR (x-range and background rows match training config)
     snr_sig_y0: int | None = None,
     snr_sig_y1: int | None = None,
+    snr_sig_stat: str | None = None,
 ) -> None:
     """
     Raw-folder inference:
@@ -171,6 +173,8 @@ def predict_raw_to_tiffs(
         snr_sig_y0 = DEFAULT_SNR_SIG_Y0
     if snr_sig_y1 is None:
         snr_sig_y1 = DEFAULT_SNR_SIG_Y1
+    if snr_sig_stat is None:
+        snr_sig_stat = DEFAULT_SNR_SIG_STAT
 
     sig_roi_c = roi_bounds(H, W, snr_sig_y0, snr_sig_y1)
     sy0, sy1, sx0, sx1 = sig_roi_c
@@ -207,8 +211,8 @@ def predict_raw_to_tiffs(
         pred_lin = np.maximum(10.0 ** pred_log - proc.cfg.log_eps, 0.0)
         gt_lin = np.maximum(10.0 ** gt_log - proc.cfg.log_eps, 0.0)
 
-        snr_pred, cnr_pred = roi_snr_cnr(pred_lin, sig_roi_c, bg_roi_c)
-        snr_gt, cnr_gt = roi_snr_cnr(gt_lin, sig_roi_c, bg_roi_c)
+        snr_pred, cnr_pred = roi_snr_cnr(pred_lin, sig_roi_c, bg_roi_c, sig_stat=snr_sig_stat)
+        snr_gt, cnr_gt = roi_snr_cnr(gt_lin, sig_roi_c, bg_roi_c, sig_stat=snr_sig_stat)
         snr_pred_list.append(snr_pred)
         snr_gt_list.append(snr_gt)
         cnr_pred_list.append(cnr_pred)
@@ -292,5 +296,6 @@ def predict_from_config(cfg, folder_spec, ckpt_path: str, outdir: str, **overrid
         also_save_float32=cfg.also_save_float32,
         snr_sig_y0=cfg.snr_sig_y0,
         snr_sig_y1=cfg.snr_sig_y1,
+        snr_sig_stat=cfg.snr_sig_stat,
         **overrides,
     )

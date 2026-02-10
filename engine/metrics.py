@@ -3,7 +3,13 @@ from __future__ import annotations
 import numpy as np
 
 
-def roi_snr_cnr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> tuple[float, float]:
+def roi_snr_cnr(
+    img2d: np.ndarray,
+    sig_roi,
+    bg_roi,
+    eps: float = 1e-8,
+    sig_stat: str = "max",
+) -> tuple[float, float]:
     """
     Compute SNR and CNR in dB using shared ROIs.
 
@@ -25,11 +31,24 @@ def roi_snr_cnr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> tuple[
     sig = np.where(np.isfinite(sig), sig, np.nan)
     bg = np.where(np.isfinite(bg), bg, np.nan)
 
-    mean_max_sig = float(np.nanmean(np.nanmax(sig, axis=0)))
+    sig_stat_key = sig_stat.lower().strip()
+    if sig_stat_key == "max":
+        signal_level = float(np.nanmean(np.nanmax(sig, axis=0)))
+    elif sig_stat_key.startswith("p"):
+        try:
+            percentile_q = float(sig_stat_key[1:])
+        except ValueError as exc:
+            raise ValueError(f"Invalid sig_stat '{sig_stat}'. Expected 'max' or 'p<percentile>' (e.g. 'p95').") from exc
+        if not (0.0 <= percentile_q <= 100.0):
+            raise ValueError(f"Invalid percentile in sig_stat '{sig_stat}'. Percentile must be in [0, 100].")
+        signal_level = float(np.nanpercentile(sig, q=percentile_q))
+    else:
+        raise ValueError(f"Invalid sig_stat '{sig_stat}'. Expected 'max' or 'p<percentile>' (e.g. 'p95').")
+
     mean_sig = float(np.nanmean(sig))
     std_bg = float(np.nanstd(bg))
 
-    snr = 20.0 * np.log10((mean_max_sig + eps) / (std_bg + eps))
+    snr = 20.0 * np.log10((signal_level + eps) / (std_bg + eps))
     cnr = 20.0 * np.log10((mean_sig + eps) / (std_bg + eps))
     if not np.isfinite(snr):
         snr = float("nan")
