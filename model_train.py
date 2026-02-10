@@ -42,6 +42,7 @@ def main():
 
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
+        w_snr_loss=0.01,
 
         snr_sig_y0=111,
         snr_sig_y1=600,
@@ -61,7 +62,7 @@ def main():
     result = run_training(cfg, paths)
 
     for folder_spec in cfg.folder_specs:
-        predict_from_config(cfg, folder_spec, result["best_score_ckpt_path"], paths["pred_tiff"])
+        predict_from_config(cfg, folder_spec, result["best_ckpt_path"], paths["pred_tiff"])
 
 
 if __name__ == "__main__":
