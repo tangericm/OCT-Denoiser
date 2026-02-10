@@ -3,6 +3,34 @@ from __future__ import annotations
 import numpy as np
 
 
+def align_prediction_to_gt(
+    pred2d: np.ndarray,
+    gt2d: np.ndarray,
+    bg_roi,
+) -> tuple[np.ndarray, float]:
+    """
+    Align prediction to GT by matching the background/noise-floor mean (dB offset).
+
+    Returns:
+      aligned_pred: pred2d shifted by a constant offset
+      shift_db: additive offset applied to prediction
+    """
+    y0b, y1b, x0b, x1b = bg_roi
+    pred_bg = pred2d[y0b:y1b, x0b:x1b]
+    gt_bg = gt2d[y0b:y1b, x0b:x1b]
+
+    pred_bg = np.where(np.isfinite(pred_bg), pred_bg, np.nan)
+    gt_bg = np.where(np.isfinite(gt_bg), gt_bg, np.nan)
+
+    pred_bg_mean = float(np.nanmean(pred_bg))
+    gt_bg_mean = float(np.nanmean(gt_bg))
+    if not np.isfinite(pred_bg_mean) or not np.isfinite(gt_bg_mean):
+        return pred2d, 0.0
+
+    shift_db = gt_bg_mean - pred_bg_mean
+    return pred2d + shift_db, float(shift_db)
+
+
 def roi_snr_cnr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> tuple[float, float]:
     """
     Compute SNR and CNR in dB using shared ROIs.

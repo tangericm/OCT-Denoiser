@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from networks import create_model
-from engine.metrics import roi_snr_cnr, roi_bounds, bg_bounds
+from engine.metrics import align_prediction_to_gt, roi_snr_cnr, roi_bounds, bg_bounds
 from utils.io_tiff import save_tiff_stack
 from utils.run_manager import ensure_dir
 from configs.default import TrainConfig
@@ -197,8 +197,9 @@ def predict_raw_to_tiffs(
         preds[i] = pred
         gts[i] = gt
 
-        # SNR/CNR on pred + gt
-        snr_pred, cnr_pred = roi_snr_cnr(pred, sig_roi_c, bg_roi_c)
+        # SNR/CNR on pred + gt (pred is aligned to GT noise floor before metric calc)
+        pred_aligned, pred_shift_db = align_prediction_to_gt(pred, gt, bg_roi_c)
+        snr_pred, cnr_pred = roi_snr_cnr(pred_aligned, sig_roi_c, bg_roi_c)
         snr_gt, cnr_gt = roi_snr_cnr(gt, sig_roi_c, bg_roi_c)
         snr_pred_list.append(snr_pred)
         snr_gt_list.append(snr_gt)
@@ -206,6 +207,7 @@ def predict_raw_to_tiffs(
         cnr_gt_list.append(cnr_gt)
         print(
             f"[PROGRESS] Frame {i+1}/{F}: inference={elapsed_time:.4f}s, "
+            f"pred_shift={pred_shift_db:+.2f}dB, "
             f"SNR_pred={snr_pred:.2f}dB, SNR_gt={snr_gt:.2f}dB, "
             f"CNR_pred={cnr_pred:.2f}dB, CNR_gt={cnr_gt:.2f}dB"
         )
