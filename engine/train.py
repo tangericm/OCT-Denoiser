@@ -308,7 +308,8 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             if stop_now:
                 print(
                     f"[EARLY STOP] No val improvement for {early_stop.patience} validation checks. "
-                    f"Best={early_stop.best:.6f} at epoch={early_stop.best_epoch}. Stopping at epoch={epoch}."
+                    f"Best={early_stop.best:.6f} at epoch={early_stop.best_epoch}. "
+                    f"Best Score={best_score:.6f} at epoch={best_score_epoch}. Stopping at epoch={epoch}."
                 )
                 break
         
@@ -321,7 +322,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             )
 
     print(f"[DONE] Best val loss = {best_val:.10f}")
-    print(f"[DONE] Best composite score = {best_score:.10f}")
+    print(f"[DONE] Best composite score = {best_score:.10f} at epoch {best_score_epoch}")
     history["best_by_score"] = {
         "score": best_score,
         "epoch": best_score_epoch,

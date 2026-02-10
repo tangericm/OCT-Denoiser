@@ -39,7 +39,7 @@ def main():
         device="cuda",
         amp=True,
         deterministic=True,
-        epochs=500,
+        epochs=600,
         base=32,
         batch_size=12,
         lr=3e-4,
@@ -73,13 +73,9 @@ def main():
 
         # Composite validation score (lower is better):
         # score = (score_w_val_loss * val_loss) - (score_w_snr * val_snr) - (score_w_cnr * val_cnr)
-        # Increase score_w_val_loss to emphasize loss, or increase score_w_snr/score_w_cnr
-        # to prioritize higher SNR/CNR in checkpoint selection.
-        score_norm = "baseline_relative",
-        score_norm_eps = 1e-8,
         score_w_val_loss = 1.0,
-        score_w_snr = 0.6,
-        score_w_cnr = 0.4,
+        score_w_snr = 0.3,
+        score_w_cnr = 0.2,
 
 
     )

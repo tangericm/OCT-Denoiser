@@ -59,7 +59,7 @@ class TrainConfig:
 
     # Composite validation score (lower is better):
     # score = (score_w_val_loss * val_loss) - (score_w_snr * val_snr) - (score_w_cnr * val_cnr)
-    # Use (metric - baseline) / (abs(baseline) + score_norm_eps)
+    # Use (metric - baseline) / (abs(baseline) + 1e-8)
     # Baseline values are taken at the first validation pass in each training run.
     score_w_val_loss: float = 1.0
     score_w_snr: float = 1.0
