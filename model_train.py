@@ -50,6 +50,7 @@ def main():
 
         snr_sig_y0=111,
         snr_sig_y1=600,
+        snr_sig_stat="p95",
         val_every=5,
         save_every=5,
         early_stop_patience=20,
