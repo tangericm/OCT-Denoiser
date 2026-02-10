@@ -14,7 +14,7 @@ conda activate OCTDenoiser
 ```
 
 ```
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 pip install numpy matplotlib tifffile
 pip install -r requirements.txt
 pip freeze > requirements.txt
