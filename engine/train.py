@@ -47,6 +47,34 @@ def _save_full_frame_val_png(
     fig.savefig(out_path, dpi=160, bbox_inches="tight")
     plt.close(fig)
 
+
+
+def _scheduled_w_snr_loss(cfg, epoch: int) -> float:
+    """Return epoch-specific SNR loss weight.
+
+    Uses a linear ramp from ``w_snr_loss_start`` to ``w_snr_loss_end`` between
+    ``w_snr_ramp_start_epoch`` and ``w_snr_ramp_end_epoch`` (inclusive).
+    If start/end are not configured, falls back to constant ``w_snr_loss``.
+    """
+    start = cfg.w_snr_loss_start
+    end = cfg.w_snr_loss_end
+    if start is None or end is None:
+        return float(cfg.w_snr_loss)
+
+    ramp_start = int(cfg.w_snr_ramp_start_epoch)
+    ramp_end = int(cfg.w_snr_ramp_end_epoch or cfg.epochs)
+
+    if ramp_end <= ramp_start:
+        return float(end if epoch >= ramp_start else start)
+
+    if epoch <= ramp_start:
+        return float(start)
+    if epoch >= ramp_end:
+        return float(end)
+
+    alpha = (epoch - ramp_start) / (ramp_end - ramp_start)
+    return float(start + alpha * (end - start))
+
 def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     """
     Returns dict with:
@@ -118,6 +146,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     train_start_time = time.time()
     for epoch in range(1, cfg.epochs + 1):
         model.train()
+        w_snr_loss_epoch = _scheduled_w_snr_loss(cfg, epoch)
         t0 = time.time()
         running = 0.0
         n = 0
@@ -133,13 +162,13 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                     cfg.w_charb * charbonnier_loss(pred, y)
                     + cfg.w_grad * gradient_l1(pred, y)
                 )
-                if cfg.w_snr_loss > 0:
+                if w_snr_loss_epoch > 0:
                     snr_l, _snr_info = smooth_snr_loss(
                         pred,
                         t_peak=cfg.snr_loss_t_peak,
                         t_bg=cfg.snr_loss_t_bg,
                     )
-                    loss = loss + cfg.w_snr_loss * snr_l
+                    loss = loss + w_snr_loss_epoch * snr_l
 
             scaler.scale(loss).backward()
             if cfg.grad_clip and cfg.grad_clip > 0:
@@ -164,7 +193,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 device=device,
                 w_charb=cfg.w_charb,
                 w_grad=cfg.w_grad,
-                w_snr_loss=cfg.w_snr_loss,
+                w_snr_loss=w_snr_loss_epoch,
                 snr_loss_t_peak=cfg.snr_loss_t_peak,
                 snr_loss_t_bg=cfg.snr_loss_t_bg,
             )
@@ -176,7 +205,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 w_grad=cfg.w_grad,
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
-                w_snr_loss=cfg.w_snr_loss,
+                w_snr_loss=w_snr_loss_epoch,
                 snr_loss_t_peak=cfg.snr_loss_t_peak,
                 snr_loss_t_bg=cfg.snr_loss_t_bg,
             )
@@ -204,6 +233,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 {
                     "epoch": epoch,
                     "loss": val_loss,
+                    "w_snr_loss": w_snr_loss_epoch,
                     "score": composite_score,
                     "norm_val_loss": norm_val_loss,
                     "norm_val_snr": norm_val_snr,
@@ -218,6 +248,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 {
                     "epoch": epoch,
                     "loss": val_full["val_loss"],
+                    "w_snr_loss": w_snr_loss_epoch,
                     "score": composite_score,
                     "norm_val_loss": norm_val_loss,
                     "norm_val_snr": norm_val_snr,
@@ -238,6 +269,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             print(
                 f"[E{epoch:04d}] train={train_loss:.10f}  "
                 f"val_loss={val_loss:.10f} "
+                f"w_snr={w_snr_loss_epoch:.6g} "
                 f"score={composite_score:.6f} "
                 f"SNR_pred/gt={val_full['snr_pred']:.2f}/{val_full['snr_gt']:.2f}  "
                 f"CNR_pred/gt={val_full['cnr_pred']:.2f}/{val_full['cnr_gt']:.2f}  "
@@ -312,6 +344,13 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             "val_loss": cfg.score_w_val_loss,
             "snr": cfg.score_w_snr,
             "cnr": cfg.score_w_cnr,
+        },
+        "snr_loss_schedule": {
+            "constant_w_snr_loss": cfg.w_snr_loss,
+            "start": cfg.w_snr_loss_start,
+            "end": cfg.w_snr_loss_end,
+            "ramp_start_epoch": cfg.w_snr_ramp_start_epoch,
+            "ramp_end_epoch": cfg.w_snr_ramp_end_epoch,
         },
     }
     history["early_stop"] = {
