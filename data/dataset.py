@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+import glob
+import os
 from typing import List, Any, Tuple
 
 import numpy as np
@@ -75,13 +77,54 @@ class RawBscanDataset(Dataset):
         self._rng = None
         self._estimated_len = 1
 
+    def _build_index(self):
+        if self._index is not None:
+            return
+
+        index_rng = np.random.RandomState(self.seed)
+        index = []
+
+        for fidx, fs in enumerate(self.folder_specs):
+            data_dir = os.path.join(fs.root_folder, fs.data_folder)
+            paths = sorted(glob.glob(os.path.join(data_dir, "bscan*.raw")))
+            n = len(paths)
+            if n == 0:
+                raise FileNotFoundError(f"No bscan*.raw found in {data_dir}")
+
+            order = np.arange(n)
+            index_rng.shuffle(order)
+            n_train = int(round(self.train_frac * n))
+            chosen = order[:n_train] if self.split == "train" else order[n_train:]
+
+            if self.full_frame:
+                for frame_idx in chosen:
+                    index.append((fidx, int(frame_idx)))
+            else:
+                if fs.alines < self.patch_w:
+                    raise ValueError(f"patch_w={self.patch_w} > alines={fs.alines} for folder={fs.data_folder}")
+                z0, z1 = fs.crop_depth
+                if (z1 - z0) < self.patch_h:
+                    raise ValueError(f"patch_h={self.patch_h} > cropped_depth={z1-z0} for folder={fs.data_folder}")
+
+                for frame_idx in chosen:
+                    for pr in range(self.patches_per_frame):
+                        index.append((fidx, int(frame_idx), pr))
+
+        if self.full_frame and self.max_frames is not None and len(index) > self.max_frames:
+            subset_rng = np.random.RandomState(self.seed)
+            pick = subset_rng.permutation(len(index))[: self.max_frames]
+            index = [index[i] for i in pick]
+
+        self._index = index
+        self._estimated_len = len(index)
+
     def _init_worker_state(self):
         if self._procs is not None:
             return
 
         wi = get_worker_info()
         wid = 0 if wi is None else wi.id
-        base_seed = self.seed if self.full_frame else self.seed * wid
+        aug_seed = self.seed + wid
 
         self._procs = []
         self._paths = []
@@ -90,38 +133,8 @@ class RawBscanDataset(Dataset):
             self._procs.append(proc)
             self._paths.append(proc.bscan_paths)
 
-            if not self.full_frame:
-                if fs.alines < self.patch_w:
-                    raise ValueError(f"patch_w={self.patch_w} > alines={fs.alines} for folder={fs.data_folder}")
-                z0, z1 = fs.crop_depth
-                if (z1 - z0) < self.patch_h:
-                    raise ValueError(f"patch_h={self.patch_h} > cropped_depth={z1-z0} for folder={fs.data_folder}")
-
-        self._rng = np.random.RandomState(base_seed)
-        index = []
-
-        for fidx, paths in enumerate(self._paths):
-            n = len(paths)
-            order = np.arange(n)
-            self._rng.shuffle(order)
-            n_train = int(round(self.train_frac * n))
-            chosen = order[:n_train] if self.split == "train" else order[n_train:]
-
-            if self.full_frame:
-                for frame_idx in chosen:
-                    index.append((fidx, int(frame_idx)))
-            else:
-                for frame_idx in chosen:
-                    for pr in range(self.patches_per_frame):
-                        index.append((fidx, int(frame_idx), pr))
-
-        if self.full_frame and self.max_frames is not None and len(index) > self.max_frames:
-            subset_rng = np.random.RandomState(base_seed)
-            pick = subset_rng.permutation(len(index))[: self.max_frames]
-            index = [index[i] for i in pick]
-
-        self._index = index
-        self._estimated_len = len(index)
+        self._build_index()
+        self._rng = np.random.RandomState(aug_seed)
         self._cache = _LRU(max_items=self.cache_frames_per_worker)
 
     def _fetch_frame(self, fidx: int, frame_idx: int):
@@ -176,7 +189,7 @@ class RawBscanDataset(Dataset):
         }
 
     def __len__(self):
-        self._init_worker_state()
+        self._build_index()
         return self._estimated_len
 
     def __getitem__(self, idx: int):
