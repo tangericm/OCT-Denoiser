@@ -1,86 +1,78 @@
-from dataclasses import dataclass
-from typing import List, Any
+from __future__ import annotations
+
+import torch
 from torch.utils.data import DataLoader
 
-from data.dataset import RawBscanPatchDataset
-from data.full_frame_dataset import RawBscanFullFrameDataset
+from data.dataset import RawBscanDataset
 
-@dataclass
-class RawDataConfig:
-    folder_specs: List[Any]   # List[FolderSpec]
-    train_frac: float
-    patch_h: int
-    patch_w: int
-    patches_per_frame: int
-    batch_size: int
-    num_workers: int
-    seed: int
-    augment: bool
-    patch_mode: str
-    cache_frames_per_worker: int
 
 class RawBscanDataModule:
-    def __init__(self, cfg: RawDataConfig):
+    """Wraps train/val/val-full data loaders. Accepts a TrainConfig directly."""
+
+    def __init__(self, cfg):
         self.cfg = cfg
         self._train = None
         self._val = None
         self._val_full = None
 
     def setup(self):
-        self._train = RawBscanPatchDataset(
-            folder_specs=self.cfg.folder_specs,
+        c = self.cfg
+        self._train = RawBscanDataset(
+            folder_specs=c.folder_specs,
             split="train",
-            train_frac=self.cfg.train_frac,
-            patch_h=self.cfg.patch_h,
-            patch_w=self.cfg.patch_w,
-            patches_per_frame=self.cfg.patches_per_frame,
-            patch_mode=self.cfg.patch_mode,
-            seed=self.cfg.seed,
-            augment=self.cfg.augment,
-            cache_frames_per_worker=self.cfg.cache_frames_per_worker,
+            train_frac=c.train_frac,
+            patch_h=c.patch_h,
+            patch_w=c.patch_w,
+            patches_per_frame=c.patches_per_frame,
+            patch_mode=c.patch_mode,
+            seed=c.seed,
+            augment=c.augment,
+            cache_frames_per_worker=c.cache_frames_per_worker,
         )
-        self._val = RawBscanPatchDataset(
-            folder_specs=self.cfg.folder_specs,
+        self._val = RawBscanDataset(
+            folder_specs=c.folder_specs,
             split="val",
-            train_frac=self.cfg.train_frac,
-            patch_h=self.cfg.patch_h,
-            patch_w=self.cfg.patch_w,
-            patches_per_frame=max(1, self.cfg.patches_per_frame // 2),
-            patch_mode=self.cfg.patch_mode,
-            seed=self.cfg.seed,
-            cache_frames_per_worker=self.cfg.cache_frames_per_worker,
+            train_frac=c.train_frac,
+            patch_h=c.patch_h,
+            patch_w=c.patch_w,
+            patches_per_frame=max(1, c.patches_per_frame // 2),
+            patch_mode=c.patch_mode,
+            seed=c.seed,
+            cache_frames_per_worker=c.cache_frames_per_worker,
         )
-        self._val_full = RawBscanFullFrameDataset(
-            folder_specs=self.cfg.folder_specs,
+        self._val_full = RawBscanDataset(
+            folder_specs=c.folder_specs,
             split="val",
-            train_frac=self.cfg.train_frac,
-            max_frames=None,
-            seed=self.cfg.seed,
-            cache_frames_per_worker=self.cfg.cache_frames_per_worker,
+            train_frac=c.train_frac,
+            seed=c.seed,
+            cache_frames_per_worker=c.cache_frames_per_worker,
+            full_frame=True,
         )
 
     def train_loader(self):
+        nw = self.cfg.num_workers
         return DataLoader(
             self._train,
             batch_size=self.cfg.batch_size,
             shuffle=True,
-            num_workers=self.cfg.num_workers,
+            num_workers=nw,
             pin_memory=True,
-            persistent_workers=(self.cfg.num_workers > 0),
-            prefetch_factor=2 if self.cfg.num_workers > 0 else None,
-            collate_fn=self._collate,
+            persistent_workers=(nw > 0),
+            prefetch_factor=2 if nw > 0 else None,
+            collate_fn=_collate,
         )
 
     def val_loader(self):
+        nw = max(0, self.cfg.num_workers // 2)
         return DataLoader(
             self._val,
             batch_size=self.cfg.batch_size,
             shuffle=False,
-            num_workers=max(0, self.cfg.num_workers // 2),
+            num_workers=nw,
             pin_memory=True,
-            persistent_workers=(self.cfg.num_workers > 0),
-            prefetch_factor=2 if self.cfg.num_workers > 0 else None,
-            collate_fn=self._collate,
+            persistent_workers=(nw > 0),
+            prefetch_factor=2 if nw > 0 else None,
+            collate_fn=_collate,
         )
 
     def val_full_loader(self):
@@ -91,12 +83,10 @@ class RawBscanDataModule:
             num_workers=0,
             pin_memory=True,
             persistent_workers=False,
-            collate_fn=self._collate,
+            collate_fn=_collate,
         )
 
-    @staticmethod
-    def _collate(batch):
-        # batch entries: (x, y, meta)
-        xs, ys, metas = zip(*batch)
-        import torch
-        return torch.stack(xs, 0), torch.stack(ys, 0), metas
+
+def _collate(batch):
+    xs, ys, metas = zip(*batch)
+    return torch.stack(xs, 0), torch.stack(ys, 0), metas

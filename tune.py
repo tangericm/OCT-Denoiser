@@ -10,12 +10,9 @@ from dataclasses import asdict
 from typing import Dict, List
 
 from configs.default import TrainConfig, FolderSpec
-from engine.train import run_training  # uses run_training(cfg, paths)
-from utils.seed import seed_all
-
-
-def ensure_dir(p: str) -> None:
-    os.makedirs(p, exist_ok=True)
+from engine.train import run_training
+from utils.helpers import seed_all
+from utils.run_manager import ensure_dir
 
 
 def make_trial_paths(root: str, trial_number: int) -> Dict[str, str]:

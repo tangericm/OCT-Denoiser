@@ -8,21 +8,14 @@ import matplotlib.pyplot as plt
 from dataclasses import asdict
 from typing import Dict, Any
 
+from engine.common import unpack_batch
 from engine.early_stopping import EarlyStopping
-from utils.json_logging import save_json
-from utils.live_plot import LiveLossPlot
-from data.datamodule import RawBscanDataModule, RawDataConfig
 from engine.losses import charbonnier_loss, gradient_l1
 from engine.eval import evaluate, evaluate_full_frames
-from networks import create_model  # registers via networks/__init__.py
-
-def _batch_to_device(batch, device: str):
-    if len(batch) == 2:
-        x, y = batch
-        meta = None
-    else:
-        x, y, meta = batch
-    return x.to(device, non_blocking=True), y.to(device, non_blocking=True), meta
+from data.datamodule import RawBscanDataModule
+from networks import create_model
+from utils.helpers import save_json
+from utils.live_plot import LiveLossPlot
 
 
 def _save_full_frame_val_png(
@@ -67,41 +60,14 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     save_json(os.path.join(paths["run"], "config.json"), asdict(cfg))
 
     # Data
-    dm = RawBscanDataModule(RawDataConfig(
-        folder_specs=cfg.folder_specs,  # List[FolderSpec]
-        train_frac=cfg.train_frac,
-        patch_h=cfg.patch_h,
-        patch_w=cfg.patch_w,
-        patches_per_frame=cfg.patches_per_frame,
-        batch_size=cfg.batch_size,
-        num_workers=cfg.num_workers,
-        seed=cfg.seed,
-        patch_mode=cfg.patch_mode,
-        augment=cfg.augment,
-        cache_frames_per_worker=cfg.cache_frames_per_worker,
-    ))
+    dm = RawBscanDataModule(cfg)
     dm.setup()
     if cfg.folder_specs:
         window_path = os.path.join(paths["run"], "window_figure.png")
         if not os.path.exists(window_path):
-            from preprocess import Config as PreprocessConfig, BscanProcessor
-
+            from preprocess import BscanProcessor
             fs = cfg.folder_specs[0]
-            pcfg = PreprocessConfig(
-                pixels=fs.pixels,
-                alines=fs.alines,
-                data_folder=fs.data_folder,
-                do_dc_subtract=fs.do_dc_subtract,
-                window_type=fs.window_type,
-                use_log=fs.use_log,
-                log_eps=fs.log_eps,
-                crop_depth=fs.crop_depth,
-                apply_fftshift_depth=fs.apply_fftshift_depth,
-                window_sigma=fs.window_sigma,
-                gap=fs.gap,
-                dispersion=fs.dispersion,
-            )
-            proc = BscanProcessor(fs.root_folder, pcfg)
+            proc = BscanProcessor(fs.root_folder, fs.to_preprocess_config())
             proc.save_window_figure(window_path)
     train_loader = dm.train_loader()
     val_loader = dm.val_loader()
@@ -130,12 +96,11 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     score_baseline: dict[str, float] | None = None
 
 
-    # Early stopping (defaults if cfg doesn't define them)
     early_stop = EarlyStopping(
-        patience=int(getattr(cfg, "early_stop_patience", 10)),
-        min_delta=float(getattr(cfg, "early_stop_min_delta", 0.0)),
+        patience=cfg.early_stop_patience,
+        min_delta=cfg.early_stop_min_delta,
         mode="min",
-        warmup=int(getattr(cfg, "early_stop_warmup_checks", 0)),
+        warmup=cfg.early_stop_warmup_checks,
     )
 
     plotter = LiveLossPlot(
@@ -158,7 +123,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         n = 0
 
         for batch in train_loader:
-            x, y, g = _batch_to_device(batch, device)
+            x, y, g = unpack_batch(batch, device)
 
             opt.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=use_cuda_amp):
