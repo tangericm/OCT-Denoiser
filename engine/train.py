@@ -205,6 +205,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 w_grad=cfg.w_grad,
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
+                snr_sig_stat=cfg.snr_sig_stat,
                 w_snr_loss=w_snr_loss_epoch,
                 snr_loss_t_peak=cfg.snr_loss_t_peak,
                 snr_loss_t_bg=cfg.snr_loss_t_bg,

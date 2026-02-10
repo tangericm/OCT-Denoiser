@@ -89,6 +89,7 @@ class TrainConfig:
     # ROI (y ranges) for SNR/CNR
     snr_sig_y0: int = 111
     snr_sig_y1: int = 600
+    snr_sig_stat: str = "max"  # signal statistic for SNR: "max" or "p<percentile>" (e.g. "p95")
 
     # Logging/checkpoint cadence
     val_every: int = 5

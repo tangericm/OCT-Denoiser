@@ -46,6 +46,7 @@ def evaluate_full_frames(
     w_grad: float,
     snr_sig_y0: int,
     snr_sig_y1: int,
+    snr_sig_stat: str = "max",
     w_snr_loss: float = 0.0,
     snr_loss_t_peak: float = 0.1,
     snr_loss_t_bg: float = 0.1,
@@ -80,8 +81,8 @@ def evaluate_full_frames(
             sy0, sy1, sx0, sx1 = sig_roi
             bg_roi = bg_bounds(h, w, x0=sx0, x1=sx1)
 
-            snr_pred, cnr_pred = roi_snr_cnr(pred_img, sig_roi, bg_roi)
-            snr_gt, cnr_gt = roi_snr_cnr(gt_img, sig_roi, bg_roi)
+            snr_pred, cnr_pred = roi_snr_cnr(pred_img, sig_roi, bg_roi, sig_stat=snr_sig_stat)
+            snr_gt, cnr_gt = roi_snr_cnr(gt_img, sig_roi, bg_roi, sig_stat=snr_sig_stat)
             snr_pred_list.append(snr_pred)
             snr_gt_list.append(snr_gt)
             cnr_pred_list.append(cnr_pred)
