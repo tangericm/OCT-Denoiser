@@ -94,6 +94,8 @@ def predict_raw_to_tiffs(
     print(f"[START] predict_raw_to_tiffs: outdir={outdir}")
 
     proc = BscanProcessor(folder_spec.root_folder, folder_spec.to_preprocess_config())
+    if not proc.cfg.use_log:
+        raise ValueError("predict_raw_to_tiffs currently expects cfg.use_log=True for linear-domain metric recovery")
 
     # Load model
     print(f"[INFO] Loading checkpoint from: {ckpt_path}")
@@ -185,6 +187,8 @@ def predict_raw_to_tiffs(
         out = proc.process_one(p, frame_idx=i)
         x2hw = np.stack([out["input_w1"], out["input_w2"]], axis=0).astype(np.float32)
         gt = out["target_full"].astype(np.float32)
+        target_mu = float(out["target_mu"])
+        target_sd = float(out["target_sd"])
 
         t0 = time.time()
         pred = _infer_1(x2hw)
@@ -197,13 +201,19 @@ def predict_raw_to_tiffs(
         preds[i] = pred
         gts[i] = gt
 
-        # SNR/CNR on pred + gt
-        snr_pred, cnr_pred = roi_snr_cnr(pred, sig_roi_c, bg_roi_c)
-        snr_gt, cnr_gt = roi_snr_cnr(gt, sig_roi_c, bg_roi_c)
+        # Recover per-frame physical-domain intensities and compute SNR/CNR there.
+        pred_log = pred * target_sd + target_mu
+        gt_log = gt * target_sd + target_mu
+        pred_lin = np.maximum(10.0 ** pred_log - proc.cfg.log_eps, 0.0)
+        gt_lin = np.maximum(10.0 ** gt_log - proc.cfg.log_eps, 0.0)
+
+        snr_pred, cnr_pred = roi_snr_cnr(pred_lin, sig_roi_c, bg_roi_c)
+        snr_gt, cnr_gt = roi_snr_cnr(gt_lin, sig_roi_c, bg_roi_c)
         snr_pred_list.append(snr_pred)
         snr_gt_list.append(snr_gt)
         cnr_pred_list.append(cnr_pred)
         cnr_gt_list.append(cnr_gt)
+
         print(
             f"[PROGRESS] Frame {i+1}/{F}: inference={elapsed_time:.4f}s, "
             f"SNR_pred={snr_pred:.2f}dB, SNR_gt={snr_gt:.2f}dB, "
@@ -211,8 +221,8 @@ def predict_raw_to_tiffs(
         )
 
         if i == 0:
-            _save_roi_plot_first(pred, sig_roi_c, bg_roi_c, snr_pred, os.path.join(outdir, f"snr_rois_frame0_pred_{param_suffix}.png"))
-            _save_roi_plot_first(gt,   sig_roi_c, bg_roi_c, snr_gt,   os.path.join(outdir, f"snr_rois_frame0_gt_{param_suffix}.png"))
+            _save_roi_plot_first(pred_lin, sig_roi_c, bg_roi_c, snr_pred, os.path.join(outdir, f"snr_rois_frame0_pred_{param_suffix}.png"))
+            _save_roi_plot_first(gt_lin,   sig_roi_c, bg_roi_c, snr_gt,   os.path.join(outdir, f"snr_rois_frame0_gt_{param_suffix}.png"))
 
     snr_pred_arr = np.asarray(snr_pred_list, dtype=np.float64)
     snr_gt_arr = np.asarray(snr_gt_list, dtype=np.float64)

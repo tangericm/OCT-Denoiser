@@ -7,7 +7,7 @@ def roi_snr_cnr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> tuple[
     """
     Compute SNR and CNR in dB using shared ROIs.
 
-    img2d: [H,W] float32 (linear or log-compressed is fine as long as you're consistent)
+    img2d: [H,W] float32 in the domain you want to evaluate (e.g., linear intensity)
     ROI format: (y0, y1, x0, x1), y1/x1 exclusive
     """
     y0s, y1s, x0s, x1s = sig_roi
@@ -21,8 +21,6 @@ def roi_snr_cnr(img2d: np.ndarray, sig_roi, bg_roi, eps: float = 1e-8) -> tuple[
     sig = img2d[y0s:y1s, x0:x1]
     bg = img2d[y0b:y1b, x0:x1]
 
-    sig = (10 ** sig) - 1e-6
-    bg = (10 ** bg) - 1e-6
 
     sig = np.where(np.isfinite(sig), sig, np.nan)
     bg = np.where(np.isfinite(bg), bg, np.nan)
