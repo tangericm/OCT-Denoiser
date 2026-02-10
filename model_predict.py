@@ -1,8 +1,16 @@
-from configs.default import FolderSpec
-from engine.infer import predict_raw_to_tiffs
+from configs.default import FolderSpec, TrainConfig
+from engine.infer import predict_from_config
 
 
 def main():
+    cfg = TrainConfig(
+        model_name="resunet_pseudo3d",
+        base=32,
+        device="cuda",
+        also_save_float32=True,
+        snr_sig_stat="max",  # change to e.g. "p95" to use percentile statistic
+    )
+
     folder_spec = FolderSpec(
         root_folder=r"images\Maestro3",
         data_folder="6mm_1024Aline",
@@ -14,14 +22,11 @@ def main():
         gap=0.25,
     )
 
-    predict_raw_to_tiffs(
+    predict_from_config(
+        cfg=cfg,
         folder_spec=folder_spec,
         ckpt_path=r"runs\6mm_1024Aline_strip\20260210_132737\checkpoints\best_by_score.pt",
         outdir=r"runs\6mm_1024Aline_strip\20260210_132737\predictions_tiff\best_by_score",
-        model_name="resunet_pseudo3d",
-        base=32,
-        device="cuda",
-        also_save_float32=True,
     )
 
 
