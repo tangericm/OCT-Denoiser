@@ -4,7 +4,7 @@ import tifffile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Any
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -264,12 +264,16 @@ def recon_bscan_batch(spec_batch: np.ndarray,
                       crop: Tuple[int, int],
                       use_log: bool,
                       log_eps: float,
-                      apply_fftshift_depth: bool) -> List[np.ndarray]:
+                      apply_fftshift_depth: bool,
+                      return_stats: bool = False) -> Any:
     """
     Batch-reconstruct multiple spectra in a single FFT call.
 
     spec_batch: complex64 [K, pixels, alines] — K spectra to reconstruct
     Returns list of K float32 B-scans, each [H, W].
+    If return_stats is True, returns tuple:
+      (bscans, stats)
+    where stats is a list of K dicts with keys: img_norm, mu, sd.
 
     Uses a single batched IFFT along axis=1 (spectral axis) for all K
     spectra simultaneously, reducing FFT overhead.
@@ -285,14 +289,23 @@ def recon_bscan_batch(spec_batch: np.ndarray,
     bscans_crop = mag[:, z0:z1, :]  # [K, H, W]
 
     results = []
+    stats = []
     for k in range(bscans_crop.shape[0]):
         bscan = bscans_crop[k]  # [H, W]
         if use_log:
             bscan = np.log10(bscan + log_eps).astype(np.float32)
         mu = float(bscan.mean())
         sd = float(bscan.std()) + 1e-6
-        bscan = ((bscan - mu) / sd).astype(np.float32)
-        results.append(bscan)
+        bscan_norm = ((bscan - mu) / sd).astype(np.float32)
+        results.append(bscan_norm)
+        if return_stats:
+            stats.append({
+                "img_norm": bscan_norm,
+                "mu": mu,
+                "sd": sd,
+            })
+    if return_stats:
+        return results, stats
     return results
 
 
@@ -459,7 +472,7 @@ class BscanProcessor:
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         
-    def process_one(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, np.ndarray]:
+    def process_one(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, Any]:
         """
         Returns dict containing:
           - target_full: [H,W] float32
@@ -522,14 +535,27 @@ class BscanProcessor:
             self._spec_batch_c64[0] = spec_full
             self._spec_batch_c64[1] = self._spec1_c64
             self._spec_batch_c64[2] = self._spec2_c64
-            target_full, input_w1, input_w2 = recon_bscan_batch(
-                self._spec_batch_c64, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth
+            (batch_imgs, batch_stats) = recon_bscan_batch(
+                self._spec_batch_c64,
+                cfg.crop_depth,
+                cfg.use_log,
+                cfg.log_eps,
+                cfg.apply_fftshift_depth,
+                return_stats=True,
             )
+            target_full, input_w1, input_w2 = batch_imgs
+            target_stats, input_w1_stats, input_w2_stats = batch_stats
 
         return {
             "target_full": target_full,
             "input_w1": input_w1,
             "input_w2": input_w2,
+            "target_mu": target_stats["mu"],
+            "target_sd": target_stats["sd"],
+            "input_w1_mu": input_w1_stats["mu"],
+            "input_w1_sd": input_w1_stats["sd"],
+            "input_w2_mu": input_w2_stats["mu"],
+            "input_w2_sd": input_w2_stats["sd"],
         }
 
 
