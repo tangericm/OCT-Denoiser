@@ -59,14 +59,8 @@ class TrainConfig:
 
     # Composite validation score (lower is better):
     # score = (score_w_val_loss * val_loss) - (score_w_snr * val_snr) - (score_w_cnr * val_cnr)
-    # Increase score_w_val_loss to emphasize loss, or increase score_w_snr/score_w_cnr
-    # to prioritize higher SNR/CNR in checkpoint selection.
-    # score_norm can be:
-    #   - "none": use raw metrics in score
-    #   - "baseline_relative": use (metric - baseline) / (abs(baseline) + score_norm_eps)
+    # Use (metric - baseline) / (abs(baseline) + score_norm_eps)
     # Baseline values are taken at the first validation pass in each training run.
-    score_norm: str = "baseline_relative"
-    score_norm_eps: float = 1e-8
     score_w_val_loss: float = 1.0
     score_w_snr: float = 1.0
     score_w_cnr: float = 0.0

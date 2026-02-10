@@ -127,8 +127,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
 
     history = {"train_loss": [], "val_loss": [], "val_full": []}
 
-    score_norm_mode = str(getattr(cfg, "score_norm", "none")).strip().lower()
-    score_norm_eps = float(getattr(cfg, "score_norm_eps", 1e-8))
     score_baseline: dict[str, float] | None = None
 
 
@@ -204,23 +202,17 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
             )
-            if score_norm_mode not in {"none", "baseline_relative"}:
-                raise ValueError(f"Unsupported score_norm={score_norm_mode!r}. Use 'none' or 'baseline_relative'.")
 
             val_snr = float(val_full["snr_pred"])
             val_cnr = float(val_full["cnr_pred"])
 
-            if score_norm_mode == "baseline_relative":
-                if score_baseline is None:
-                    score_baseline = {"val_loss": float(val_loss), "snr": val_snr, "cnr": val_cnr}
+            if score_baseline is None:
+                score_baseline = {"val_loss": float(val_loss), "snr": val_snr, "cnr": val_cnr}
 
-                norm_val_loss = (float(val_loss) - score_baseline["val_loss"]) / (abs(score_baseline["val_loss"]) + score_norm_eps)
-                norm_val_snr = (val_snr - score_baseline["snr"]) / (abs(score_baseline["snr"]) + score_norm_eps)
-                norm_val_cnr = (val_cnr - score_baseline["cnr"]) / (abs(score_baseline["cnr"]) + score_norm_eps)
-            else:
-                norm_val_loss = float(val_loss)
-                norm_val_snr = val_snr
-                norm_val_cnr = val_cnr
+            norm_val_loss = (float(val_loss) - score_baseline["val_loss"]) / (abs(score_baseline["val_loss"]) + 1e-8)
+            norm_val_snr = (val_snr - score_baseline["snr"]) / (abs(score_baseline["snr"]) + 1e-8)
+            norm_val_cnr = (val_cnr - score_baseline["cnr"]) / (abs(score_baseline["cnr"]) + 1e-8)
+
 
             composite_score = (
                 cfg.score_w_val_loss * norm_val_loss
@@ -233,7 +225,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                     "epoch": epoch,
                     "loss": val_loss,
                     "score": composite_score,
-                    "score_norm": score_norm_mode,
                     "norm_val_loss": norm_val_loss,
                     "norm_val_snr": norm_val_snr,
                     "norm_val_cnr": norm_val_cnr,
@@ -248,7 +239,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                     "epoch": epoch,
                     "loss": val_full["val_loss"],
                     "score": composite_score,
-                    "score_norm": score_norm_mode,
                     "norm_val_loss": norm_val_loss,
                     "norm_val_snr": norm_val_snr,
                     "norm_val_cnr": norm_val_cnr,
@@ -268,7 +258,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             print(
                 f"[E{epoch:04d}] train={train_loss:.10f}  "
                 f"val_loss={val_loss:.10f} "
-                f"score={composite_score:.6f} ({score_norm_mode}) "
+                f"score={composite_score:.6f} "
                 f"SNR_pred/gt={val_full['snr_pred']:.2f}/{val_full['snr_gt']:.2f}  "
                 f"CNR_pred/gt={val_full['cnr_pred']:.2f}/{val_full['cnr_gt']:.2f}  "
                 f"time={dt:.5f}s"
@@ -336,8 +326,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         "score": best_score,
         "epoch": best_score_epoch,
         "ckpt_path": best_score_ckpt_path,
-        "score_norm": score_norm_mode,
-        "score_norm_eps": score_norm_eps,
         "score_baseline": score_baseline,
         "weights": {
             "val_loss": cfg.score_w_val_loss,
