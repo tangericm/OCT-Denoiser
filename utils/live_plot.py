@@ -22,6 +22,8 @@ class LiveLossPlot:
         self.train_losses: List[float] = []
         self.val_epochs: List[int] = []
         self.val_losses: List[float] = []
+        self.val_snrs: List[float] = []
+        self.val_snr_epochs: List[int] = []
 
         self._enabled = False
         self._plt = None
@@ -29,6 +31,8 @@ class LiveLossPlot:
         self._ax = None
         self._train_line = None
         self._val_line = None
+        self._snr_ax = None
+        self._snr_line = None
 
         # Lazy import + backend safety
         try:
@@ -46,7 +50,14 @@ class LiveLossPlot:
 
             (self._train_line,) = self._ax.plot([], [], label="train")
             (self._val_line,) = self._ax.plot([], [], label="val")
-            self._ax.legend()
+
+            self._snr_ax = self._ax.twinx()
+            self._snr_ax.set_ylabel("SNR (dB)")
+            (self._snr_line,) = self._snr_ax.plot([], [], label="val_snr", color="tab:green")
+
+            lines = [self._train_line, self._val_line, self._snr_line]
+            labels = [line.get_label() for line in lines]
+            self._ax.legend(lines, labels, loc="best")
 
             if self.show_window:
                 plt.ion()
@@ -63,6 +74,7 @@ class LiveLossPlot:
         epoch: int,
         train_loss: float,
         val_loss: Optional[float],
+        val_snr: Optional[float] = None,
         *,
         also_save_epoch_snapshot: bool = False,
     ) -> None:
@@ -72,6 +84,9 @@ class LiveLossPlot:
         if val_loss is not None:
             self.val_epochs.append(epoch)
             self.val_losses.append(float(val_loss))
+        if val_snr is not None:
+            self.val_snrs.append(float(val_snr))
+            self.val_snr_epochs.append(epoch)
 
         if not self._enabled:
             return
@@ -79,10 +94,15 @@ class LiveLossPlot:
         # Update lines
         self._train_line.set_data(self.train_epochs, self.train_losses)
         self._val_line.set_data(self.val_epochs, self.val_losses)
+        if self.val_snrs:
+            self._snr_line.set_data(self.val_snr_epochs, self.val_snrs)
 
         # Rescale axes
         self._ax.relim()
         self._ax.autoscale_view()
+        if self.val_snrs:
+            self._snr_ax.relim()
+            self._snr_ax.autoscale_view()
 
         # Draw
         self._fig.canvas.draw()
