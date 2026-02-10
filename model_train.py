@@ -46,7 +46,7 @@ def main():
         w_snr_loss_start=1e-5,
         w_snr_loss_end=1e-4,
         w_snr_ramp_start_epoch=1,
-        w_snr_ramp_end_epoch=400,
+        w_snr_ramp_end_epoch=600,
 
         snr_sig_y0=111,
         snr_sig_y1=600,
