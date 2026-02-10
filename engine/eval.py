@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from engine.common import unpack_batch
-from .losses import charbonnier_loss, gradient_l1
+from .losses import charbonnier_loss, gradient_l1, smooth_snr_loss
 from .metrics import roi_bounds, bg_bounds, roi_snr_cnr
 
 
@@ -17,6 +17,9 @@ def evaluate(
     device: str,
     w_charb: float,
     w_grad: float,
+    w_snr_loss: float = 0.0,
+    snr_loss_t_peak: float = 0.1,
+    snr_loss_t_bg: float = 0.1,
 ) -> float:
     model.eval()
     loss_acc = 0.0
@@ -25,6 +28,9 @@ def evaluate(
         x, y, _meta = unpack_batch(batch, device)
         pred = model(x)
         loss = w_charb * charbonnier_loss(pred, y) + w_grad * gradient_l1(pred, y)
+        if w_snr_loss > 0:
+            snr_l, _ = smooth_snr_loss(pred, t_peak=snr_loss_t_peak, t_bg=snr_loss_t_bg)
+            loss = loss + w_snr_loss * snr_l
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
     return loss_acc / max(n, 1)
@@ -40,6 +46,9 @@ def evaluate_full_frames(
     w_grad: float,
     snr_sig_y0: int,
     snr_sig_y1: int,
+    w_snr_loss: float = 0.0,
+    snr_loss_t_peak: float = 0.1,
+    snr_loss_t_bg: float = 0.1,
 ) -> dict[str, float | np.ndarray | None]:
     model.eval()
     loss_acc = 0.0
@@ -54,6 +63,9 @@ def evaluate_full_frames(
         x, y, _meta = unpack_batch(batch, device)
         pred = model(x)
         loss = w_charb * charbonnier_loss(pred, y) + w_grad * gradient_l1(pred, y)
+        if w_snr_loss > 0:
+            snr_l, _ = smooth_snr_loss(pred, t_peak=snr_loss_t_peak, t_bg=snr_loss_t_bg)
+            loss = loss + w_snr_loss * snr_l
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
 
