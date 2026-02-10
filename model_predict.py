@@ -39,8 +39,8 @@ def main():
         gap=0.25,
     )
 
-    ckpt_path = r"runs\6mm_1024Aline_strip\\20260209_180558\checkpoints\best_by_score.pt"
-    outdir = r"runs\6mm_1024Aline_strip\\20260209_180558\predictions_tiff\best_by_score"
+    ckpt_path = r"runs\6mm_1024Aline_strip\\6mm_1024Aline_strip_s008_g025\checkpoints\best.pt"
+    outdir = r"runs\6mm_1024Aline_strip\\6mm_1024Aline_strip_s008_g025\predictions_tiff\best"
 
     # ckpt_path = r"runs\multi_folder_raw\s008_g025_M3_strip\checkpoints\best.pt"
     # outdir = r"images\\" + folder_spec.root_folder.split("\\")[-1] + r"\\" + folder_spec.data_folder + r"\predictions_tiff"

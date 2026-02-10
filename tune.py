@@ -59,9 +59,9 @@ def main():
     # Base config
     # -----------------------------
     base_cfg = TrainConfig(
-        npz_path=None,                 # not used in raw-folder pipeline
-        runs_root=TUNE_ROOT,            # not strictly used by run_training, but kept consistent
-        experiment_name="optuna",   # overwritten per trial
+        npz_path = None,
+        runs_root=TUNE_ROOT,
+        experiment_name="optuna",
 
         folder_specs=[
             FolderSpec(
@@ -73,52 +73,62 @@ def main():
                 dispersion=[1.315892282e-06, 5.459678905e-10],
                 window_sigma=0.08,
                 gap=0.25,
-                apply_fftshift_depth=False,
-                do_dc_subtract=True,
-                window_type="hann",
-                use_log=True,
-                log_eps=1e-6,
             ),
+            # FolderSpec(
+            #     root_folder=r"images\Maestro2",
+            #     data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
+            #     pixels=2048,
+            #     alines=2048,
+            #     crop_depth=(0, 1024),
+            #     dispersion=[4.778474717e-06, 6.475358372e-09],
+            #     window_sigma=0.08,
+            #     gap=0.25,
+            # ),
         ],
-
         cache_frames_per_worker=1000,
 
         device="cuda",
         amp=True,
         deterministic=True,
-
-        # keep tuning runs short-ish
-        epochs=30,
-        val_every=5,
-        save_every=999999,  # effectively disable periodic checkpoint spam during tuning
-
-        # patching
-        patch_mode="strip",
-        patch_h=288,        # unused when patch_mode="strip" (kept for completeness)
-        patch_w=16,
-        patches_per_frame=16,
-
-        # model
-        model_name="resunet_pseudo3d",
+        epochs=100,
         base=32,
-
-        # optim
+        batch_size=12,
         lr=3e-4,
         weight_decay=8e-5,
-        grad_clip=1.0,
-
-        # loss
-        w_charb=0.01,
-        w_grad=0.01,
-
-        # loader
-        batch_size=12,
         num_workers=4,
+        augment=True,
 
-        # early stopping
-        early_stop_patience=5,
-        early_stop_min_delta=1e-4,
-        early_stop_warmup_checks=1,
+        # patch_h=288, # Unused when patch_mode="strip"
+        # patch_w=288,
+        # patches_per_frame=16,
+        # patch_mode="patch",
+
+        patch_h=288, # Unused when patch_mode="strip"
+        patch_w=16,
+        patches_per_frame=16,
+        patch_mode="strip",
+
+        w_charb=0.010307111599432855,
+        w_grad=0.010163544565911599,
+        
+        # ROI (y ranges) for SNR/CNR loss
+        snr_sig_y0 = 111,
+        snr_sig_y1 = 600,
+
+        # Logging/checkpoint cadence
+        val_every = 5,
+        save_every = 5,
+
+        # Early stopping
+        early_stop_patience = 20,
+
+        # Composite validation score (lower is better):
+        # score = (score_w_val_loss * val_loss) - (score_w_snr * val_snr) - (score_w_cnr * val_cnr)
+        score_w_val_loss = 1.0,
+        score_w_snr = 0.3,
+        score_w_cnr = 0.2,
+
+
     )
 
     def objective(trial: "optuna.Trial") -> float:
@@ -127,7 +137,7 @@ def main():
 
         # Spectral-window knobs (the physics knobs you care about)
         window_sigma = trial.suggest_float("window_sigma", 0.01, 0.16)
-        gap = trial.suggest_float("gap", 0.00, 0.50)
+        gap = trial.suggest_float("gap", -0.20, 0.50)
         _apply_folder_knobs(cfg.folder_specs, window_sigma=window_sigma, gap=gap)
 
         # pw = trial.suggest_categorical("patch_w", [8, 16, 32, 48, 64, 80, 96, 128, 160])
@@ -163,8 +173,11 @@ def main():
             # if val never ran for some reason, penalize
             return 1e9
         
-        # Since run_training() already early-stops, just score by the best val seen.
-        best_entry = min(val_entries, key=lambda d: float(d["loss"]))
+        # Tune by baseline-relative composite score (not raw val loss).
+        # Lower is better because score is:
+        #   + w_loss * norm(loss) - w_snr * norm(snr) - w_cnr * norm(cnr)
+        best_entry = min(val_entries, key=lambda d: float(d.get("score", d["loss"])))
+        best_score = float(best_entry.get("score", best_entry["loss"]))
         best_val = float(best_entry["loss"])
         best_epoch = int(best_entry.get("epoch", -1))
         last_entry = val_entries[-1]
@@ -184,6 +197,7 @@ def main():
         stop_epoch = int(es_meta.get("stop_epoch", -1)) if isinstance(es_meta, dict) else -1
 
         trial.set_user_attr("best_val_loss", best_val)
+        trial.set_user_attr("best_score", best_score)
         trial.set_user_attr("best_epoch", best_epoch)
         trial.set_user_attr("stop_epoch", stop_epoch)
         trial.set_user_attr("best_snr_pred", best_snr_pred)
@@ -195,12 +209,13 @@ def main():
         trial.set_user_attr("last_cnr_pred", last_cnr_pred)
         trial.set_user_attr("last_cnr_gt", last_cnr_gt)
 
-        final_val = best_val
+        final_val = best_score
 
         # Write a row summary
         row = {
             "trial": trial.number,
             "best_val_loss": best_val,
+            "best_score": best_score,
             "best_epoch": best_epoch,
             "stop_epoch": stop_epoch,
             "best_snr_pred": best_snr_pred,
