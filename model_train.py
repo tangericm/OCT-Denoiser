@@ -39,10 +39,11 @@ def main():
         device="cuda",
         amp=True,
         deterministic=True,
-        epochs=400,
+        epochs=500,
         base=32,
         batch_size=12,
         lr=3e-4,
+        weight_decay=8e-5,
         num_workers=4,
         augment=True,
 
@@ -58,8 +59,18 @@ def main():
 
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
-        weight_decay=8e-05,
         
+        # ROI (y ranges) for SNR/CNR loss
+        snr_sig_y0 = 111,
+        snr_sig_y1 = 600,
+
+        # Logging/checkpoint cadence
+        val_every = 5,
+        save_every = 5,
+
+        # Early stopping
+        early_stop_patience = 20,
+
         # Composite validation score (lower is better):
         # score = (score_w_val_loss * val_loss) - (score_w_snr * val_snr) - (score_w_cnr * val_cnr)
         # Increase score_w_val_loss to emphasize loss, or increase score_w_snr/score_w_cnr
@@ -67,8 +78,8 @@ def main():
         score_norm = "baseline_relative",
         score_norm_eps = 1e-8,
         score_w_val_loss = 1.0,
-        score_w_snr = 0.8,
-        score_w_cnr = 0.7,
+        score_w_snr = 0.6,
+        score_w_cnr = 0.4,
 
 
     )
@@ -84,7 +95,7 @@ def main():
     for folder_spec in cfg.folder_specs:
         predict_raw_to_tiffs(
             folder_spec=folder_spec, 
-            ckpt_path=result["best_ckpt_path"],
+            ckpt_path=result["best_score_ckpt_path"],
             outdir=paths["pred_tiff"],
             model_name=cfg.model_name,
             base=cfg.base,
