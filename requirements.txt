@@ -31,7 +31,7 @@ six==1.17.0
 SQLAlchemy==2.0.46
 sympy==1.14.0
 tifffile==2026.1.28
-torch==2.9.0+cu129
-torchvision==0.24.0
+torch==2.10.0+cu128
+torchvision==0.25.0+cu128
 tqdm==4.67.3
 typing_extensions==4.15.0
