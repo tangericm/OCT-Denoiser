@@ -65,7 +65,7 @@ class TrainConfig:
     #   - "none": use raw metrics in score
     #   - "baseline_relative": use (metric - baseline) / (abs(baseline) + score_norm_eps)
     # Baseline values are taken at the first validation pass in each training run.
-    score_norm: str = "none"
+    score_norm: str = "baseline_relative"
     score_norm_eps: float = 1e-8
     score_w_val_loss: float = 1.0
     score_w_snr: float = 1.0

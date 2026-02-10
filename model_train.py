@@ -64,9 +64,11 @@ def main():
         # score = (score_w_val_loss * val_loss) - (score_w_snr * val_snr) - (score_w_cnr * val_cnr)
         # Increase score_w_val_loss to emphasize loss, or increase score_w_snr/score_w_cnr
         # to prioritize higher SNR/CNR in checkpoint selection.
+        score_norm = "baseline_relative",
+        score_norm_eps = 1e-8,
         score_w_val_loss = 1.0,
-        score_w_snr = 6.0e-5,
-        score_w_cnr = 5.0e-5,
+        score_w_snr = 0.8,
+        score_w_cnr = 0.7,
 
 
     )
