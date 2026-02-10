@@ -121,6 +121,9 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
 
     best_val = float("inf")
     best_ckpt_path = os.path.join(paths["checkpoints"], "best.pt")
+    best_score = float("inf")
+    best_score_ckpt_path = os.path.join(paths["checkpoints"], "best_by_score.pt")
+    best_score_epoch = None
 
     history = {"train_loss": [], "val_loss": [], "val_full": []}
 
@@ -196,11 +199,17 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
             )
+            composite_score = (
+                cfg.score_w_val_loss * val_loss
+                - cfg.score_w_snr * val_full["snr_pred"]
+                - cfg.score_w_cnr * val_full["cnr_pred"]
+            )
 
             history["val_loss"].append(
                 {
                     "epoch": epoch,
                     "loss": val_loss,
+                    "score": composite_score,
                     "snr_pred": val_full["snr_pred"],
                     "snr_gt": val_full["snr_gt"],
                     "cnr_pred": val_full["cnr_pred"],
@@ -211,6 +220,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 {
                     "epoch": epoch,
                     "loss": val_full["val_loss"],
+                    "score": composite_score,
                     "snr_pred": val_full["snr_pred"],
                     "snr_gt": val_full["snr_gt"],
                     "cnr_pred": val_full["cnr_pred"],
@@ -222,6 +232,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             print(
                 f"[E{epoch:04d}] train={train_loss:.10f}  "
                 f"val_loss={val_loss:.10f} "
+                f"score={composite_score:.6f} "
                 f"SNR_pred/gt={val_full['snr_pred']:.2f}/{val_full['snr_gt']:.2f}  "
                 f"CNR_pred/gt={val_full['cnr_pred']:.2f}/{val_full['cnr_gt']:.2f}  "
                 f"time={dt:.5f}s"
@@ -252,6 +263,21 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 )
                 print(f"[OK] Saved best checkpoint: {best_ckpt_path}")
 
+            if composite_score < best_score:
+                best_score = composite_score
+                best_score_epoch = epoch
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "model": model.state_dict(),
+                        "opt": opt.state_dict(),
+                        "cfg": asdict(cfg),
+                        "best_score": best_score,
+                    },
+                    best_score_ckpt_path,
+                )
+                print(f"[OK] Saved best-by-score checkpoint: {best_score_ckpt_path}")
+
             stop_now = early_stop.update(float(val_loss), epoch)
             if stop_now:
                 print(
@@ -268,8 +294,18 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 os.path.join(paths["checkpoints"], f"epoch_{epoch:04d}.pt"),
             )
 
-    save_json(os.path.join(paths["run"], "history.json"), history)
     print(f"[DONE] Best val loss = {best_val:.10f}")
+    print(f"[DONE] Best composite score = {best_score:.10f}")
+    history["best_by_score"] = {
+        "score": best_score,
+        "epoch": best_score_epoch,
+        "ckpt_path": best_score_ckpt_path,
+        "weights": {
+            "val_loss": cfg.score_w_val_loss,
+            "snr": cfg.score_w_snr,
+            "cnr": cfg.score_w_cnr,
+        },
+    }
     history["early_stop"] = {
         "patience": early_stop.patience,
         "min_delta": early_stop.min_delta,
@@ -290,4 +326,10 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         "mean_epoch_time_sec": mean_epoch_time,
         "total_train_time_sec": total_train_time,
     }
-    return {"model": model, "best_ckpt_path": best_ckpt_path, "history": history}
+    save_json(os.path.join(paths["run"], "history.json"), history)
+    return {
+        "model": model,
+        "best_ckpt_path": best_ckpt_path,
+        "best_score_ckpt_path": best_score_ckpt_path,
+        "history": history,
+    }
