@@ -227,7 +227,12 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                     "cnr_gt": val_full["cnr_gt"],
                 }
             )
-            plotter.update(epoch=epoch, train_loss=train_loss, val_loss=val_loss)
+            plotter.update(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                val_snr=val_full["snr_pred"],
+            )
             dt = time.time() - t0
             print(
                 f"[E{epoch:04d}] train={train_loss:.10f}  "
