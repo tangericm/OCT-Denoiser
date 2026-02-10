@@ -209,7 +209,7 @@ def main():
         trial.set_user_attr("last_cnr_pred", last_cnr_pred)
         trial.set_user_attr("last_cnr_gt", last_cnr_gt)
 
-        final_val = best_score
+        final_val = best_val
 
         # Write a row summary
         row = {
