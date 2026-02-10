@@ -54,7 +54,7 @@ class RawBscanDataModule:
             folder_specs=self.cfg.folder_specs,
             split="val",
             train_frac=self.cfg.train_frac,
-            max_frames=1,
+            max_frames=None,
             seed=self.cfg.seed,
             cache_frames_per_worker=self.cfg.cache_frames_per_worker,
         )
