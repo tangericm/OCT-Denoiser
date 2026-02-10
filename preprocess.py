@@ -153,6 +153,15 @@ def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
     b3mb = (b * b * b - b).astype(np.float32)
     c = (h * h / 6.0).astype(np.float32)
 
+    # Cache the LAPACK gttrs solver function once (avoids per-call lookup)
+    gttrs, = sla.lapack.get_lapack_funcs(("gttrs",), (d_f,))
+
+    # Precompute column-vector (2D) forms for broadcasting over alines
+    a_col = a[:, None].copy()
+    b_col = b[:, None].copy()
+    a3ma_col = a3ma[:, None].copy()
+    b3mb_col = b3mb[:, None].copy()
+
     return {
         "ab": ab,          # banded system matrix for M
         "h2_over_6": c,
@@ -161,6 +170,10 @@ def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
         "b": b,
         "a3ma": a3ma,
         "b3mb": b3mb,
+        "a_col": a_col,       # [pixels, 1] for broadcasting
+        "b_col": b_col,
+        "a3ma_col": a3ma_col,
+        "b3mb_col": b3mb_col,
         "inv_h2_6": np.float32(6.0 / (h * h)),  # rhs scale
         "n": n,
         "dl_f": dl_f,
@@ -168,7 +181,8 @@ def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
         "du_f": du_f,
         "du2": du2,
         "ipiv": ipiv,
-        "_rhs": None, 
+        "gttrs": gttrs,     # cached LAPACK solver
+        "_rhs": None,
     }
 
 
@@ -196,12 +210,8 @@ def resample_klinear_cubic_operator(spec: np.ndarray, pre: dict) -> np.ndarray:
     rhs[1:-1, :] = scale * (spec[2:, :] - 2.0 * spec[1:-1, :] + spec[:-2, :])
 
     # --- Solve banded tridiagonal for M (second derivatives), for all columns at once ---
-    # sla.solve_banded supports multiple RHS with shape (n, alines)
-    # M = sla.solve_banded((1, 1), pre["ab"], rhs, overwrite_ab=False, overwrite_b=False, check_finite=False).astype(np.float32)
-
-    # Use precomputed factors to solve for M (faster than solve_banded)
-    gttrs, = sla.lapack.get_lapack_funcs(("gttrs",), (pre["d_f"],))
-    M, info = gttrs(pre["dl_f"], pre["d_f"], pre["du_f"], pre["du2"], pre["ipiv"], rhs, trans='N')
+    # Use precomputed LAPACK gttrs solver (cached in precompute dict)
+    M, info = pre["gttrs"](pre["dl_f"], pre["d_f"], pre["du_f"], pre["du2"], pre["ipiv"], rhs, trans='N')
     if info != 0:
         raise RuntimeError(f"gttrs failed with info={info}")
     M = M.astype(np.float32, copy=False)
@@ -211,19 +221,14 @@ def resample_klinear_cubic_operator(spec: np.ndarray, pre: dict) -> np.ndarray:
     i1 = i0 + 1
 
     # Gather y_i, y_{i+1}, M_i, M_{i+1}
-    # Use take along axis 0 (vectorized over xp) then broadcast over columns
     y0 = spec[i0, :]    # [pixels, alines]
     y1 = spec[i1, :]
     m0 = M[i0, :]
     m1 = M[i1, :]
 
-    a = pre["a"][:, None]
-    b = pre["b"][:, None]
-    a3ma = pre["a3ma"][:, None]
-    b3mb = pre["b3mb"][:, None]
-    c = pre["h2_over_6"]
-
-    out = (a * y0 + b * y1 + (a3ma * m0 + b3mb * m1) * c).astype(np.float32)
+    # Use precomputed column-vector forms (avoids per-call reshape)
+    out = (pre["a_col"] * y0 + pre["b_col"] * y1
+           + (pre["a3ma_col"] * m0 + pre["b3mb_col"] * m1) * pre["h2_over_6"]).astype(np.float32)
     return out
 
 def recon_bscan_from_spectrum(spec_complex: np.ndarray,
@@ -236,12 +241,10 @@ def recon_bscan_from_spectrum(spec_complex: np.ndarray,
     Returns float32 B-scan [H, W] where H is depth and W is alines.
     """
     # IFFT along spectral axis (pixels)
-    # depth_c = np.fft.ifft(spec_complex, axis=0)  # [pixels, alines] complex
     depth_c = sfft.ifft(spec_complex, axis=0, workers=-1)  # [pixels, alines] complex
     mag = np.abs(depth_c).astype(np.float32)     # [pixels, alines]
 
     if apply_fftshift_depth:
-        # mag = np.fft.fftshift(mag, axes=0).astype(np.float32)
         mag = sfft.fftshift(mag, axes=0).astype(np.float32)
 
     z0, z1 = crop
@@ -255,6 +258,42 @@ def recon_bscan_from_spectrum(spec_complex: np.ndarray,
     sd = float(bscan.std()) + 1e-6
     bscan = (bscan - mu) / sd
     return bscan.astype(np.float32)
+
+
+def recon_bscan_batch(spec_batch: np.ndarray,
+                      crop: Tuple[int, int],
+                      use_log: bool,
+                      log_eps: float,
+                      apply_fftshift_depth: bool) -> List[np.ndarray]:
+    """
+    Batch-reconstruct multiple spectra in a single FFT call.
+
+    spec_batch: complex64 [K, pixels, alines] — K spectra to reconstruct
+    Returns list of K float32 B-scans, each [H, W].
+
+    Uses a single batched IFFT along axis=1 (spectral axis) for all K
+    spectra simultaneously, reducing FFT overhead.
+    """
+    # Batched IFFT: axis=1 is the spectral axis for [K, pixels, alines]
+    depth_c = sfft.ifft(spec_batch, axis=1, workers=-1)
+    mag = np.abs(depth_c).astype(np.float32)  # [K, pixels, alines]
+
+    if apply_fftshift_depth:
+        mag = sfft.fftshift(mag, axes=1).astype(np.float32)
+
+    z0, z1 = crop
+    bscans_crop = mag[:, z0:z1, :]  # [K, H, W]
+
+    results = []
+    for k in range(bscans_crop.shape[0]):
+        bscan = bscans_crop[k]  # [H, W]
+        if use_log:
+            bscan = np.log10(bscan + log_eps).astype(np.float32)
+        mu = float(bscan.mean())
+        sd = float(bscan.std()) + 1e-6
+        bscan = ((bscan - mu) / sd).astype(np.float32)
+        results.append(bscan)
+    return results
 
 
 def gaussian_window_1d(pixels: int, center: float, sigma: float) -> np.ndarray:
@@ -368,6 +407,8 @@ class BscanProcessor:
         self._spec_full_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
         self._spec1_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
         self._spec2_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
+        # Pre-allocated batch buffer for 3-way batched FFT [full, w1, w2]
+        self._spec_batch_c64 = np.empty((3, cfg.pixels, cfg.alines), dtype=np.complex64)
 
     def save_window_figure(self, out_path: str, bscan_path: Optional[str] = None) -> None:
         cfg = self.cfg
@@ -470,23 +511,25 @@ class BscanProcessor:
             else:
                 spec_full = resamp.astype(np.complex64, copy=True)
 
-        # 6) Recon target + two windowed inputs
-        with timer("reconstruct B-scan", prof):
-            target_full = recon_bscan_from_spectrum(spec_full, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
-
-        # Window spectra (allocate once per call; could reuse buffers if you guarantee no aliasing)
+        # 6) Recon target + two windowed inputs via batched FFT
+        # Build windowed spectra using pre-allocated buffers (avoids temp allocations)
         with timer("apply spectral windows", prof):
-            spec1 = spec_full * self.w1[:, None]
-            spec2 = spec_full * self.w2[:, None]
+            np.multiply(spec_full, self.w1[:, None], out=self._spec1_c64)
+            np.multiply(spec_full, self.w2[:, None], out=self._spec2_c64)
 
-        with timer("reconstruct windowed B-scans", prof):
-            input_w1 = recon_bscan_from_spectrum(spec1.astype(np.complex64, copy=False), cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
-            input_w2 = recon_bscan_from_spectrum(spec2.astype(np.complex64, copy=False), cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth)
+        # Copy into pre-allocated 3D batch buffer (avoids np.stack allocation)
+        with timer("reconstruct all B-scans (batched)", prof):
+            self._spec_batch_c64[0] = spec_full
+            self._spec_batch_c64[1] = self._spec1_c64
+            self._spec_batch_c64[2] = self._spec2_c64
+            target_full, input_w1, input_w2 = recon_bscan_batch(
+                self._spec_batch_c64, cfg.crop_depth, cfg.use_log, cfg.log_eps, cfg.apply_fftshift_depth
+            )
 
         return {
-            "target_full": target_full.astype(np.float32, copy=False),
-            "input_w1": input_w1.astype(np.float32, copy=False),
-            "input_w2": input_w2.astype(np.float32, copy=False),
+            "target_full": target_full,
+            "input_w1": input_w1,
+            "input_w2": input_w2,
         }
 
 

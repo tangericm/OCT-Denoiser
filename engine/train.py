@@ -10,7 +10,7 @@ from typing import Dict, Any
 
 from engine.common import unpack_batch
 from engine.early_stopping import EarlyStopping
-from engine.losses import charbonnier_loss, gradient_l1
+from engine.losses import charbonnier_loss, gradient_l1, smooth_snr_loss
 from engine.eval import evaluate, evaluate_full_frames
 from data.datamodule import RawBscanDataModule
 from networks import create_model
@@ -133,6 +133,13 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                     cfg.w_charb * charbonnier_loss(pred, y)
                     + cfg.w_grad * gradient_l1(pred, y)
                 )
+                if cfg.w_snr_loss > 0:
+                    snr_l, _snr_info = smooth_snr_loss(
+                        pred,
+                        t_peak=cfg.snr_loss_t_peak,
+                        t_bg=cfg.snr_loss_t_bg,
+                    )
+                    loss = loss + cfg.w_snr_loss * snr_l
 
             scaler.scale(loss).backward()
             if cfg.grad_clip and cfg.grad_clip > 0:
@@ -157,6 +164,9 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 device=device,
                 w_charb=cfg.w_charb,
                 w_grad=cfg.w_grad,
+                w_snr_loss=cfg.w_snr_loss,
+                snr_loss_t_peak=cfg.snr_loss_t_peak,
+                snr_loss_t_bg=cfg.snr_loss_t_bg,
             )
             val_full = evaluate_full_frames(
                 model,
@@ -166,6 +176,9 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 w_grad=cfg.w_grad,
                 snr_sig_y0=cfg.snr_sig_y0,
                 snr_sig_y1=cfg.snr_sig_y1,
+                w_snr_loss=cfg.w_snr_loss,
+                snr_loss_t_peak=cfg.snr_loss_t_peak,
+                snr_loss_t_bg=cfg.snr_loss_t_bg,
             )
 
             val_snr_raw = float(val_full["snr_pred"])
