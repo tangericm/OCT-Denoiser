@@ -79,6 +79,10 @@ class TrainConfig:
     w_charb: float = 0.8
     w_grad: float = 0.5
     w_snr_loss: float = 0.0          # smooth SNR loss weight (0 = disabled)
+    w_snr_loss_start: Optional[float] = None  # epoch-schedule start weight (None => constant w_snr_loss)
+    w_snr_loss_end: Optional[float] = None    # epoch-schedule end weight (None => constant w_snr_loss)
+    w_snr_ramp_start_epoch: int = 1           # first epoch where SNR ramp begins
+    w_snr_ramp_end_epoch: Optional[int] = None  # epoch where SNR ramp reaches end weight (None => epochs)
     snr_loss_t_peak: float = 0.1     # temperature for soft-peak selection
     snr_loss_t_bg: float = 0.1       # temperature for soft-background selection
 
