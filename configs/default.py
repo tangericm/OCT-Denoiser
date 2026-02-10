@@ -57,6 +57,14 @@ class TrainConfig:
     early_stop_min_delta: float = 0.0
     early_stop_warmup_checks: int = 0
 
+    # Composite validation score (lower is better):
+    # score = (score_w_val_loss * val_loss) - (score_w_snr * val_snr) - (score_w_cnr * val_cnr)
+    # Increase score_w_val_loss to emphasize loss, or increase score_w_snr/score_w_cnr
+    # to prioritize higher SNR/CNR in checkpoint selection.
+    score_w_val_loss: float = 1.0
+    score_w_snr: float = 1.0
+    score_w_cnr: float = 0.0
+
     # Inference outputs (relative to run dir)
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False
