@@ -39,7 +39,7 @@ def main():
         device="cuda",
         amp=True,
         deterministic=True,
-        epochs=300,
+        epochs=400,
         base=32,
         batch_size=12,
         lr=3e-4,
@@ -59,6 +59,16 @@ def main():
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
         weight_decay=8e-05,
+        
+        # Composite validation score (lower is better):
+        # score = (score_w_val_loss * val_loss) - (score_w_snr * val_snr) - (score_w_cnr * val_cnr)
+        # Increase score_w_val_loss to emphasize loss, or increase score_w_snr/score_w_cnr
+        # to prioritize higher SNR/CNR in checkpoint selection.
+        score_w_val_loss = 1.0,
+        score_w_snr = 6.0e-5,
+        score_w_cnr = 5.0e-5,
+
+
     )
 
     seed_all(cfg.seed, deterministic=cfg.deterministic)
