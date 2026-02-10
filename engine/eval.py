@@ -3,17 +3,11 @@ from __future__ import annotations
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+
+from engine.common import unpack_batch
 from .losses import charbonnier_loss, gradient_l1
 from .metrics import roi_bounds, bg_bounds, roi_snr_cnr
 
-
-def _unpack_batch(batch):
-    if isinstance(batch, (tuple, list)) and len(batch) == 3:
-        x, y, meta = batch
-    else:
-        x, y = batch
-        meta = None
-    return x, y, meta
 
 @torch.no_grad()
 def evaluate(
@@ -28,18 +22,11 @@ def evaluate(
     loss_acc = 0.0
     n = 0
     for batch in loader:
-        x, y, _meta = _unpack_batch(batch)
-        x = x.to(device, non_blocking=True)
-        y = y.to(device, non_blocking=True)
-
+        x, y, _meta = unpack_batch(batch, device)
         pred = model(x)
-        loss = (
-            w_charb * charbonnier_loss(pred, y)
-            + w_grad * gradient_l1(pred, y)
-        )
+        loss = w_charb * charbonnier_loss(pred, y) + w_grad * gradient_l1(pred, y)
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
-
     return loss_acc / max(n, 1)
 
 
@@ -56,7 +43,6 @@ def evaluate_full_frames(
 ) -> dict[str, float | np.ndarray | None]:
     model.eval()
     loss_acc = 0.0
-    snr_cnr_acc = 0.0
     n = 0
     snr_pred_list: list[float] = []
     snr_gt_list: list[float] = []
@@ -65,15 +51,9 @@ def evaluate_full_frames(
     sample_pred: np.ndarray | None = None
 
     for batch in loader:
-        x, y, _meta = _unpack_batch(batch)
-        x = x.to(device, non_blocking=True)
-        y = y.to(device, non_blocking=True)
-
+        x, y, _meta = unpack_batch(batch, device)
         pred = model(x)
-        loss = (
-            w_charb * charbonnier_loss(pred, y)
-            + w_grad * gradient_l1(pred, y)
-        )
+        loss = w_charb * charbonnier_loss(pred, y) + w_grad * gradient_l1(pred, y)
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
 
@@ -99,22 +79,18 @@ def evaluate_full_frames(
                 sample_pred = pred_img.copy()
 
     val_loss = loss_acc / max(n, 1)
-    snr_cnr_loss_val = snr_cnr_acc / max(n, 1)
-    snr_pred_arr = np.asarray(snr_pred_list, dtype=np.float64)
-    snr_gt_arr = np.asarray(snr_gt_list, dtype=np.float64)
-    cnr_pred_arr = np.asarray(cnr_pred_list, dtype=np.float64)
-    cnr_gt_arr = np.asarray(cnr_gt_list, dtype=np.float64)
-    snr_pred = float(np.nanmean(np.where(np.isfinite(snr_pred_arr), snr_pred_arr, np.nan))) if snr_pred_list else float("nan")
-    snr_gt = float(np.nanmean(np.where(np.isfinite(snr_gt_arr), snr_gt_arr, np.nan))) if snr_gt_list else float("nan")
-    cnr_pred = float(np.nanmean(np.where(np.isfinite(cnr_pred_arr), cnr_pred_arr, np.nan))) if cnr_pred_list else float("nan")
-    cnr_gt = float(np.nanmean(np.where(np.isfinite(cnr_gt_arr), cnr_gt_arr, np.nan))) if cnr_gt_list else float("nan")
+
+    def _safe_mean(arr):
+        if len(arr) == 0:
+            return float("nan")
+        a = np.asarray(arr, dtype=np.float64)
+        return float(np.nanmean(np.where(np.isfinite(a), a, np.nan)))
 
     return {
         "val_loss": val_loss,
-        "snr_cnr_loss": snr_cnr_loss_val,
-        "snr_pred": snr_pred,
-        "snr_gt": snr_gt,
-        "cnr_pred": cnr_pred,
-        "cnr_gt": cnr_gt,
+        "snr_pred": _safe_mean(snr_pred_list),
+        "snr_gt": _safe_mean(snr_gt_list),
+        "cnr_pred": _safe_mean(cnr_pred_list),
+        "cnr_gt": _safe_mean(cnr_gt_list),
         "sample_pred": sample_pred,
     }

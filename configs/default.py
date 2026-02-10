@@ -1,16 +1,52 @@
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
 
+
+@dataclass
+class FolderSpec:
+    root_folder: str          # e.g. r"images\Maestro3"
+    data_folder: str          # e.g. "6mm_1024Aline"
+    pixels: int               # 2048
+    alines: int               # 1024 or 2048
+    clb_path: Optional[str] = None
+    crop_depth: Tuple[int, int] = (1024, 2048)
+    do_dc_subtract: bool = True
+    window_type: str = "hann"
+    use_log: bool = True
+    log_eps: float = 1e-6
+    apply_fftshift_depth: bool = False
+    dispersion: Optional[List[float]] = None
+    window_sigma: float = 0.08
+    gap: float = 0.15
+
+    def to_preprocess_config(self):
+        from preprocess import Config as PreprocessConfig
+        return PreprocessConfig(
+            pixels=self.pixels,
+            alines=self.alines,
+            data_folder=self.data_folder,
+            do_dc_subtract=self.do_dc_subtract,
+            window_type=self.window_type,
+            use_log=self.use_log,
+            log_eps=self.log_eps,
+            crop_depth=self.crop_depth,
+            apply_fftshift_depth=self.apply_fftshift_depth,
+            window_sigma=self.window_sigma,
+            gap=self.gap,
+            dispersion=self.dispersion,
+        )
+
+
 @dataclass
 class TrainConfig:
     # Paths
-    npz_path: str
-    runs_root: str
-    experiment_name: str
+    npz_path: Optional[str] = None
+    runs_root: str = "runs"
+    experiment_name: str = "experiment"
 
-    folder_specs: Optional[List["FolderSpec"]] = None
-    cache_frames_per_worker: int = 2
-    
+    folder_specs: Optional[List[FolderSpec]] = None
+    cache_frames_per_worker: int = 1000
+
     # Device
     device: str = "cuda"
     amp: bool = True
@@ -24,11 +60,10 @@ class TrainConfig:
     patch_h: int = 128
     patch_w: int = 128
     patches_per_frame: int = 16
-    patch_mode: str = "patch"  # "strip" (random x, full depth) or "patch" (random x and y)
+    patch_mode: str = "patch"
     augment: bool = True
     batch_size: int = 32
     num_workers: int = 8
-    cache_frames_per_worker: int = 1000,
 
     # Model selection
     model_name: str = "resunet_pseudo3d"
@@ -44,7 +79,7 @@ class TrainConfig:
     w_charb: float = 0.8
     w_grad: float = 0.5
 
-    # ROI (y ranges) for SNR/CNR loss
+    # ROI (y ranges) for SNR/CNR
     snr_sig_y0: int = 111
     snr_sig_y1: int = 600
 
@@ -58,32 +93,11 @@ class TrainConfig:
     early_stop_warmup_checks: int = 0
 
     # Composite validation score (lower is better):
-    # score = (score_w_val_loss * val_loss) - (score_w_snr * val_snr) - (score_w_cnr * val_cnr)
-    # Use (metric - baseline) / (abs(baseline) + 1e-8)
-    # Baseline values are taken at the first validation pass in each training run.
+    # score = w_val_loss * norm(val_loss) - w_snr * norm(snr) - w_cnr * norm(cnr)
     score_w_val_loss: float = 1.0
     score_w_snr: float = 1.0
     score_w_cnr: float = 0.0
 
-    # Inference outputs (relative to run dir)
+    # Inference outputs
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False
-
-@dataclass
-class FolderSpec:
-    root_folder: str          # e.g. r"images\Maestro3"
-    data_folder: str          # e.g. "6mm_1024Aline"
-    pixels: int               # 2048
-    alines: int               # 1024 or 2048
-    clb_path: Optional[str] = None  # optional override; if None use existing BscanProcessor logic
-    crop_depth: Tuple[int,int] = (1024, 2048)
-    do_dc_subtract: bool = True
-    window_type: str = "hann"
-    use_log: bool = True
-    log_eps: float = 1e-6
-    apply_fftshift_depth: bool = False
-    dispersion: Optional[List[float]] = None
-
-    # the sweep knobs you care about
-    window_sigma: float = 0.08
-    gap: float = 0.15

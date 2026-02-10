@@ -51,19 +51,6 @@ class Up(nn.Module):
         x = self.act(self.bn2(self.fuse(x)))
         return self.res(x)
 
-# class FiLM(nn.Module):
-#     def __init__(self, ch: int, hidden: int = 64):
-#         super().__init__()
-#         self.net = nn.Sequential(
-#             nn.Linear(1, hidden),
-#             nn.SiLU(),
-#             nn.Linear(hidden, 2 * ch),
-#         )
-
-#     def forward(self, x: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
-#         gam_bet = self.net(g)
-#         gamma, beta = gam_bet.chunk(2, dim=1)
-#         return x * (1.0 + gamma[:, :, None, None]) + beta[:, :, None, None]
 
 class Pseudo3DStem(nn.Module):
     """

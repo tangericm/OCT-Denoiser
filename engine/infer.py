@@ -12,7 +12,6 @@ from networks import create_model
 from engine.metrics import roi_snr_cnr, roi_bounds, bg_bounds
 from utils.io_tiff import save_tiff_stack
 from utils.run_manager import ensure_dir
-from utils.keypoint_registration import register_stack_keypoints_to_pred0
 from configs.default import TrainConfig
 
 DEFAULT_SNR_SIG_Y0 = TrainConfig.__dataclass_fields__["snr_sig_y0"].default
@@ -89,31 +88,12 @@ def predict_raw_to_tiffs(
       - run model
       - save TIFF stacks + optional SNR CSV + ROI plots (frame 0)
     """
-    from preprocess import Config as PreprocessConfig, BscanProcessor
-    import csv
-    import numpy as np
-    import os
-    import time
+    from preprocess import BscanProcessor
 
     ensure_dir(outdir)
     print(f"[START] predict_raw_to_tiffs: outdir={outdir}")
 
-    # Build processor from FolderSpec
-    pcfg = PreprocessConfig(
-        pixels=folder_spec.pixels,
-        alines=folder_spec.alines,
-        data_folder=folder_spec.data_folder,
-        do_dc_subtract=getattr(folder_spec, "do_dc_subtract", True),
-        window_type=getattr(folder_spec, "window_type", "hann"),
-        use_log=getattr(folder_spec, "use_log", True),
-        log_eps=getattr(folder_spec, "log_eps", 1e-6),
-        crop_depth=folder_spec.crop_depth,
-        apply_fftshift_depth=getattr(folder_spec, "apply_fftshift_depth", True),
-        window_sigma=folder_spec.window_sigma,
-        gap=folder_spec.gap,
-        dispersion=getattr(folder_spec, "dispersion", None),
-    )
-    proc = BscanProcessor(folder_spec.root_folder, pcfg)
+    proc = BscanProcessor(folder_spec.root_folder, folder_spec.to_preprocess_config())
 
     # Load model
     print(f"[INFO] Loading checkpoint from: {ckpt_path}")
@@ -136,10 +116,8 @@ def predict_raw_to_tiffs(
     H, W = out0["target_full"].shape
     print(f"[INFO] Frame 0 processed; image shape: {H}x{W}")
 
-    preds = np.zeros((F, 1, H, W), dtype=np.float32)
-    gts   = np.zeros((F, 1, H, W), dtype=np.float32)
-    w1s   = np.zeros((F, 1, H, W), dtype=np.float32)
-    w2s   = np.zeros((F, 1, H, W), dtype=np.float32)
+    preds = np.zeros((F, H, W), dtype=np.float32)
+    gts   = np.zeros((F, H, W), dtype=np.float32)
 
     snr_pred_list: list[float] = []
     snr_gt_list: list[float] = []
@@ -216,10 +194,8 @@ def predict_raw_to_tiffs(
         times.append(elapsed_time)
         # print(f"[INFO] Prediction time: {elapsed_time:.10f} seconds")
 
-        preds[i, 0] = pred
-        gts[i, 0] = gt
-        w1s[i, 0]   = out["input_w1"].astype(np.float32, copy=False)
-        w2s[i, 0]   = out["input_w2"].astype(np.float32, copy=False)
+        preds[i] = pred
+        gts[i] = gt
 
         # SNR/CNR on pred + gt
         snr_pred, cnr_pred = roi_snr_cnr(pred, sig_roi_c, bg_roi_c)
@@ -284,16 +260,27 @@ def predict_raw_to_tiffs(
     
     pred_path = os.path.join(outdir, f"pred_{param_suffix}.tiff")
     gt_path   = os.path.join(outdir, f"gt_{param_suffix}.tiff")
-    w1_path   = os.path.join(outdir, f"window1_{param_suffix}.tiff")
-    w2_path   = os.path.join(outdir, f"window2_{param_suffix}.tiff")
 
-    save_tiff_stack(pred_path, preds[:, 0], dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(gt_path,   gts[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
-    # save_tiff_stack(w1_path,   w1s[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
-    # save_tiff_stack(w2_path,   w2s[:, 0],   dtype=tiff_dtype, scale_per_slice=True)
+    save_tiff_stack(pred_path, preds, dtype=tiff_dtype, scale_per_slice=True)
+    save_tiff_stack(gt_path,   gts,   dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
-        save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds[:, 0], dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, f"gt_{param_suffix}_float32.tiff"), gts[:, 0], dtype="float32", scale_per_slice=True)
-        # save_tiff_stack(os.path.join(outdir, f"window1_{param_suffix}_float32.tiff"), w1s[:, 0], dtype="float32", scale_per_slice=True)
-        # save_tiff_stack(os.path.join(outdir, f"window2_{param_suffix}_float32.tiff"), w2s[:, 0], dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds, dtype="float32", scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"gt_{param_suffix}_float32.tiff"), gts, dtype="float32", scale_per_slice=True)
+
+
+def predict_from_config(cfg, folder_spec, ckpt_path: str, outdir: str, **overrides) -> None:
+    """Convenience wrapper: extracts inference params from TrainConfig."""
+    predict_raw_to_tiffs(
+        folder_spec=folder_spec,
+        ckpt_path=ckpt_path,
+        outdir=outdir,
+        model_name=cfg.model_name,
+        base=cfg.base,
+        device=cfg.device,
+        tiff_dtype=cfg.tiff_dtype,
+        also_save_float32=cfg.also_save_float32,
+        snr_sig_y0=cfg.snr_sig_y0,
+        snr_sig_y1=cfg.snr_sig_y1,
+        **overrides,
+    )
