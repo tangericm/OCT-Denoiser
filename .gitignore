@@ -1,5 +1,10 @@
 __pycache__/
+.gitignore
 *.pyc
 *.pyo
 runs/
 *.egg-info/
+images/
+*.docx
+*.png
+Backup/
