@@ -212,7 +212,7 @@ def predict_raw_to_tiffs(
         gt_lin = np.maximum(10.0 ** gt_log - proc.cfg.log_eps, 0.0)
 
         snr_pred, cnr_pred = roi_snr_cnr(pred_lin, sig_roi_c, bg_roi_c, sig_stat=snr_sig_stat)
-        snr_gt, cnr_gt = roi_snr_cnr(gt_lin, sig_roi_c, bg_roi_c, sig_stat=snr_sig_stat)
+        snr_gt, cnr_gt = roi_snr_cnr(gt_lin, sig_roi_c, bg_roi_c, sig_stat="max")
         snr_pred_list.append(snr_pred)
         snr_gt_list.append(snr_gt)
         cnr_pred_list.append(cnr_pred)
