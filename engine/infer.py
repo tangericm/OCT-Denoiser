@@ -19,6 +19,7 @@ DEFAULT_SNR_SIG_Y0 = TrainConfig.__dataclass_fields__["snr_sig_y0"].default
 DEFAULT_SNR_SIG_Y1 = TrainConfig.__dataclass_fields__["snr_sig_y1"].default
 
 
+
 def _save_roi_plot_first(
     img2d: np.ndarray,
     sig_roi,
@@ -237,10 +238,14 @@ def predict_raw_to_tiffs(
             _save_roi_plot_first(pred, sig_roi_c, bg_roi_c, snr_pred, os.path.join(outdir, f"snr_rois_frame0_pred_{param_suffix}.png"))
             _save_roi_plot_first(gt,   sig_roi_c, bg_roi_c, snr_gt,   os.path.join(outdir, f"snr_rois_frame0_gt_{param_suffix}.png"))
 
-    mean_pred = float(np.mean(snr_pred_list)) if snr_pred_list else float("nan")
-    mean_gt = float(np.mean(snr_gt_list)) if snr_gt_list else float("nan")
-    mean_cnr_pred = float(np.mean(cnr_pred_list)) if cnr_pred_list else float("nan")
-    mean_cnr_gt = float(np.mean(cnr_gt_list)) if cnr_gt_list else float("nan")
+    snr_pred_arr = np.asarray(snr_pred_list, dtype=np.float64)
+    snr_gt_arr = np.asarray(snr_gt_list, dtype=np.float64)
+    cnr_pred_arr = np.asarray(cnr_pred_list, dtype=np.float64)
+    cnr_gt_arr = np.asarray(cnr_gt_list, dtype=np.float64)
+    mean_pred = float(np.nanmean(np.where(np.isfinite(snr_pred_arr), snr_pred_arr, np.nan))) if snr_pred_list else float("nan")
+    mean_gt = float(np.nanmean(np.where(np.isfinite(snr_gt_arr), snr_gt_arr, np.nan))) if snr_gt_list else float("nan")
+    mean_cnr_pred = float(np.nanmean(np.where(np.isfinite(cnr_pred_arr), cnr_pred_arr, np.nan))) if cnr_pred_list else float("nan")
+    mean_cnr_gt = float(np.nanmean(np.where(np.isfinite(cnr_gt_arr), cnr_gt_arr, np.nan))) if cnr_gt_list else float("nan")
     mean_time = float(np.mean(times)) if times else float("nan")
 
     # save SNR CSV

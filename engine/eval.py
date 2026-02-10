@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from .losses import charbonnier_loss, gradient_l1
 from .metrics import roi_bounds, bg_bounds, roi_snr_cnr
 
+
 def _unpack_batch(batch):
     if isinstance(batch, (tuple, list)) and len(batch) == 3:
         x, y, meta = batch
@@ -99,10 +100,14 @@ def evaluate_full_frames(
 
     val_loss = loss_acc / max(n, 1)
     snr_cnr_loss_val = snr_cnr_acc / max(n, 1)
-    snr_pred = float(np.mean(snr_pred_list)) if snr_pred_list else float("nan")
-    snr_gt = float(np.mean(snr_gt_list)) if snr_gt_list else float("nan")
-    cnr_pred = float(np.mean(cnr_pred_list)) if cnr_pred_list else float("nan")
-    cnr_gt = float(np.mean(cnr_gt_list)) if cnr_gt_list else float("nan")
+    snr_pred_arr = np.asarray(snr_pred_list, dtype=np.float64)
+    snr_gt_arr = np.asarray(snr_gt_list, dtype=np.float64)
+    cnr_pred_arr = np.asarray(cnr_pred_list, dtype=np.float64)
+    cnr_gt_arr = np.asarray(cnr_gt_list, dtype=np.float64)
+    snr_pred = float(np.nanmean(np.where(np.isfinite(snr_pred_arr), snr_pred_arr, np.nan))) if snr_pred_list else float("nan")
+    snr_gt = float(np.nanmean(np.where(np.isfinite(snr_gt_arr), snr_gt_arr, np.nan))) if snr_gt_list else float("nan")
+    cnr_pred = float(np.nanmean(np.where(np.isfinite(cnr_pred_arr), cnr_pred_arr, np.nan))) if cnr_pred_list else float("nan")
+    cnr_gt = float(np.nanmean(np.where(np.isfinite(cnr_gt_arr), cnr_gt_arr, np.nan))) if cnr_gt_list else float("nan")
 
     return {
         "val_loss": val_loss,

@@ -203,8 +203,10 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 snr_sig_y1=cfg.snr_sig_y1,
             )
 
-            val_snr = float(val_full["snr_pred"])
-            val_cnr = float(val_full["cnr_pred"])
+            val_snr_raw = float(val_full["snr_pred"])
+            val_cnr_raw = float(val_full["cnr_pred"])
+            val_snr = val_snr_raw if np.isfinite(val_snr_raw) else 0.0
+            val_cnr = val_cnr_raw if np.isfinite(val_cnr_raw) else 0.0
 
             if score_baseline is None:
                 score_baseline = {"val_loss": float(val_loss), "snr": val_snr, "cnr": val_cnr}
