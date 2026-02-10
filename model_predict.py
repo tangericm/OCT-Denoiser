@@ -16,11 +16,12 @@ def main():
 
     predict_raw_to_tiffs(
         folder_spec=folder_spec,
-        ckpt_path=r"runs\6mm_1024Aline_strip\\20260210_121656\checkpoints\best.pt",
-        outdir=r"runs\6mm_1024Aline_strip\\20260210_121656\predictions_tiff\best",
+        ckpt_path=r"runs\6mm_1024Aline_strip\\20260210_132737\checkpoints\best_by_score.pt",
+        outdir=r"runs\6mm_1024Aline_strip\\20260210_132737\predictions_tiff\best_by_score",
         model_name="resunet_pseudo3d",
         base=32,
         device="cuda",
+        also_save_float32=True,
     )
 
 
