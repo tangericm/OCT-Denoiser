@@ -46,7 +46,7 @@ def main():
         w_snr_loss_start=1e-5,
         w_snr_loss_end=1e-4,
         w_snr_ramp_start_epoch=1,
-        w_snr_ramp_end_epoch=600,
+        w_snr_ramp_end_epoch=400,
 
         snr_sig_y0=111,
         snr_sig_y1=600,
@@ -56,7 +56,6 @@ def main():
         score_w_val_loss=1.0,
         score_w_snr=0.3,
         score_w_cnr=0.2,
-        also_save_float32 = True,
     )
 
     seed_all(cfg.seed, deterministic=cfg.deterministic)
