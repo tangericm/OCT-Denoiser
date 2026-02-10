@@ -16,8 +16,8 @@ def main():
 
     predict_raw_to_tiffs(
         folder_spec=folder_spec,
-        ckpt_path=r"runs\6mm_1024Aline_strip\\20260210_115120\checkpoints\best.pt",
-        outdir=r"runs\6mm_1024Aline_strip\\20260210_115120\predictions_tiff\best",
+        ckpt_path=r"runs\6mm_1024Aline_strip\\20260210_121656\checkpoints\best.pt",
+        outdir=r"runs\6mm_1024Aline_strip\\20260210_121656\predictions_tiff\best",
         model_name="resunet_pseudo3d",
         base=32,
         device="cuda",
