@@ -56,7 +56,6 @@ def main():
     # Base config
     # -----------------------------
     base_cfg = TrainConfig(
-        npz_path = None,
         runs_root=TUNE_ROOT,
         experiment_name="optuna",
 
@@ -71,16 +70,6 @@ def main():
                 window_sigma=0.08,
                 gap=0.25,
             ),
-            # FolderSpec(
-            #     root_folder=r"images\Maestro2",
-            #     data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
-            #     pixels=2048,
-            #     alines=2048,
-            #     crop_depth=(0, 1024),
-            #     dispersion=[4.778474717e-06, 6.475358372e-09],
-            #     window_sigma=0.08,
-            #     gap=0.25,
-            # ),
         ],
         cache_frames_per_worker=1000,
 
@@ -95,37 +84,22 @@ def main():
         num_workers=4,
         augment=True,
 
-        # patch_h=288, # Unused when patch_mode="strip"
-        # patch_w=288,
-        # patches_per_frame=16,
-        # patch_mode="patch",
-
-        patch_h=288, # Unused when patch_mode="strip"
+        patch_h=288,
         patch_w=16,
         patches_per_frame=16,
         patch_mode="strip",
 
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
-        
-        # ROI (y ranges) for SNR/CNR loss
-        snr_sig_y0 = 111,
-        snr_sig_y1 = 600,
 
-        # Logging/checkpoint cadence
-        val_every = 5,
-        save_every = 5,
-
-        # Early stopping
-        early_stop_patience = 20,
-
-        # Composite validation score (lower is better):
-        # score = (score_w_val_loss * val_loss) - (score_w_snr * val_snr) - (score_w_cnr * val_cnr)
-        score_w_val_loss = 1.0,
-        score_w_snr = 0.3,
-        score_w_cnr = 0.2,
-
-
+        snr_sig_y0=111,
+        snr_sig_y1=600,
+        val_every=5,
+        save_every=5,
+        early_stop_patience=20,
+        score_w_val_loss=1.0,
+        score_w_snr=0.3,
+        score_w_cnr=0.2,
     )
 
     def objective(trial: "optuna.Trial") -> float:
@@ -136,21 +110,6 @@ def main():
         window_sigma = trial.suggest_float("window_sigma", 0.01, 0.16)
         gap = trial.suggest_float("gap", -0.20, 0.50)
         _apply_folder_knobs(cfg.folder_specs, window_sigma=window_sigma, gap=gap)
-
-        # pw = trial.suggest_categorical("patch_w", [8, 16, 32, 48, 64, 80, 96, 128, 160])
-        # cfg.patch_w = int(pw)
-        # cfg.patches_per_frame = trial.suggest_categorical("patches_per_frame", [16, 24, 32, 48, 64, 80])
-
-        # # Batch size (optional: comment out if you often OOM)
-        # cfg.batch_size = trial.suggest_categorical("batch_size", [4, 8, 12, 16])
-
-        # # Loss balance
-        # cfg.w_charb = trial.suggest_float("w_charb", 0.01, 0.8)
-        # cfg.w_grad = trial.suggest_float("w_grad", 0.01, 0.8)
-
-        # # Optimizer
-        # cfg.lr = float(trial.suggest_float("lr", 4e-5, 6e-4, log=True))
-        # cfg.weight_decay = float(trial.suggest_float("weight_decay", 1e-6, 2e-4, log=True))
 
         # Reduce variance for fair comparisons
         cfg.seed = 42

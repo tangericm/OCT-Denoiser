@@ -27,7 +27,6 @@ def roi_snr_cnr(
     sig = img2d[y0s:y1s, x0:x1]
     bg = img2d[y0b:y1b, x0:x1]
 
-
     sig = np.where(np.isfinite(sig), sig, np.nan)
     bg = np.where(np.isfinite(bg), bg, np.nan)
 
@@ -61,17 +60,12 @@ def to_physical_intensity(img: np.ndarray, meta: dict | None) -> np.ndarray:
     """Convert normalized log-domain image back to linear physical intensity."""
     if not meta:
         return img
-    target_mu = meta.get("target_mu")
-    target_sd = meta.get("target_sd")
-    log_eps = meta.get("log_eps")
-    if target_mu is None or target_sd is None or log_eps is None:
-        return img
-    img_log = img * float(target_sd) + float(target_mu)
-    return np.maximum(10.0 ** img_log - float(log_eps), 0.0)
+    img_log = img * float(meta["target_sd"]) + float(meta["target_mu"])
+    return np.maximum(10.0 ** img_log - float(meta["log_eps"]), 0.0)
 
 
 def roi_bounds(height: int, width: int, y0: int, y1: int, x_pad: int = 10) -> tuple[int, int, int, int]:
-    """Clamp ROI with fixed x-range [x_pad, width - x_pad]."""
+    """Compute signal ROI clamped to image bounds with x-padding."""
     x0 = max(0, x_pad)
     x1 = max(x0 + 1, width - x_pad)
     y0c = max(0, min(height - 1, int(y0)))
@@ -79,15 +73,8 @@ def roi_bounds(height: int, width: int, y0: int, y1: int, x_pad: int = 10) -> tu
     return y0c, y1c, x0, x1
 
 
-def bg_bounds(
-    height: int,
-    width: int,
-    *,
-    x0: int,
-    x1: int,
-    rows: int = 20,
-    x_pad: int = 10,
-) -> tuple[int, int, int, int]:
+def bg_bounds(height: int, width: int, *, x0: int, x1: int, rows: int = 20, x_pad: int = 10) -> tuple[int, int, int, int]:
+    """Compute background ROI (bottom rows of image) clamped to image bounds."""
     y1 = height
     y0 = max(0, height - rows)
     x_min = max(0, x_pad)

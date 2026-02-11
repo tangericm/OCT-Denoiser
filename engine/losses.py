@@ -4,6 +4,34 @@ import torch
 import torch.nn.functional as F
 
 
+def unpack_batch(batch, device: str):
+    """Unpack (x, y, meta) or (x, y) batch and move tensors to device."""
+    if len(batch) == 2:
+        x, y = batch
+        meta = None
+    else:
+        x, y, meta = batch
+    return x.to(device, non_blocking=True), y.to(device, non_blocking=True), meta
+
+
+def compute_total_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    w_charb: float,
+    w_grad: float,
+    w_snr_loss: float = 0.0,
+    snr_loss_t_peak: float = 0.1,
+    snr_loss_t_bg: float = 0.1,
+) -> torch.Tensor:
+    """Compute the combined Charbonnier + gradient L1 + optional SNR loss."""
+    loss = w_charb * charbonnier_loss(pred, target) + w_grad * gradient_l1(pred, target)
+    if w_snr_loss > 0:
+        snr_l, _ = smooth_snr_loss(pred, t_peak=snr_loss_t_peak, t_bg=snr_loss_t_bg)
+        loss = loss + w_snr_loss * snr_l
+    return loss
+
+
 def charbonnier_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
     return torch.mean(torch.sqrt((pred - target) ** 2 + eps**2))
 

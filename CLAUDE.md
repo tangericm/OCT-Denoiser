@@ -5,13 +5,13 @@ Use it to maximize correctness, speed, and consistency when making changes.
 
 ---
 ## Project Overview
- 
+
 Deep learning system for denoising Optical Coherence Tomography (OCT) B-scan images. Uses a ResUNet architecture with a pseudo-3D stem to process dual-channel spectral OCT data and produce denoised output. The project covers the full pipeline: raw spectral data preprocessing, neural network training, hyperparameter tuning, and inference.
- 
+
 **Author:** Eric Tang (tangericm)
- 
+
 ## Quick Reference
- 
+
 ```
 # Environment setup
 conda create --name OCTDenoiser python=3.14
@@ -21,10 +21,10 @@ pip install -r requirements.txt
 
 # Train a model
 python model_train.py
- 
+
 # Run inference with a trained checkpoint
 python model_predict.py
- 
+
 # Hyperparameter tuning
 python tune.py
 ```
@@ -33,12 +33,12 @@ python tune.py
 - **PyTorch:** 2.10.0+cu128 (CUDA)
 
 ## Repository Structure
- 
+
 ```
 OCT-Denoiser/
 ├── model_train.py           # Main training entry point
 ├── model_predict.py         # Standalone inference script
-├── preprocess.py            # OCT signal processing pipeline (581 lines)
+├── preprocess.py            # OCT signal processing pipeline
 ├── tune.py                  # Optuna hyperparameter search
 ├── requirements.txt         # Pinned pip dependencies
 │
@@ -53,26 +53,23 @@ OCT-Denoiser/
 │   ├── train.py             # Training loop (AMP, early stopping, composite scoring)
 │   ├── eval.py              # Patch and full-frame validation
 │   ├── infer.py             # Inference pipeline → TIFF output
-│   ├── losses.py            # Charbonnier + gradient L1 losses
+│   ├── losses.py            # Loss functions + compute_total_loss + unpack_batch
 │   ├── metrics.py           # SNR/CNR computation in dB
 │   └── early_stopping.py    # Patience-based early stopping dataclass
 │
 ├── data/
 │   ├── datamodule.py        # DataModule factory for DataLoaders
-│   ├── dataset.py           # RawBscanPatchDataset (lazy init, per-worker caching)
-│   └── full_frame_dataset.py# Full-frame dataset for validation/inference
+│   └── dataset.py           # RawBscanDataset (lazy init, per-worker caching)
 │
 └── utils/
     ├── run_manager.py       # Timestamped run directory creation
-    ├── seed.py              # Deterministic seeding (random, numpy, torch, CUDA)
-    ├── json_logging.py      # Config/metrics JSON serialization
+    ├── helpers.py            # Seeding (seed_all) and JSON serialization (save_json)
     ├── live_plot.py          # Real-time loss curve plotting
-    ├── io_tiff.py           # TIFF I/O with percentile-based scaling
-    └── keypoint_registration.py  # ORB-based frame registration
+    └── io_tiff.py           # TIFF I/O with percentile-based scaling
 ```
- 
+
 ## Architecture & Data Flow
- 
+
 ```
 Raw .raw files
   → BscanProcessor (preprocess.py)
@@ -81,13 +78,13 @@ Raw .raw files
   → Dataset (patches or full frames)
   → DataLoader
   → ResUNet Pseudo-3D model
-  → Loss (w_charb * Charbonnier + w_grad * gradient_L1)
+  → Loss (w_charb * Charbonnier + w_grad * gradient_L1 + optional w_snr_loss * smooth_snr)
   → Validation (patch loss + full-frame SNR/CNR)
   → Composite score for checkpointing & early stopping
 ```
- 
+
 ### Model: ResUNet Pseudo-3D
- 
+
 - **Input:** `[B, 2, H, W]` — two spectral-window B-scans
 - **Stem:** `Pseudo3DStem` — Conv3D `(2,3,3)` kernel fuses the 2 channels into a 2D feature map
 - **Encoder:** 4-level with residual blocks (base → 2x → 4x → 8x channels)
@@ -95,9 +92,9 @@ Raw .raw files
 - **Output:** `[B, 1, H, W]` — denoised prediction
 - **Activation:** SiLU (Swish) throughout; BatchNorm2d normalization
 - **Default base channels:** 64 (often overridden to 32 in scripts)
- 
+
 ### Model Registry
- 
+
 New models are added via decorator and looked up by name:
 ```python
 @register_model("my_model")
@@ -105,74 +102,76 @@ def build_my_model(*, base: int = 64) -> nn.Module:
     ...
 ```
 Used as: `create_model(cfg.model_name, base=cfg.base)`
- 
+
 ## Configuration System
- 
+
 All configuration uses Python **dataclasses** in `configs/default.py`. No YAML/JSON config files.
- 
+
 - `TrainConfig` — all training hyperparameters, paths, loss weights, early stopping, ROI bounds
-- `FolderSpec` — per-dataset specification: raw data location, dimensions, spectral processing parameters (window_sigma, gap, dispersion coefficients)
- 
+- `FolderSpec` — per-dataset specification: raw data location, dimensions, spectral processing parameters. Also used directly by `BscanProcessor` (no separate preprocess config).
+
 Key parameters in `TrainConfig`:
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
 | `patch_mode` | `"patch"` | `"strip"` (full-depth, random x) or `"patch"` (random x,y) |
 | `w_charb` / `w_grad` | 0.8 / 0.5 | Charbonnier and gradient loss weights |
+| `w_snr_loss` | 0.0 | Smooth SNR loss weight (0 = disabled) |
 | `score_w_val_loss` / `score_w_snr` / `score_w_cnr` | 1.0 / 1.0 / 0.0 | Composite score weights (lower = better) |
 | `amp` | `True` | Automatic mixed precision |
 | `early_stop_patience` | 5 | Validation checks without improvement before stopping |
- 
+
 ## Key Conventions
- 
+
 ### Code Style
 - No linter or formatter is enforced; code uses standard Python conventions
 - Type hints via `typing` and `__future__ annotations`
 - Dataclasses over dicts for configuration
 - `from __future__ import annotations` in library modules
- 
+
 ### Project Patterns
 - **Lazy dataset initialization:** Datasets create per-worker `BscanProcessor` instances in `__getitem__` (not `__init__`) to work with multiprocessing DataLoaders
 - **LRU frame caching:** Workers cache processed frames to avoid redundant I/O
+- **Centralized loss computation:** `compute_total_loss()` in `engine/losses.py` is the single source for the combined loss formula, used by both training and evaluation
 - **Composite validation score:** `score = w_loss * val_loss - w_snr * snr - w_cnr * cnr` (lower is better; normalized against first-check baselines)
-- **Checkpoint naming:** `best.pt` (best composite score), `epoch_NNN.pt` (periodic)
-- **Run directories:** Auto-versioned via `make_run_dir()` — creates `runs/<experiment>/<experiment>_v001/`
- 
+- **Checkpoint naming:** `best.pt` (best val loss), `best_by_score.pt` (best composite score), `epoch_NNN.pt` (periodic)
+- **Run directories:** Auto-versioned via `make_run_dir()` — creates `runs/<experiment>/<timestamp>/`
+
 ### Tensor Conventions
 - Input shape: `[B, 2, H, W]` (batch, dual-window channels, height, width)
 - Target shape: `[B, 1, H, W]`
 - Images are log-compressed floats in [0, 1] range
-- ROI for SNR/CNR: signal region defined by `snr_sig_y0`/`snr_sig_y1` (pixel rows); background is bottom 50 rows
- 
+- ROI for SNR/CNR: signal region defined by `snr_sig_y0`/`snr_sig_y1` (pixel rows); background is bottom 20 rows
+
 ### File I/O
 - Raw input: `.raw` uint16 binary files (spectral domain)
 - Calibration: `.clb` files for k-linear resampling
 - Output: multi-page TIFF stacks (uint16 or float32) via `tifffile`
 - Training artifacts: JSON logs, PNG loss plots, CSV metrics
- 
+
 ## Common Development Tasks
- 
+
 ### Adding a New Model
 1. Create a file in `networks/` (e.g., `networks/my_model.py`)
 2. Implement the model class, accepting `[B, 2, H, W]` input and returning `[B, 1, H, W]`
 3. Decorate the builder function with `@register_model("my_model")`
 4. Import the module in `networks/__init__.py` so registration runs
 5. Set `model_name="my_model"` in `TrainConfig`
- 
+
 ### Adding a New Loss Function
 1. Add the function to `engine/losses.py`
-2. Integrate it into the training step in `engine/train.py` (search for `w_charb` / `w_grad` usage)
+2. Integrate it into `compute_total_loss()` in `engine/losses.py`
 3. Add corresponding weight to `TrainConfig`
- 
+
 ### Adding a New Dataset / Scan Type
 1. Create a new `FolderSpec` with the correct raw data dimensions, crop, and dispersion coefficients
 2. Add it to the `folder_specs` list in `model_train.py`
-3. The `BscanProcessor` in `preprocess.py` handles all spectral processing generically
- 
+3. `BscanProcessor` in `preprocess.py` accepts `FolderSpec` directly and handles all spectral processing
+
 ### Running Hyperparameter Tuning
 `tune.py` uses Optuna to search over spectral parameters (window_sigma, gap) and optionally training hyperparameters. Results are stored in per-trial CSV files under the run directory.
- 
+
 ## Important Notes
- 
+
 - **No automated tests exist.** Validate changes by running training on a small subset or verifying inference output visually.
 - **GPU required for practical use.** Training and inference are designed for CUDA. CPU mode is supported but slow.
 - **Windows paths in scripts.** `model_train.py` and `model_predict.py` use Windows-style backslash paths (e.g., `r"images\Maestro3"`). These may need adjustment on Linux.
@@ -197,7 +196,7 @@ When unsure, prefer **readability + correctness** over micro-optimizations unles
 - `model_train.py` — primary training entrypoint (config assembly, run setup, train, optional inference).
 - `model_predict.py` — standalone inference script from raw data + checkpoint.
 - `preprocess.py` — preprocessing pipeline and computational OCT reconstruction helpers.
-- `configs/default.py` — dataclass configuration contracts (`TrainConfig`, `FolderSpec`, etc.).
+- `configs/default.py` — dataclass configuration contracts (`TrainConfig`, `FolderSpec`).
 - `data/` — datasets/datamodule, patch extraction, frame loading.
 - `engine/` — train/eval/infer loops, metrics, losses, early stopping.
 - `networks/` — model definitions and model registry.
@@ -277,7 +276,7 @@ When runtime/data is unavailable, still run non-data checks (`compileall`, impor
 
 ### Logging
 
-- Reuse existing logging patterns in `utils/json_logging.py` and engine modules.
+- Reuse existing logging patterns in `utils/helpers.py` and engine modules.
 - Avoid noisy per-iteration prints in performance-critical loops.
 
 ### Performance-sensitive code
@@ -303,7 +302,7 @@ When changing configs, keep defaults conservative and reproducible.
 
 ## 7) Reproducibility rules
 
-- Respect seeding utilities (e.g., `utils/seed.py`) and deterministic flags.
+- Respect seeding utilities (`utils/helpers.py: seed_all()`) and deterministic flags.
 - Any new stochastic behavior should be seed-aware.
 - If a change can alter numerical results, note it in commit/PR summary.
 
@@ -315,7 +314,7 @@ Before finalizing training-related changes, verify:
 
 1. Config fields exist, are typed, and are wired end-to-end.
 2. Data pipeline outputs expected tensor shapes/dtypes.
-3. Loss/metric changes are reflected in train + validation paths.
+3. Loss/metric changes are reflected in `compute_total_loss()` and both train + validation paths.
 4. Checkpoint load/save compatibility is preserved.
 5. Inference path still works with best checkpoint output.
 
@@ -372,7 +371,7 @@ Keep claims tied to concrete checks or code references.
 
 ## 13) If you need to add tests
 
-Given this repo’s script-oriented workflow, prefer lightweight checks:
+Given this repo's script-oriented workflow, prefer lightweight checks:
 
 - Unit-like checks for pure numerical helpers.
 - Small synthetic-array tests for shape/range invariants.
@@ -384,11 +383,10 @@ Do not add slow or data-heavy tests by default.
 
 ## 14) Definition of done
 
-A change is “done” when:
+A change is "done" when:
 
 - Code is correct and minimal.
 - Existing workflows are preserved.
 - At least one relevant sanity check has been run.
 - Limitations are explicitly disclosed.
 - Diff is clean and free of unrelated edits.
-

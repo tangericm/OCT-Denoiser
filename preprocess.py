@@ -1,54 +1,16 @@
+from __future__ import annotations
+
 import os
 import glob
-import tifffile
-import time
-from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict, Any
+from typing import TYPE_CHECKING, Tuple, Dict, Any
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.interpolate import CubicSpline
 import scipy.fft as sfft
 import scipy.linalg as sla
 
-
-# -----------------------------
-# Config
-# -----------------------------
-@dataclass
-class Config:
-    pixels: int = 2048
-    alines: int = 1024
-    data_folder: str = "6mm_1024Aline"  # Name of data folder containing bscan*.raw files
-
-    # Preprocessing knobs
-    do_dc_subtract: bool = True
-    window_type: str = "hann"  # "hann" or "ones"
-    use_log: bool = True
-    log_eps: float = 1e-6
-
-    # Depth handling
-    # Typically you only need half-depth; set to (0, 1024) if desired
-    crop_depth: Tuple[int, int] = (0, pixels//2)
-    apply_fftshift_depth: bool = False
-
-    # Spectral gap / windowing
-    window_sigma: float = 0.08  # normalized width of Gaussian windows
-    gap: float = 0.25           # relative gap in [0, 0.5], you can vary later
-
-    # Dispersion compensation
-    dispersion: Optional[List[float]] = None
-
-@contextmanager
-def timer(name: str, enabled: bool = True):
-    if not enabled:
-        yield
-        return
-    t0 = time.perf_counter()
-    yield
-    dt = time.perf_counter() - t0
-    print(f"[TIMER] {name}: {dt*1e3:.2f} ms")
+if TYPE_CHECKING:
+    from configs.default import FolderSpec
 
 # -----------------------------
 # Low-level IO
@@ -328,26 +290,18 @@ def make_two_window_masks(pixels: int, gap: float, sigma: float) -> Tuple[np.nda
     return w1, w2
 
 
-def to_uint8(img: np.ndarray) -> np.ndarray:
-    """
-    Convert float image to uint8 using robust percentile-based scaling.
-    """
-    lo, hi = np.percentile(img, [1, 99])
-    img = np.clip((img - lo) / (hi - lo + 1e-6), 0, 1)
-    return (img * 255).astype(np.uint8)
-
 
 # -----------------------------
 # High-level processor
 # -----------------------------
 class BscanProcessor:
-    def __init__(self, root_folder: str, cfg: Config):
+    def __init__(self, folder_spec: FolderSpec):
         """
-        root_folder: project folder containing
-          - data folder (default: "6mm_1024Aline") with bscan*.raw
-          - CLB file "000003_3DOCT-1_FUNDUS.CLB" (can also be inside root_folder)
-        cfg.data_folder: name of the data folder (default: "6mm_1024Aline")
+        folder_spec: a FolderSpec containing root_folder, data_folder, pixels,
+            alines, crop_depth, and all spectral processing parameters.
         """
+        cfg = folder_spec
+        root_folder = cfg.root_folder
         self.root = root_folder
         self.cfg = cfg
 
@@ -356,17 +310,15 @@ class BscanProcessor:
         if not os.path.isdir(self.data_dir):
             raise FileNotFoundError(f"Data folder not found: {self.data_dir}")
 
-        # Find CLB (either in root or inside data_dir)
+        # Find CLB (either in data_dir or root_folder)
         self.clb_path = None
-        if self.clb_path is None:
-            clbs = sorted(glob.glob(os.path.join(self.data_dir, "*.CLB")))
-            if len(clbs) == 1:
-                self.clb_path = clbs[0]
-            elif len(clbs) > 1:
-                raise FileNotFoundError(
-                    f"Multiple .CLB files found in dataset folder {self.data_dir}: {clbs}\n"
-                )
-        # Search in root_folder
+        clbs = sorted(glob.glob(os.path.join(self.data_dir, "*.CLB")))
+        if len(clbs) == 1:
+            self.clb_path = clbs[0]
+        elif len(clbs) > 1:
+            raise FileNotFoundError(
+                f"Multiple .CLB files found in dataset folder {self.data_dir}: {clbs}\n"
+            )
         if self.clb_path is None:
             clbs = sorted(glob.glob(os.path.join(root_folder, "*.CLB")))
             if len(clbs) == 1:
@@ -474,77 +426,61 @@ class BscanProcessor:
         
     def process_one(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, Any]:
         """
-        Returns dict containing:
-          - target_full: [H,W] float32
-          - input_w1: [H,W] float32
-          - input_w2: [H,W] float32
-        """
-        prof = False
-        cfg = self.cfg
-        self._current_frame_name = os.path.splitext(os.path.basename(bscan_path))[0]
+        Process a single raw B-scan file into denoising inputs and target.
 
+        Returns dict with keys:
+          target_full, input_w1, input_w2: [H,W] float32
+          target_mu, target_sd, input_w1_mu, input_w1_sd, input_w2_mu, input_w2_sd: float
+        """
+        cfg = self.cfg
         pixels = cfg.pixels
         alines = cfg.alines
 
-        # 1) Read raw spectrum (fast path, minimal allocations)
-        with timer("read raw", prof):
-            data = np.fromfile(bscan_path, dtype=np.uint16)
+        # 1) Read raw spectrum
+        data = np.fromfile(bscan_path, dtype=np.uint16)
         expected = pixels * alines
         if data.size != expected:
             raise ValueError(f"{os.path.basename(bscan_path)} has {data.size} elements; expected {expected}.")
 
-        # Reshape
-        with timer("reshape raw", prof):
-            raw = data.reshape((pixels, alines), order="F").astype(np.float32, copy=False)
+        raw = data.reshape((pixels, alines), order="F").astype(np.float32, copy=False)
 
-        # 2) DC subtract (in-place where safe)
-        with timer("DC subtract", prof):
-            if cfg.do_dc_subtract:
-                raw[0, :] = raw[3, :]
-                raw[1, :] = raw[3, :]
-                raw[2, :] = raw[3, :]
-                raw = raw - raw.mean(axis=1, keepdims=True)
+        # 2) DC subtract
+        if cfg.do_dc_subtract:
+            raw[0, :] = raw[3, :]
+            raw[1, :] = raw[3, :]
+            raw[2, :] = raw[3, :]
+            raw = raw - raw.mean(axis=1, keepdims=True)
 
         # 3) Resample to k-linear (cubic spline, vectorized across A-lines)
-        # Use cached grids self._x and self._xp to avoid per-call linspace/casts
-        # cs = CubicSpline(self._x, raw, axis=0, bc_type="natural")
-        # resamp = cs(self._xp).astype(np.float32, copy=False)  # [pixels, alines]
-        with timer("resample cubic", prof):
-            resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
+        resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
 
-        # 4) Apodization (in-place multiply)
-        with timer("apodization", prof):
-            resamp *= self.apod[:, None]
+        # 4) Apodization
+        resamp *= self.apod[:, None]
 
         # 5) Build complex spectrum (with optional dispersion)
-        with timer("build complex spectrum", prof):
-            if self._phase_term is not None:
-                spec_full = resamp.astype(np.complex64, copy=True)
-                spec_full *= self._phase_term[:, None]
-            else:
-                spec_full = resamp.astype(np.complex64, copy=True)
+        if self._phase_term is not None:
+            spec_full = resamp.astype(np.complex64, copy=True)
+            spec_full *= self._phase_term[:, None]
+        else:
+            spec_full = resamp.astype(np.complex64, copy=True)
 
         # 6) Recon target + two windowed inputs via batched FFT
-        # Build windowed spectra using pre-allocated buffers (avoids temp allocations)
-        with timer("apply spectral windows", prof):
-            np.multiply(spec_full, self.w1[:, None], out=self._spec1_c64)
-            np.multiply(spec_full, self.w2[:, None], out=self._spec2_c64)
+        np.multiply(spec_full, self.w1[:, None], out=self._spec1_c64)
+        np.multiply(spec_full, self.w2[:, None], out=self._spec2_c64)
 
-        # Copy into pre-allocated 3D batch buffer (avoids np.stack allocation)
-        with timer("reconstruct all B-scans (batched)", prof):
-            self._spec_batch_c64[0] = spec_full
-            self._spec_batch_c64[1] = self._spec1_c64
-            self._spec_batch_c64[2] = self._spec2_c64
-            (batch_imgs, batch_stats) = recon_bscan_batch(
-                self._spec_batch_c64,
-                cfg.crop_depth,
-                cfg.use_log,
-                cfg.log_eps,
-                cfg.apply_fftshift_depth,
-                return_stats=True,
-            )
-            target_full, input_w1, input_w2 = batch_imgs
-            target_stats, input_w1_stats, input_w2_stats = batch_stats
+        self._spec_batch_c64[0] = spec_full
+        self._spec_batch_c64[1] = self._spec1_c64
+        self._spec_batch_c64[2] = self._spec2_c64
+        batch_imgs, batch_stats = recon_bscan_batch(
+            self._spec_batch_c64,
+            cfg.crop_depth,
+            cfg.use_log,
+            cfg.log_eps,
+            cfg.apply_fftshift_depth,
+            return_stats=True,
+        )
+        target_full, input_w1, input_w2 = batch_imgs
+        target_stats, input_w1_stats, input_w2_stats = batch_stats
 
         return {
             "target_full": target_full,
@@ -585,65 +521,16 @@ class BscanProcessor:
             Y[i, 0] = out["target_full"]
 
         if out_npz is not None:
+            from utils.io_tiff import save_tiff_stack
+
             os.makedirs(os.path.dirname(out_npz), exist_ok=True)
             np.savez_compressed(out_npz, X=X, Y=Y)
             print(f"[OK] Saved dataset: {out_npz}  X={X.shape} Y={Y.shape}")
-            
-            # Save full stacks as multi-page TIFFs
+
             base_dir = os.path.dirname(out_npz)
-            
-            # Window 1 stack: [F, H, W] -> uint8
-            w1_stack = np.stack([to_uint8(X[i, 0]) for i in range(F)])
-            w1_path = os.path.join(base_dir, f"{cfg.data_folder}_window1.tiff")
-            tifffile.imwrite(w1_path, w1_stack, photometric='minisblack')
-            print(f"[OK] Saved Window 1 stack: {w1_path} (shape: {w1_stack.shape})")
-            
-            # Window 2 stack: [F, H, W] -> uint8
-            w2_stack = np.stack([to_uint8(X[i, 1]) for i in range(F)])
-            w2_path = os.path.join(base_dir, f"{cfg.data_folder}_window2.tiff")
-            tifffile.imwrite(w2_path, w2_stack, photometric='minisblack')
-            print(f"[OK] Saved Window 2 stack: {w2_path} (shape: {w2_stack.shape})")
-            
-            # Target stack: [F, H, W] -> uint8
-            target_stack = np.stack([to_uint8(Y[i, 0]) for i in range(F)])
-            target_path = os.path.join(base_dir, f"{cfg.data_folder}_target.tiff")
-            tifffile.imwrite(target_path, target_stack, photometric='minisblack')
-            print(f"[OK] Saved Target stack: {target_path} (shape: {target_stack.shape})")
-                
+            for label, stack in [("window1", X[:, 0]), ("window2", X[:, 1]), ("target", Y[:, 0])]:
+                path = os.path.join(base_dir, f"{cfg.data_folder}_{label}.tiff")
+                save_tiff_stack(path, stack, dtype="uint8")
+                print(f"[OK] Saved {label} stack: {path} (shape: {stack.shape})")
 
         return {"X": X, "Y": Y}
-
-
-# -----------------------------
-# Unit-like tests / sanity checks
-# -----------------------------
-def run_sanity_tests(dataset: Dict[str, np.ndarray], cfg: Config):
-    X, Y = dataset["X"], dataset["Y"]
-
-    assert X.ndim == 4 and Y.ndim == 4, "X,Y should be rank-4 tensors"
-    assert X.shape[0] == Y.shape[0], "Frame count mismatch"
-    assert X.shape[1] == 2, "Expected dual-input channels=2"
-    assert Y.shape[1] == 1, "Expected target channels=1"
-
-    F, _, H, W = X.shape
-    print(f"[TEST] Shapes OK: X={X.shape}, Y={Y.shape}")
-
-    # Numerical sanity: not all zeros / not NaN
-    assert np.isfinite(X).all() and np.isfinite(Y).all(), "Found NaN/Inf"
-    assert np.abs(X).mean() > 1e-4, "X seems near-zero; pipeline likely broken"
-    assert np.abs(Y).mean() > 1e-4, "Y seems near-zero; pipeline likely broken"
-    print("[TEST] Finite/non-trivial OK")
-
-    # Optional: target should generally have *more detail* than windowed inputs
-    # We’ll compare simple gradient energy.
-    def grad_energy(img):
-        dy = np.abs(img[1:, :] - img[:-1, :]).mean()
-        dx = np.abs(img[:, 1:] - img[:, :-1]).mean()
-        return float(dy + dx)
-
-    idx = min(0, F - 1)
-    ge_t = grad_energy(Y[idx, 0])
-    ge_1 = grad_energy(X[idx, 0])
-    ge_2 = grad_energy(X[idx, 1])
-    print(f"[TEST] Gradient energy (frame0): target={ge_t:.4f}, w1={ge_1:.4f}, w2={ge_2:.4f}")
-    # Not asserting ordering, because normalization/log may affect it. Just reporting.
