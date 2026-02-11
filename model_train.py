@@ -19,7 +19,7 @@ def main():
                 crop_depth=(0, 1024),
                 dispersion=[1.315892282e-06, 5.459678905e-10],
                 window_sigma=0.08,
-                gap=0.25,
+                gap=0,
             ),
         ],
         cache_frames_per_worker=1000,
@@ -27,7 +27,7 @@ def main():
         device="cuda",
         amp=True,
         deterministic=True,
-        epochs=600,
+        epochs=300,
         base=32,
         batch_size=12,
         lr=3e-4,
@@ -42,7 +42,7 @@ def main():
 
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
-        w_snr_loss=2e-5,
+        w_snr_loss=0,
 
         snr_sig_y0=111,
         snr_sig_y1=600,

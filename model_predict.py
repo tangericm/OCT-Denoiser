@@ -11,7 +11,7 @@ def main():
         snr_sig_stat="p99.99",  # change to e.g. "p95" to use percentile statistic
     )
 
-    run = "20260210_182840"
+    run = "20260211_075522"
     path =r"runs\6mm_1024Aline_strip\\" + run + r"\\checkpoints\best.pt"
     outdir1=r"runs\6mm_1024Aline_strip\\" + run + r"\\predictions\train"
     outdir2=r"runs\6mm_1024Aline_strip\\" + run + r"\\predictions\test"
