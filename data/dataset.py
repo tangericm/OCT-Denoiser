@@ -176,9 +176,9 @@ class RawBscanDataset(Dataset):
             y = y[:, ::-1, :]
         return x, y
 
-    def _build_meta(self, fidx: int, frame_idx: int) -> dict:
+    def _build_meta(self, fidx: int, frame_idx: int, out: dict | None = None) -> dict:
         fs = self.folder_specs[fidx]
-        return {
+        meta = {
             "folder_idx": fidx,
             "frame_idx": frame_idx,
             "data_folder": fs.data_folder,
@@ -187,6 +187,14 @@ class RawBscanDataset(Dataset):
             "pixels": fs.pixels,
             "alines": fs.alines,
         }
+        if out is not None:
+            if "target_mu" in out:
+                meta["target_mu"] = float(out["target_mu"])
+            if "target_sd" in out:
+                meta["target_sd"] = float(out["target_sd"])
+            if hasattr(self._procs[fidx], "cfg") and hasattr(self._procs[fidx].cfg, "log_eps"):
+                meta["log_eps"] = float(self._procs[fidx].cfg.log_eps)
+        return meta
 
     def __len__(self):
         self._build_index()
@@ -210,7 +218,8 @@ class RawBscanDataset(Dataset):
             x = np.ascontiguousarray(x)
             y = np.ascontiguousarray(y)
 
-        return torch.from_numpy(x), torch.from_numpy(y), self._build_meta(fidx, frame_idx)
+        meta_out = out if self.full_frame else None
+        return torch.from_numpy(x), torch.from_numpy(y), self._build_meta(fidx, frame_idx, out=meta_out)
 
 
 # Backward-compatible aliases

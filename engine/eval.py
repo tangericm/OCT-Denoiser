@@ -9,6 +9,19 @@ from .losses import charbonnier_loss, gradient_l1, smooth_snr_loss
 from .metrics import roi_bounds, bg_bounds, roi_snr_cnr
 
 
+def _to_physical_intensity(img: np.ndarray, meta: dict | None) -> np.ndarray:
+    """Match inference-time SNR/CNR domain (de-normalized linear intensity)."""
+    if not meta:
+        return img
+    target_mu = meta.get("target_mu")
+    target_sd = meta.get("target_sd")
+    log_eps = meta.get("log_eps")
+    if target_mu is None or target_sd is None or log_eps is None:
+        return img
+    img_log = img * float(target_sd) + float(target_mu)
+    return np.maximum(10.0 ** img_log - float(log_eps), 0.0)
+
+
 @torch.no_grad()
 def evaluate(
     model,
@@ -61,7 +74,7 @@ def evaluate_full_frames(
     sample_pred: np.ndarray | None = None
 
     for batch in loader:
-        x, y, _meta = unpack_batch(batch, device)
+        x, y, meta = unpack_batch(batch, device)
         pred = model(x)
         loss = w_charb * charbonnier_loss(pred, y) + w_grad * gradient_l1(pred, y)
         if w_snr_loss > 0:
@@ -73,16 +86,32 @@ def evaluate_full_frames(
         pred_np = pred.detach().cpu().numpy()
         gt_np = y.detach().cpu().numpy()
 
+        target_mu_vals = meta.get("target_mu") if isinstance(meta, dict) else None
+        target_sd_vals = meta.get("target_sd") if isinstance(meta, dict) else None
+        log_eps_vals = meta.get("log_eps") if isinstance(meta, dict) else None
+
         for i in range(pred_np.shape[0]):
             pred_img = pred_np[i, 0]
             gt_img = gt_np[i, 0]
-            h, w = pred_img.shape
+
+            sample_meta = None
+            if target_mu_vals is not None and target_sd_vals is not None and log_eps_vals is not None:
+                sample_meta = {
+                    "target_mu": float(target_mu_vals[i]),
+                    "target_sd": float(target_sd_vals[i]),
+                    "log_eps": float(log_eps_vals[i]),
+                }
+
+            pred_eval = _to_physical_intensity(pred_img, sample_meta)
+            gt_eval = _to_physical_intensity(gt_img, sample_meta)
+
+            h, w = pred_eval.shape
             sig_roi = roi_bounds(h, w, snr_sig_y0, snr_sig_y1)
             sy0, sy1, sx0, sx1 = sig_roi
             bg_roi = bg_bounds(h, w, x0=sx0, x1=sx1)
 
-            snr_pred, cnr_pred = roi_snr_cnr(pred_img, sig_roi, bg_roi, sig_stat=snr_sig_stat)
-            snr_gt, cnr_gt = roi_snr_cnr(gt_img, sig_roi, bg_roi, sig_stat=snr_sig_stat)
+            snr_pred, cnr_pred = roi_snr_cnr(pred_eval, sig_roi, bg_roi, sig_stat=snr_sig_stat)
+            snr_gt, cnr_gt = roi_snr_cnr(gt_eval, sig_roi, bg_roi, sig_stat="max")
             snr_pred_list.append(snr_pred)
             snr_gt_list.append(snr_gt)
             cnr_pred_list.append(cnr_pred)
