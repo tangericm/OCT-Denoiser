@@ -73,20 +73,35 @@ def evaluate_full_frames(
         pred_np = pred.detach().cpu().numpy()
         gt_np = y.detach().cpu().numpy()
 
-        target_mu_vals = meta.get("target_mu") if isinstance(meta, dict) else None
-        target_sd_vals = meta.get("target_sd") if isinstance(meta, dict) else None
-        log_eps_vals = meta.get("log_eps") if isinstance(meta, dict) else None
-
         for i in range(pred_np.shape[0]):
             pred_img = pred_np[i, 0]
             gt_img = gt_np[i, 0]
 
             sample_meta = None
-            if target_mu_vals is not None and target_sd_vals is not None and log_eps_vals is not None:
+            if isinstance(meta, dict):
+                target_mu = meta.get("target_mu")
+                target_sd = meta.get("target_sd")
+                log_eps = meta.get("log_eps")
+                if target_mu is not None and target_sd is not None and log_eps is not None:
+                    sample_meta = {
+                        "target_mu": float(target_mu[i]) if np.ndim(target_mu) > 0 else float(target_mu),
+                        "target_sd": float(target_sd[i]) if np.ndim(target_sd) > 0 else float(target_sd),
+                        "log_eps": float(log_eps[i]) if np.ndim(log_eps) > 0 else float(log_eps),
+                    }
+            elif isinstance(meta, (list, tuple)) and i < len(meta) and isinstance(meta[i], dict):
+                m = meta[i]
+                if "target_mu" in m and "target_sd" in m and "log_eps" in m:
+                    sample_meta = {
+                        "target_mu": float(m["target_mu"]),
+                        "target_sd": float(m["target_sd"]),
+                        "log_eps": float(m["log_eps"]),
+                    }
+
+            if sample_meta is not None:
                 sample_meta = {
-                    "target_mu": float(target_mu_vals[i]),
-                    "target_sd": float(target_sd_vals[i]),
-                    "log_eps": float(log_eps_vals[i]),
+                    "target_mu": float(sample_meta["target_mu"]),
+                    "target_sd": float(sample_meta["target_sd"]),
+                    "log_eps": float(sample_meta["log_eps"]),
                 }
 
             pred_eval = to_physical_intensity(pred_img, sample_meta)
