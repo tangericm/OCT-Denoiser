@@ -275,11 +275,11 @@ def predict_raw_to_tiffs(
     gt_path   = os.path.join(outdir, f"gt_{param_suffix}.tiff")
 
     save_tiff_stack(pred_path, preds, dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(gt_path,   gts,   dtype=tiff_dtype, scale_per_slice=True)
+    # save_tiff_stack(gt_path,   gts,   dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
         save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds, dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, f"gt_{param_suffix}_float32.tiff"), gts, dtype="float32", scale_per_slice=True)
+        # save_tiff_stack(os.path.join(outdir, f"gt_{param_suffix}_float32.tiff"), gts, dtype="float32", scale_per_slice=True)
 
 
 def predict_from_config(cfg, folder_spec, ckpt_path: str, outdir: str, **overrides) -> None:
