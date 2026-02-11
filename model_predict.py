@@ -8,7 +8,7 @@ def main():
         base=32,
         device="cuda",
         also_save_float32=True,
-        snr_sig_stat="max",  # change to e.g. "p95" to use percentile statistic
+        snr_sig_stat="p99.99",  # change to e.g. "p95" to use percentile statistic
     )
 
     folder_spec = FolderSpec(
