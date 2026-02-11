@@ -93,7 +93,7 @@ class ResUNetPseudo3D(nn.Module):
         self.head = nn.Conv2d(base, 1, 1)
 
 
-    def forward(self, x: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x0 = self.stem(x)
         s0 = self.enc1(x0)
         s1 = self.down1(s0)
@@ -101,12 +101,12 @@ class ResUNetPseudo3D(nn.Module):
         s3 = self.down3(s2)
         b = self.bot(s3)
 
-
         x = self.up2(b, s2)
         x = self.up1(x, s1)
         x = self.up0(x, s0)
         return self.head(x)
 
+
 @register_model("resunet_pseudo3d")
-def build_resunet_pseudo3d(*, base: int = 64, **_) -> nn.Module:
+def build_resunet_pseudo3d(*, base: int = 64) -> nn.Module:
     return ResUNetPseudo3D(base=base)

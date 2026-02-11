@@ -129,7 +129,7 @@ class RawBscanDataset(Dataset):
         self._procs = []
         self._paths = []
         for fs in self.folder_specs:
-            proc = BscanProcessor(fs.root_folder, fs.to_preprocess_config())
+            proc = BscanProcessor(fs)
             self._procs.append(proc)
             self._paths.append(proc.bscan_paths)
 
@@ -220,7 +220,3 @@ class RawBscanDataset(Dataset):
 
         meta_out = out if self.full_frame else None
         return torch.from_numpy(x), torch.from_numpy(y), self._build_meta(fidx, frame_idx, out=meta_out)
-
-
-# Backward-compatible aliases
-RawBscanPatchDataset = RawBscanDataset

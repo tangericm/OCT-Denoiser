@@ -19,28 +19,10 @@ class FolderSpec:
     window_sigma: float = 0.08
     gap: float = 0.15
 
-    def to_preprocess_config(self):
-        from preprocess import Config as PreprocessConfig
-        return PreprocessConfig(
-            pixels=self.pixels,
-            alines=self.alines,
-            data_folder=self.data_folder,
-            do_dc_subtract=self.do_dc_subtract,
-            window_type=self.window_type,
-            use_log=self.use_log,
-            log_eps=self.log_eps,
-            crop_depth=self.crop_depth,
-            apply_fftshift_depth=self.apply_fftshift_depth,
-            window_sigma=self.window_sigma,
-            gap=self.gap,
-            dispersion=self.dispersion,
-        )
-
 
 @dataclass
 class TrainConfig:
     # Paths
-    npz_path: Optional[str] = None
     runs_root: str = "runs"
     experiment_name: str = "experiment"
 
@@ -79,10 +61,6 @@ class TrainConfig:
     w_charb: float = 0.8
     w_grad: float = 0.5
     w_snr_loss: float = 0.0          # smooth SNR loss weight (0 = disabled)
-    w_snr_loss_start: Optional[float] = None  # epoch-schedule start weight (None => constant w_snr_loss)
-    w_snr_loss_end: Optional[float] = None    # epoch-schedule end weight (None => constant w_snr_loss)
-    w_snr_ramp_start_epoch: int = 1           # first epoch where SNR ramp begins
-    w_snr_ramp_end_epoch: Optional[int] = None  # epoch where SNR ramp reaches end weight (None => epochs)
     snr_loss_t_peak: float = 0.1     # temperature for soft-peak selection
     snr_loss_t_bg: float = 0.1       # temperature for soft-background selection
 

@@ -95,7 +95,7 @@ def predict_raw_to_tiffs(
     ensure_dir(outdir)
     print(f"[START] predict_raw_to_tiffs: outdir={outdir}")
 
-    proc = BscanProcessor(folder_spec.root_folder, folder_spec.to_preprocess_config())
+    proc = BscanProcessor(folder_spec)
     if not proc.cfg.use_log:
         raise ValueError("predict_raw_to_tiffs currently expects cfg.use_log=True for linear-domain metric recovery")
 
