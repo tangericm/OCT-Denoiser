@@ -42,11 +42,7 @@ def main():
 
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
-        # w_snr_loss=2e-5,
-        # w_snr_loss_start=1e-5,
-        # w_snr_loss_end=1e-4,
-        # w_snr_ramp_start_epoch=1,
-        # w_snr_ramp_end_epoch=600,
+        w_snr_loss=2e-5,
 
         snr_sig_y0=111,
         snr_sig_y1=600,
