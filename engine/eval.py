@@ -6,20 +6,7 @@ from torch.utils.data import DataLoader
 
 from engine.common import unpack_batch
 from .losses import charbonnier_loss, gradient_l1, smooth_snr_loss
-from .metrics import roi_bounds, bg_bounds, roi_snr_cnr
-
-
-def _to_physical_intensity(img: np.ndarray, meta: dict | None) -> np.ndarray:
-    """Match inference-time SNR/CNR domain (de-normalized linear intensity)."""
-    if not meta:
-        return img
-    target_mu = meta.get("target_mu")
-    target_sd = meta.get("target_sd")
-    log_eps = meta.get("log_eps")
-    if target_mu is None or target_sd is None or log_eps is None:
-        return img
-    img_log = img * float(target_sd) + float(target_mu)
-    return np.maximum(10.0 ** img_log - float(log_eps), 0.0)
+from .metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
 
 
 @torch.no_grad()
@@ -102,8 +89,8 @@ def evaluate_full_frames(
                     "log_eps": float(log_eps_vals[i]),
                 }
 
-            pred_eval = _to_physical_intensity(pred_img, sample_meta)
-            gt_eval = _to_physical_intensity(gt_img, sample_meta)
+            pred_eval = to_physical_intensity(pred_img, sample_meta)
+            gt_eval = to_physical_intensity(gt_img, sample_meta)
 
             h, w = pred_eval.shape
             sig_roi = roi_bounds(h, w, snr_sig_y0, snr_sig_y1)

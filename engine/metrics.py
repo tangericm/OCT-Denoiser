@@ -57,6 +57,19 @@ def roi_snr_cnr(
     return float(snr), float(cnr)
 
 
+def to_physical_intensity(img: np.ndarray, meta: dict | None) -> np.ndarray:
+    """Convert normalized log-domain image back to linear physical intensity."""
+    if not meta:
+        return img
+    target_mu = meta.get("target_mu")
+    target_sd = meta.get("target_sd")
+    log_eps = meta.get("log_eps")
+    if target_mu is None or target_sd is None or log_eps is None:
+        return img
+    img_log = img * float(target_sd) + float(target_mu)
+    return np.maximum(10.0 ** img_log - float(log_eps), 0.0)
+
+
 def roi_bounds(height: int, width: int, y0: int, y1: int, x_pad: int = 10) -> tuple[int, int, int, int]:
     """Clamp ROI with fixed x-range [x_pad, width - x_pad]."""
     x0 = max(0, x_pad)

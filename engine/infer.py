@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from networks import create_model
-from engine.metrics import roi_snr_cnr, roi_bounds, bg_bounds
+from engine.metrics import roi_snr_cnr, roi_bounds, bg_bounds, to_physical_intensity
 from utils.io_tiff import save_tiff_stack
 from utils.run_manager import ensure_dir
 from configs.default import TrainConfig
@@ -206,10 +206,9 @@ def predict_raw_to_tiffs(
         gts[i] = gt
 
         # Recover per-frame physical-domain intensities and compute SNR/CNR there.
-        pred_log = pred * target_sd + target_mu
-        gt_log = gt * target_sd + target_mu
-        pred_lin = np.maximum(10.0 ** pred_log - proc.cfg.log_eps, 0.0)
-        gt_lin = np.maximum(10.0 ** gt_log - proc.cfg.log_eps, 0.0)
+        sample_meta = {"target_mu": target_mu, "target_sd": target_sd, "log_eps": proc.cfg.log_eps}
+        pred_lin = to_physical_intensity(pred, sample_meta)
+        gt_lin = to_physical_intensity(gt, sample_meta)
 
         snr_pred, cnr_pred = roi_snr_cnr(pred_lin, sig_roi_c, bg_roi_c, sig_stat=snr_sig_stat)
         snr_gt, cnr_gt = roi_snr_cnr(gt_lin, sig_roi_c, bg_roi_c, sig_stat="max")
