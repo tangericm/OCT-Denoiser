@@ -19,7 +19,7 @@ def main():
                 crop_depth=(0, 1024),
                 dispersion=[1.315892282e-06, 5.459678905e-10],
                 window_sigma=0.08,
-                gap=0.50,
+                gap=1.00,
             ),
         ],
         cache_frames_per_worker=1000,
@@ -40,9 +40,10 @@ def main():
         patches_per_frame=16,
         patch_mode="strip",
 
-        w_charb=0.010307111599432855,
-        # w_charb=0,
-        w_grad=0.010163544565911599,
+        # w_charb=0.010307111599432855,
+        # w_grad=0.010163544565911599,
+        w_charb=0.05,
+        w_grad=0.05,
 
         snr_sig_y0=111,
         snr_sig_y1=600,
