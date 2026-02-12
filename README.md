@@ -54,4 +54,4 @@ OCT-Denoiser/
 
 All configuration uses Python dataclasses in `configs/default.py`:
 - `FolderSpec` — per-dataset specification (also used directly by `BscanProcessor`)
-- `TrainConfig` — training hyperparameters, loss weights, early stopping, ROI bounds
+- `TrainConfig` — training hyperparameters, loss weights (Charbonnier + gradient L1), early stopping, ROI bounds

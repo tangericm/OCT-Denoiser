@@ -60,9 +60,6 @@ class TrainConfig:
     # Loss weights
     w_charb: float = 0.8
     w_grad: float = 0.5
-    w_snr_loss: float = 0.0          # smooth SNR loss weight (0 = disabled)
-    snr_loss_t_peak: float = 0.1     # temperature for soft-peak selection
-    snr_loss_t_bg: float = 0.1       # temperature for soft-background selection
 
     # ROI (y ranges) for SNR/CNR
     snr_sig_y0: int = 111

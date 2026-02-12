@@ -43,8 +43,6 @@ def main():
         w_charb=0.010307111599432855,
         # w_charb=0,
         w_grad=0.010163544565911599,
-        # w_grad=0,
-        w_snr_loss=0,
 
         snr_sig_y0=111,
         snr_sig_y1=600,
