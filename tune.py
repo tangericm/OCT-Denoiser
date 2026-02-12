@@ -97,9 +97,6 @@ def main():
         val_every=5,
         save_every=5,
         early_stop_patience=20,
-        score_w_val_loss=1.0,
-        score_w_snr=0.3,
-        score_w_cnr=0.2,
     )
 
     def objective(trial: "optuna.Trial") -> float:
@@ -123,17 +120,13 @@ def main():
         out = run_training(cfg, paths)
         history = out["history"]
 
-        # Grab the last reported val loss (evaluate runs every val_every)
+        # Grab the best reported val loss (evaluate runs every val_every)
         val_entries = history.get("val_loss", [])
         if not val_entries:
             # if val never ran for some reason, penalize
             return 1e9
-        
-        # Tune by baseline-relative composite score (not raw val loss).
-        # Lower is better because score is:
-        #   + w_loss * norm(loss) - w_snr * norm(snr) - w_cnr * norm(cnr)
-        best_entry = min(val_entries, key=lambda d: float(d.get("score", d["loss"])))
-        best_score = float(best_entry.get("score", best_entry["loss"]))
+
+        best_entry = min(val_entries, key=lambda d: float(d["loss"]))
         best_val = float(best_entry["loss"])
         best_epoch = int(best_entry.get("epoch", -1))
         last_entry = val_entries[-1]
@@ -153,7 +146,6 @@ def main():
         stop_epoch = int(es_meta.get("stop_epoch", -1)) if isinstance(es_meta, dict) else -1
 
         trial.set_user_attr("best_val_loss", best_val)
-        trial.set_user_attr("best_score", best_score)
         trial.set_user_attr("best_epoch", best_epoch)
         trial.set_user_attr("stop_epoch", stop_epoch)
         trial.set_user_attr("best_snr_pred", best_snr_pred)
@@ -165,13 +157,10 @@ def main():
         trial.set_user_attr("last_cnr_pred", last_cnr_pred)
         trial.set_user_attr("last_cnr_gt", last_cnr_gt)
 
-        final_val = best_score
-
         # Write a row summary
         row = {
             "trial": trial.number,
             "best_val_loss": best_val,
-            "best_score": best_score,
             "best_epoch": best_epoch,
             "stop_epoch": stop_epoch,
             "best_snr_pred": best_snr_pred,
@@ -198,7 +187,7 @@ def main():
         results_rows.append(row)
         write_results_csv(os.path.join(TUNE_ROOT, "study_results.csv"), results_rows)
 
-        return final_val
+        return best_val
 
     sampler = optuna.samplers.TPESampler(seed=42)
     study = optuna.create_study(direction="minimize", sampler=sampler)

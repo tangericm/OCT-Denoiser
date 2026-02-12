@@ -120,16 +120,10 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
 
     best_val = float("inf")
     best_ckpt_path = os.path.join(paths["checkpoints"], "best.pt")
-    best_score = float("inf")
-    best_score_ckpt_path = os.path.join(paths["checkpoints"], "best_by_score.pt")
-    best_score_epoch = None
 
     history = {"train_loss": [], "val_loss": [], "val_full": []}
     val_pred_stack: list[np.ndarray] = []
     val_pred_stack_epochs: list[int] = []
-
-    score_baseline: dict[str, float] | None = None
-
 
     early_stop = EarlyStopping(
         patience=cfg.early_stop_patience,
@@ -201,33 +195,10 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 snr_sig_stat=cfg.snr_sig_stat,
             )
 
-            val_snr_raw = float(val_full["snr_pred"])
-            val_cnr_raw = float(val_full["cnr_pred"])
-            val_snr = val_snr_raw if np.isfinite(val_snr_raw) else 0.0
-            val_cnr = val_cnr_raw if np.isfinite(val_cnr_raw) else 0.0
-
-            if score_baseline is None:
-                score_baseline = {"val_loss": float(val_loss), "snr": val_snr, "cnr": val_cnr}
-
-            norm_val_loss = (float(val_loss) - score_baseline["val_loss"]) / (abs(score_baseline["val_loss"]) + 1e-8)
-            norm_val_snr = (val_snr - score_baseline["snr"]) / (abs(score_baseline["snr"]) + 1e-8)
-            norm_val_cnr = (val_cnr - score_baseline["cnr"]) / (abs(score_baseline["cnr"]) + 1e-8)
-
-
-            composite_score = (
-                cfg.score_w_val_loss * norm_val_loss
-                - cfg.score_w_snr * norm_val_snr
-                - cfg.score_w_cnr * norm_val_cnr
-            )
-
             history["val_loss"].append(
                 {
                     "epoch": epoch,
                     "loss": val_loss,
-                    "score": composite_score,
-                    "norm_val_loss": norm_val_loss,
-                    "norm_val_snr": norm_val_snr,
-                    "norm_val_cnr": norm_val_cnr,
                     "snr_pred": val_full["snr_pred"],
                     "snr_gt": val_full["snr_gt"],
                     "cnr_pred": val_full["cnr_pred"],
@@ -238,10 +209,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 {
                     "epoch": epoch,
                     "loss": val_full["val_loss"],
-                    "score": composite_score,
-                    "norm_val_loss": norm_val_loss,
-                    "norm_val_snr": norm_val_snr,
-                    "norm_val_cnr": norm_val_cnr,
                     "snr_pred": val_full["snr_pred"],
                     "snr_gt": val_full["snr_gt"],
                     "cnr_pred": val_full["cnr_pred"],
@@ -258,7 +225,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             print(
                 f"[E{epoch:04d}] train={train_loss:.10f}  "
                 f"val_loss={val_loss:.10f} "
-                f"score={composite_score:.6f} "
                 f"SNR_pred/gt={val_full['snr_pred']:.2f}/{val_full['snr_gt']:.2f}  "
                 f"CNR_pred/gt={val_full['cnr_pred']:.2f}/{val_full['cnr_gt']:.2f}  "
                 f"time={dt:.5f}s"
@@ -291,27 +257,12 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 )
                 print(f"[OK] Saved best checkpoint: {best_ckpt_path}")
 
-            if composite_score < best_score:
-                best_score = composite_score
-                best_score_epoch = epoch
-                torch.save(
-                    {
-                        "epoch": epoch,
-                        "model": model.state_dict(),
-                        "opt": opt.state_dict(),
-                        "cfg": asdict(cfg),
-                        "best_score": best_score,
-                    },
-                    best_score_ckpt_path,
-                )
-                print(f"[OK] Saved best-by-score checkpoint: {best_score_ckpt_path}")
-
             stop_now = early_stop.update(float(val_loss), epoch)
             if stop_now:
                 print(
                     f"[EARLY STOP] No val improvement for {early_stop.patience} validation checks. "
                     f"Best={early_stop.best:.6f} at epoch={early_stop.best_epoch}. "
-                    f"Best Score={best_score:.6f} at epoch={best_score_epoch}. Stopping at epoch={epoch}."
+                    f"Stopping at epoch={epoch}."
                 )
                 break
         
@@ -324,18 +275,6 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             )
 
     print(f"[DONE] Best val loss = {best_val:.10f}")
-    print(f"[DONE] Best composite score = {best_score:.10f} at epoch {best_score_epoch}")
-    history["best_by_score"] = {
-        "score": best_score,
-        "epoch": best_score_epoch,
-        "ckpt_path": best_score_ckpt_path,
-        "score_baseline": score_baseline,
-        "weights": {
-            "val_loss": cfg.score_w_val_loss,
-            "snr": cfg.score_w_snr,
-            "cnr": cfg.score_w_cnr,
-        },
-    }
     history["early_stop"] = {
         "patience": early_stop.patience,
         "min_delta": early_stop.min_delta,
@@ -376,6 +315,5 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     return {
         "model": model,
         "best_ckpt_path": best_ckpt_path,
-        "best_score_ckpt_path": best_score_ckpt_path,
         "history": history,
     }
