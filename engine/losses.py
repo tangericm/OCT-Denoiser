@@ -25,8 +25,8 @@ def compute_total_loss(
 
 
 def charbonnier_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
-    return torch.mean(torch.sqrt((pred - target) ** 2 + eps**2)) # Charbonnier loss
-    # return (pred - target).abs().mean() # L1 loss
+    # return torch.mean(torch.sqrt((pred - target) ** 2 + eps**2)) # Charbonnier loss
+    return (pred - target).abs().mean() # L1 loss
     # return torch.mean((pred - target) ** 2) # L2 loss
 
 

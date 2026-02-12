@@ -478,18 +478,16 @@ class BscanProcessor:
         spectrum_norm = spectrum_mag / max(spectrum_max, 1e-12)
 
         fig, ax = plt.subplots(1, 1, figsize=(10, 4))
-        ax.plot(spectrum_norm, color="steelblue", linewidth=0.9, label="Spectrum (center A-line)")
-        ax.plot(self.w1, color="red", alpha=0.8, label="Window 1")
-        ax.plot(self.w2, color="orange", alpha=0.8, label="Window 2")
+        ax.plot(spectrum_norm, color="steelblue", linewidth=0.9)
+        ax.plot(self.w1, color="red", alpha=0.8)
+        ax.plot(self.w2, color="orange", alpha=0.8)
 
         # Plot sub-windows if multi-level is enabled
         if self.sub_w1s:
             for i, sw in enumerate(self.sub_w1s):
-                label = f"Level 2 w1 ({len(self.sub_w1s)})" if i == 0 else None
-                ax.plot(sw, color="darkred", alpha=0.35, linewidth=0.5, linestyle="--", label=label)
+                ax.plot(sw, color="darkred", alpha=0.35, linewidth=0.75, linestyle="--")
             for i, sw in enumerate(self.sub_w2s):
-                label = f"Level 2 w2 ({len(self.sub_w2s)})" if i == 0 else None
-                ax.plot(sw, color="darkorange", alpha=0.35, linewidth=0.5, linestyle="--", label=label)
+                ax.plot(sw, color="darkorange", alpha=0.35, linewidth=0.75, linestyle="--")
 
         ax.set_xlabel("Pixel")
         ax.set_ylabel("Normalized amplitude")
