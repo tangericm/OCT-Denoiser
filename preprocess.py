@@ -279,12 +279,22 @@ def gaussian_window_1d(pixels: int, center: float, sigma: float) -> np.ndarray:
 
 def make_two_window_masks(pixels: int, gap: float, sigma: float) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Two Gaussian windows separated by a central gap. Similar to the slide concept.
-    gap is relative width in [0,0.5].
+    Two Gaussian windows placed symmetrically around the spectral midpoint.
+
+    Parameters
+    ----------
+    pixels : number of spectral samples
+    gap    : distance between the two window centers in normalized [0, 1]
+             coordinates. Centers are placed at 0.5 ± gap/2.
+    sigma  : Gaussian standard deviation (controls width only, not position)
+
+    Invariants
+    ----------
+    - Changing sigma does NOT move the peak positions.
+    - Changing gap does NOT change the peak widths.
     """
-    delta = 2.5 * sigma
-    c1 = np.clip(0.5 - gap / 2.0 - delta, 0.05, 0.95)
-    c2 = np.clip(0.5 + gap / 2.0 + delta, 0.05, 0.95)
+    c1 = np.clip(0.5 - gap / 2.0, 0.05, 0.95)
+    c2 = np.clip(0.5 + gap / 2.0, 0.05, 0.95)
     w1 = gaussian_window_1d(pixels, float(c1), sigma)
     w2 = gaussian_window_1d(pixels, float(c2), sigma)
     return w1, w2

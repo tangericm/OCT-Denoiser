@@ -53,7 +53,7 @@ OCT-Denoiser/
 │   ├── train.py             # Training loop (AMP, early stopping, composite scoring)
 │   ├── eval.py              # Patch and full-frame validation
 │   ├── infer.py             # Inference pipeline → TIFF output
-│   ├── losses.py            # Loss functions + compute_total_loss + unpack_batch
+│   ├── losses.py            # Loss functions (Charbonnier, gradient L1) + unpack_batch
 │   ├── metrics.py           # SNR/CNR computation in dB
 │   └── early_stopping.py    # Patience-based early stopping dataclass
 │
@@ -78,7 +78,7 @@ Raw .raw files
   → Dataset (patches or full frames)
   → DataLoader
   → ResUNet Pseudo-3D model
-  → Loss (w_charb * Charbonnier + w_grad * gradient_L1 + optional w_snr_loss * smooth_snr)
+  → Loss (w_charb * Charbonnier + w_grad * gradient_L1)
   → Validation (patch loss + full-frame SNR/CNR)
   → Composite score for checkpointing & early stopping
 ```
@@ -115,7 +115,6 @@ Key parameters in `TrainConfig`:
 |-----------|---------|---------|
 | `patch_mode` | `"patch"` | `"strip"` (full-depth, random x) or `"patch"` (random x,y) |
 | `w_charb` / `w_grad` | 0.8 / 0.5 | Charbonnier and gradient loss weights |
-| `w_snr_loss` | 0.0 | Smooth SNR loss weight (0 = disabled) |
 | `score_w_val_loss` / `score_w_snr` / `score_w_cnr` | 1.0 / 1.0 / 0.0 | Composite score weights (lower = better) |
 | `amp` | `True` | Automatic mixed precision |
 | `early_stop_patience` | 5 | Validation checks without improvement before stopping |
@@ -131,7 +130,7 @@ Key parameters in `TrainConfig`:
 ### Project Patterns
 - **Lazy dataset initialization:** Datasets create per-worker `BscanProcessor` instances in `__getitem__` (not `__init__`) to work with multiprocessing DataLoaders
 - **LRU frame caching:** Workers cache processed frames to avoid redundant I/O
-- **Centralized loss computation:** `compute_total_loss()` in `engine/losses.py` is the single source for the combined loss formula, used by both training and evaluation
+- **Centralized loss computation:** `compute_total_loss()` in `engine/losses.py` computes `w_charb * Charbonnier + w_grad * gradient_L1`, used by both training and evaluation
 - **Composite validation score:** `score = w_loss * val_loss - w_snr * snr - w_cnr * cnr` (lower is better; normalized against first-check baselines)
 - **Checkpoint naming:** `best.pt` (best val loss), `best_by_score.pt` (best composite score), `epoch_NNN.pt` (periodic)
 - **Run directories:** Auto-versioned via `make_run_dir()` — creates `runs/<experiment>/<timestamp>/`
@@ -172,7 +171,7 @@ Key parameters in `TrainConfig`:
 
 ## Important Notes
 
-- **No automated tests exist.** Validate changes by running training on a small subset or verifying inference output visually.
+- **Tests:** `python tests/test_optimizations.py` runs preprocessing equivalence, resampling, Gaussian window invariant, and train-step smoke tests.
 - **GPU required for practical use.** Training and inference are designed for CUDA. CPU mode is supported but slow.
 - **Windows paths in scripts.** `model_train.py` and `model_predict.py` use Windows-style backslash paths (e.g., `r"images\Maestro3"`). These may need adjustment on Linux.
 - **Data not included.** Raw OCT `.raw` files and calibration `.clb` files are not in the repo. They are expected under an `images/` directory.

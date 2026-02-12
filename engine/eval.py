@@ -16,9 +16,6 @@ def evaluate(
     device: str,
     w_charb: float,
     w_grad: float,
-    w_snr_loss: float = 0.0,
-    snr_loss_t_peak: float = 0.1,
-    snr_loss_t_bg: float = 0.1,
 ) -> float:
     model.eval()
     loss_acc = 0.0
@@ -29,8 +26,6 @@ def evaluate(
         loss = compute_total_loss(
             pred, y,
             w_charb=w_charb, w_grad=w_grad,
-            w_snr_loss=w_snr_loss,
-            snr_loss_t_peak=snr_loss_t_peak, snr_loss_t_bg=snr_loss_t_bg,
         )
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
@@ -61,9 +56,6 @@ def evaluate_full_frames(
     snr_sig_y0: int,
     snr_sig_y1: int,
     snr_sig_stat: str = "max",
-    w_snr_loss: float = 0.0,
-    snr_loss_t_peak: float = 0.1,
-    snr_loss_t_bg: float = 0.1,
 ) -> dict[str, float | np.ndarray | None]:
     model.eval()
     loss_acc = 0.0
@@ -80,8 +72,6 @@ def evaluate_full_frames(
         loss = compute_total_loss(
             pred, y,
             w_charb=w_charb, w_grad=w_grad,
-            w_snr_loss=w_snr_loss,
-            snr_loss_t_peak=snr_loss_t_peak, snr_loss_t_bg=snr_loss_t_bg,
         )
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)

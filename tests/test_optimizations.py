@@ -1,13 +1,14 @@
 """
-Validation harness for preprocessing optimizations and smooth SNR loss.
+Validation harness for preprocessing optimizations and loss functions.
 
 Run:  python tests/test_optimizations.py
 
 Tests:
   1. Preprocessing equivalence: old (single FFT) vs new (batched FFT)
   2. Preprocessing microbenchmark
-  3. Smooth SNR loss: finite outputs, finite gradients, monotonic behavior
+  3. Resampling operator: cached gttrs vs scipy CubicSpline
   4. Single-batch train-step smoke test (no NaNs)
+  5. Gaussian window invariants (sigma/gap independence)
 """
 from __future__ import annotations
 
@@ -205,103 +206,18 @@ def test_resampling_cached():
 
 
 # ---------------------------------------------------------------------------
-# 4) Smooth SNR loss: finite outputs, gradients, monotonic behavior
-# ---------------------------------------------------------------------------
-def test_smooth_snr_loss():
-    """
-    Verify:
-      a) Finite outputs and finite gradients on random input.
-      b) Higher peak / lower noise => lower loss (better SNR).
-    """
-    import torch
-    from engine.losses import smooth_snr_loss
-
-    print("=" * 60)
-    print("TEST 4: Smooth SNR Loss — Gradients & Behavior")
-    print("=" * 60)
-
-    all_pass = True
-
-    # --- 4a: finite outputs and gradients ---
-    rng = torch.Generator().manual_seed(42)
-    x = torch.randn(4, 1, 64, 64, generator=rng, requires_grad=True)
-    loss, info = smooth_snr_loss(x, t_peak=0.1, t_bg=0.1)
-    loss.backward()
-
-    loss_finite = torch.isfinite(loss).item()
-    grad_finite = x.grad is not None and torch.isfinite(x.grad).all().item()
-    ok_a = loss_finite and grad_finite
-    all_pass = all_pass and ok_a
-    print(f"  4a) Finite loss: {loss_finite}  Finite grad: {grad_finite}  "
-          f"loss={loss.item():.4f}  [{('PASS' if ok_a else 'FAIL')}]")
-    print(f"      info: soft_peak={info['soft_peak'].item():.4f}  "
-          f"soft_std_bg={info['soft_std_bg'].item():.4f}  "
-          f"snr={info['snr'].item():.4f}")
-
-    # --- 4b: higher peak => lower loss ---
-    # Create two images: one with a strong bright region, one uniform
-    base = torch.zeros(1, 1, 64, 64)
-    bright = base.clone()
-    bright[:, :, 10:20, 10:20] = 5.0  # strong signal region
-
-    loss_uniform, _ = smooth_snr_loss(base + 0.01 * torch.randn_like(base), t_peak=0.1, t_bg=0.1)
-    loss_bright, _ = smooth_snr_loss(bright + 0.01 * torch.randn_like(bright), t_peak=0.1, t_bg=0.1)
-
-    ok_b = loss_bright.item() < loss_uniform.item()
-    all_pass = all_pass and ok_b
-    print(f"  4b) Bright signal has lower loss: {ok_b}  "
-          f"(uniform={loss_uniform.item():.4f}, bright={loss_bright.item():.4f})  "
-          f"[{'PASS' if ok_b else 'FAIL'}]")
-
-    # --- 4c: lower noise => lower loss ---
-    low_noise = torch.zeros(1, 1, 64, 64)
-    low_noise[:, :, 10:20, 10:20] = 5.0
-    low_noise += 0.01 * torch.randn_like(low_noise)
-
-    high_noise = torch.zeros(1, 1, 64, 64)
-    high_noise[:, :, 10:20, 10:20] = 5.0
-    high_noise += 1.0 * torch.randn_like(high_noise)
-
-    loss_low, _ = smooth_snr_loss(low_noise, t_peak=0.1, t_bg=0.1)
-    loss_high, _ = smooth_snr_loss(high_noise, t_peak=0.1, t_bg=0.1)
-
-    ok_c = loss_low.item() < loss_high.item()
-    all_pass = all_pass and ok_c
-    print(f"  4c) Low noise has lower loss: {ok_c}  "
-          f"(low_noise={loss_low.item():.4f}, high_noise={loss_high.item():.4f})  "
-          f"[{'PASS' if ok_c else 'FAIL'}]")
-
-    # --- 4d: various temperatures produce finite results ---
-    ok_d = True
-    for tp in [0.01, 0.1, 1.0, 10.0]:
-        for tb in [0.01, 0.1, 1.0, 10.0]:
-            x_t = torch.randn(1, 1, 16, 16, requires_grad=True)
-            l, _ = smooth_snr_loss(x_t, t_peak=tp, t_bg=tb)
-            l.backward()
-            if not (torch.isfinite(l).item() and torch.isfinite(x_t.grad).all().item()):
-                ok_d = False
-                print(f"    FAIL at t_peak={tp}, t_bg={tb}")
-    all_pass = all_pass and ok_d
-    print(f"  4d) All temperature combos finite: {ok_d}  [{'PASS' if ok_d else 'FAIL'}]")
-
-    print(f"  Overall: {'PASS' if all_pass else 'FAIL'}")
-    print()
-    return all_pass
-
-
-# ---------------------------------------------------------------------------
-# 5) Single-batch train-step smoke test (no NaNs)
+# 4) Single-batch train-step smoke test (no NaNs)
 # ---------------------------------------------------------------------------
 def test_train_step_smoke():
     """
-    Run a single forward+backward pass with all three loss components
+    Run a single forward+backward pass with Charbonnier + gradient L1 loss
     on a small synthetic batch. Verify no NaNs.
     """
     import torch
-    from engine.losses import charbonnier_loss, gradient_l1, smooth_snr_loss
+    from engine.losses import charbonnier_loss, gradient_l1
 
     print("=" * 60)
-    print("TEST 5: Single Train-Step Smoke Test")
+    print("TEST 4: Single Train-Step Smoke Test")
     print("=" * 60)
 
     # Minimal model stand-in: just a Conv2d (small tensors to limit memory)
@@ -316,9 +232,8 @@ def test_train_step_smoke():
 
     loss_charb = charbonnier_loss(pred, y)
     loss_grad = gradient_l1(pred, y)
-    loss_snr, snr_info = smooth_snr_loss(pred, t_peak=0.1, t_bg=0.1)
 
-    total_loss = 0.8 * loss_charb + 0.5 * loss_grad + 0.1 * loss_snr
+    total_loss = 0.8 * loss_charb + 0.5 * loss_grad
     total_loss.backward()
     opt.step()
 
@@ -328,10 +243,85 @@ def test_train_step_smoke():
     )
 
     print(f"  total_loss={total_loss.item():.6f}  charb={loss_charb.item():.6f}  "
-          f"grad={loss_grad.item():.6f}  snr={loss_snr.item():.6f}")
+          f"grad={loss_grad.item():.6f}")
     print(f"  All finite: {all_finite}  [{'PASS' if all_finite else 'FAIL'}]")
     print()
     return all_finite
+
+
+# ---------------------------------------------------------------------------
+# 5) Gaussian window invariants: sigma/gap independence
+# ---------------------------------------------------------------------------
+def test_gaussian_window_invariants():
+    """
+    Verify:
+      a) Changing sigma does NOT move peak positions.
+      b) Changing gap does NOT change peak widths.
+      c) Windows are symmetric around the midpoint.
+    """
+    from preprocess import make_two_window_masks, gaussian_window_1d
+
+    pixels = 2048
+
+    print("=" * 60)
+    print("TEST 5: Gaussian Window Invariants (sigma/gap independence)")
+    print("=" * 60)
+
+    all_pass = True
+
+    # --- 5a: sigma does not move peak positions ---
+    gap = 0.30
+    peaks_by_sigma = []
+    for sigma in [0.02, 0.05, 0.08, 0.12, 0.16]:
+        w1, w2 = make_two_window_masks(pixels, gap, sigma)
+        c1 = float(np.argmax(w1)) / (pixels - 1)
+        c2 = float(np.argmax(w2)) / (pixels - 1)
+        peaks_by_sigma.append((c1, c2))
+
+    # All peak positions should be identical (within 1 pixel)
+    ref_c1, ref_c2 = peaks_by_sigma[0]
+    ok_a = True
+    for c1, c2 in peaks_by_sigma[1:]:
+        if abs(c1 - ref_c1) > 1.0 / (pixels - 1) or abs(c2 - ref_c2) > 1.0 / (pixels - 1):
+            ok_a = False
+    all_pass = all_pass and ok_a
+    print(f"  5a) Sigma does not move peaks: {ok_a}  "
+          f"(c1={ref_c1:.4f}, c2={ref_c2:.4f})  [{'PASS' if ok_a else 'FAIL'}]")
+
+    # --- 5b: gap does not change peak widths ---
+    sigma = 0.08
+    fwhm_by_gap = []
+    for gap_val in [0.10, 0.20, 0.30, 0.40]:
+        w1, w2 = make_two_window_masks(pixels, gap_val, sigma)
+        # Measure FWHM of w1 (half-max width in pixels)
+        half_max = float(w1.max()) / 2.0
+        above = np.where(w1 >= half_max)[0]
+        fwhm = float(above[-1] - above[0]) if len(above) > 1 else 0.0
+        fwhm_by_gap.append(fwhm)
+
+    ref_fwhm = fwhm_by_gap[0]
+    ok_b = all(abs(f - ref_fwhm) <= 2.0 for f in fwhm_by_gap[1:])
+    all_pass = all_pass and ok_b
+    print(f"  5b) Gap does not change widths: {ok_b}  "
+          f"(FWHM pixels: {[f'{f:.0f}' for f in fwhm_by_gap]})  "
+          f"[{'PASS' if ok_b else 'FAIL'}]")
+
+    # --- 5c: symmetric placement around midpoint ---
+    gap = 0.30
+    sigma = 0.08
+    w1, w2 = make_two_window_masks(pixels, gap, sigma)
+    c1_idx = int(np.argmax(w1))
+    c2_idx = int(np.argmax(w2))
+    mid = (pixels - 1) / 2.0
+    ok_c = abs((c1_idx + c2_idx) / 2.0 - mid) <= 1.0
+    all_pass = all_pass and ok_c
+    print(f"  5c) Symmetric around midpoint: {ok_c}  "
+          f"(c1_idx={c1_idx}, c2_idx={c2_idx}, mid={mid:.1f})  "
+          f"[{'PASS' if ok_c else 'FAIL'}]")
+
+    print(f"  Overall: {'PASS' if all_pass else 'FAIL'}")
+    print()
+    return all_pass
 
 
 # ---------------------------------------------------------------------------
@@ -343,10 +333,9 @@ def _run_torch_tests_subprocess():
     script = (
         "import sys, os\n"
         "sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(''), '.')))\n"
-        "from tests.test_optimizations import test_smooth_snr_loss, test_train_step_smoke\n"
-        "ok1 = test_smooth_snr_loss()\n"
-        "ok2 = test_train_step_smoke()\n"
-        "sys.exit(0 if (ok1 and ok2) else 1)\n"
+        "from tests.test_optimizations import test_train_step_smoke\n"
+        "ok = test_train_step_smoke()\n"
+        "sys.exit(0 if ok else 1)\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -368,11 +357,11 @@ if __name__ == "__main__":
         results["preprocess_equiv"] = test_preprocessing_equivalence()
         test_preprocessing_benchmark()
         results["resampling_cached"] = test_resampling_cached()
+        results["gaussian_window"] = test_gaussian_window_invariants()
 
     if mode in ("all", "torch"):
         # Run torch tests — try direct first, fall back to subprocess if memory issues
         try:
-            results["snr_loss"] = test_smooth_snr_loss()
             results["train_smoke"] = test_train_step_smoke()
         except Exception as e:
             print(f"  Direct torch tests failed ({e}), trying subprocess...")
