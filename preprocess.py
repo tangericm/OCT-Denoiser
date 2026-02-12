@@ -405,7 +405,7 @@ class BscanProcessor:
             raw = raw - raw.mean(axis=1, keepdims=True)
 
         resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
-        resamp *= self.apod[:, None]
+        # resamp *= self.apod[:, None]
 
         spec_full = resamp.astype(np.complex64, copy=False)
         if self._phase_term is not None:
@@ -465,7 +465,7 @@ class BscanProcessor:
         resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
 
         # 4) Apodization
-        resamp *= self.apod[:, None]
+        # resamp *= self.apod[:, None]
 
         # 5) Build complex spectrum (with optional dispersion)
         if self._phase_term is not None:

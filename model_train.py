@@ -18,8 +18,8 @@ def main():
                 alines=1024,
                 crop_depth=(0, 1024),
                 dispersion=[1.315892282e-06, 5.459678905e-10],
-                window_sigma=0.08,
-                gap=0.25,
+                window_sigma=0.12,
+                gap=0.40,
             ),
         ],
         cache_frames_per_worker=1000,
@@ -27,7 +27,7 @@ def main():
         device="cuda",
         amp=True,
         deterministic=True,
-        epochs=600,
+        epochs=300,
         base=32,
         batch_size=12,
         lr=3e-4,
@@ -41,6 +41,7 @@ def main():
         patch_mode="strip",
 
         w_charb=0.010307111599432855,
+        # w_charb=0,
         w_grad=0.010163544565911599,
 
         snr_sig_y0=111,
@@ -52,6 +53,7 @@ def main():
         score_w_val_loss=1.0,
         score_w_snr=0.3,
         score_w_cnr=0.2,
+        also_save_float32=True,
     )
 
     seed_all(cfg.seed, deterministic=cfg.deterministic)
@@ -62,7 +64,7 @@ def main():
     result = run_training(cfg, paths)
 
     for folder_spec in cfg.folder_specs:
-        predict_from_config(cfg, folder_spec, result["best_score_ckpt_path"], paths["pred_tiff"])
+        predict_from_config(cfg, folder_spec, result["best_ckpt_path"], paths["pred_tiff"])
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ from engine.eval import evaluate, evaluate_full_frames
 from data.datamodule import RawBscanDataModule
 from networks import create_model
 from utils.helpers import save_json
+from utils.io_tiff import save_tiff_stack
 from utils.live_plot import LiveLossPlot
 
 
@@ -45,6 +46,37 @@ def _save_full_frame_val_png(
     fig.tight_layout()
     fig.savefig(out_path, dpi=160, bbox_inches="tight")
     plt.close(fig)
+
+
+def _make_labeled_val_frame(pred_img: np.ndarray, *, epoch: int) -> np.ndarray:
+    p1, p99 = np.percentile(pred_img, [1, 99])
+    vmin, vmax = float(p1), float(p99)
+    if vmax <= vmin:
+        vmin, vmax = float(pred_img.min()), float(pred_img.max())
+
+    h, w = pred_img.shape
+    dpi = 100
+    fig = plt.figure(figsize=(max(w, 16) / dpi, max(h, 16) / dpi), dpi=dpi)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.imshow(pred_img, cmap="gray", vmin=vmin, vmax=vmax)
+    ax.set_axis_off()
+    ax.text(
+        0.02,
+        0.98,
+        f"Epoch {epoch}",
+        transform=ax.transAxes,
+        fontsize=12,
+        color="white",
+        va="top",
+        ha="left",
+        bbox={"boxstyle": "round,pad=0.2", "facecolor": "black", "alpha": 0.7, "edgecolor": "none"},
+    )
+
+    fig.canvas.draw()
+    rgba = np.asarray(fig.canvas.buffer_rgba())
+    labeled_gray = (0.299 * rgba[..., 0] + 0.587 * rgba[..., 1] + 0.114 * rgba[..., 2]).astype(np.float32)
+    plt.close(fig)
+    return labeled_gray
 
 
 
@@ -93,6 +125,8 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     best_score_epoch = None
 
     history = {"train_loss": [], "val_loss": [], "val_full": []}
+    val_pred_stack: list[np.ndarray] = []
+    val_pred_stack_epochs: list[int] = []
 
     score_baseline: dict[str, float] | None = None
 
@@ -231,6 +265,8 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             )
 
             if val_full["sample_pred"] is not None:
+                val_pred_stack.append(_make_labeled_val_frame(val_full["sample_pred"], epoch=epoch))
+                val_pred_stack_epochs.append(epoch)
                 out_path = os.path.join(paths["val_outputs"], f"val_pred_epoch_{epoch:04d}.png")
                 _save_full_frame_val_png(
                     val_full["sample_pred"],
@@ -320,6 +356,22 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         "mean_epoch_time_sec": mean_epoch_time,
         "total_train_time_sec": total_train_time,
     }
+
+    if val_pred_stack:
+        stack_path = os.path.join(paths["val_outputs"], "val_pred_progression_stack.tiff")
+        save_tiff_stack(
+            stack_path,
+            np.stack(val_pred_stack, axis=0),
+            dtype="uint16",
+            scale_per_slice=False,
+        )
+        history["val_pred_stack"] = {
+            "path": stack_path,
+            "epochs": val_pred_stack_epochs,
+            "num_slices": len(val_pred_stack_epochs),
+        }
+        print(f"[OK] Saved validation prediction progression stack: {stack_path}")
+
     save_json(os.path.join(paths["run"], "history.json"), history)
     return {
         "model": model,

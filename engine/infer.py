@@ -122,6 +122,8 @@ def predict_raw_to_tiffs(
 
     preds = np.zeros((F, H, W), dtype=np.float32)
     gts   = np.zeros((F, H, W), dtype=np.float32)
+    w1    = np.zeros((F, H, W), dtype=np.float32)
+    w2    = np.zeros((F, H, W), dtype=np.float32)
 
     snr_pred_list: list[float] = []
     snr_gt_list: list[float] = []
@@ -204,6 +206,8 @@ def predict_raw_to_tiffs(
 
         preds[i] = pred
         gts[i] = gt
+        w1[i] = out["input_w1"].astype(np.float32)
+        w2[i] = out["input_w2"].astype(np.float32)
 
         # Recover per-frame physical-domain intensities and compute SNR/CNR there.
         sample_meta = {"target_mu": target_mu, "target_sd": target_sd, "log_eps": proc.cfg.log_eps}
@@ -273,9 +277,13 @@ def predict_raw_to_tiffs(
     
     pred_path = os.path.join(outdir, f"pred_{param_suffix}.tiff")
     gt_path   = os.path.join(outdir, f"gt_{param_suffix}.tiff")
+    w1_path   = os.path.join(outdir, f"w1_{param_suffix}.tiff")
+    w2_path   = os.path.join(outdir, f"w2_{param_suffix}.tiff")
 
     save_tiff_stack(pred_path, preds, dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(gt_path,   gts,   dtype=tiff_dtype, scale_per_slice=True)
+    save_tiff_stack(w1_path,   w1,    dtype=tiff_dtype, scale_per_slice=True)
+    save_tiff_stack(w2_path,   w2,    dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
         save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds, dtype="float32", scale_per_slice=True)
