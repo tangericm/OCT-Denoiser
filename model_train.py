@@ -9,6 +9,7 @@ def main():
     cfg = TrainConfig(
         runs_root=r"runs",
         experiment_name="6mm_1024Aline_strip",
+        model_name="resunet_pseudo3d_multilevel",
 
         folder_specs=[
             FolderSpec(
@@ -40,10 +41,10 @@ def main():
         patches_per_frame=16,
         patch_mode="strip",
 
-        # w_charb=0.010307111599432855,
-        # w_grad=0.010163544565911599,
-        w_charb=0.05,
-        w_grad=0.05,
+        w_charb=0.010307111599432855,
+        w_grad=0.010163544565911599,
+        # w_charb=0.05,
+        # w_grad=0.05,
 
         snr_sig_y0=111,
         snr_sig_y1=600,
@@ -54,8 +55,8 @@ def main():
         also_save_float32=True,
 
         # Uncomment to enable multi-run sweep over spectral parameters:
-        # sweep_sigmas=[0.01, 0.02, 0.04, 0.08, 0.12, 0.16],
-        # sweep_gaps=[0.10, 0.25, 0.50, 0.75, 1.00],
+        sweep_sigmas=[0.01, 0.02, 0.04, 0.08, 0.12, 0.16],
+        sweep_gaps=[0.10, 0.25, 0.50, 0.75, 1.00],
     )
 
     if cfg.sweep_sigmas and cfg.sweep_gaps:
