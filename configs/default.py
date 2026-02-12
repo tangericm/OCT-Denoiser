@@ -75,12 +75,6 @@ class TrainConfig:
     early_stop_min_delta: float = 0.0
     early_stop_warmup_checks: int = 0
 
-    # Composite validation score (lower is better):
-    # score = w_val_loss * norm(val_loss) - w_snr * norm(snr) - w_cnr * norm(cnr)
-    score_w_val_loss: float = 1.0
-    score_w_snr: float = 1.0
-    score_w_cnr: float = 0.0
-
     # Inference outputs
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False

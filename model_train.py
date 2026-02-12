@@ -50,9 +50,6 @@ def main():
         val_every=5,
         save_every=5,
         early_stop_patience=20,
-        score_w_val_loss=1.0,
-        score_w_snr=0.3,
-        score_w_cnr=0.2,
         also_save_float32=True,
     )
 

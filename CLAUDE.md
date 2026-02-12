@@ -80,7 +80,7 @@ Raw .raw files
   → ResUNet Pseudo-3D model
   → Loss (w_charb * Charbonnier + w_grad * gradient_L1)
   → Validation (patch loss + full-frame SNR/CNR)
-  → Composite score for checkpointing & early stopping
+  → Best checkpoint by val loss & early stopping
 ```
 
 ### Model: ResUNet Pseudo-3D
@@ -115,7 +115,6 @@ Key parameters in `TrainConfig`:
 |-----------|---------|---------|
 | `patch_mode` | `"patch"` | `"strip"` (full-depth, random x) or `"patch"` (random x,y) |
 | `w_charb` / `w_grad` | 0.8 / 0.5 | Charbonnier and gradient loss weights |
-| `score_w_val_loss` / `score_w_snr` / `score_w_cnr` | 1.0 / 1.0 / 0.0 | Composite score weights (lower = better) |
 | `amp` | `True` | Automatic mixed precision |
 | `early_stop_patience` | 5 | Validation checks without improvement before stopping |
 
@@ -131,8 +130,7 @@ Key parameters in `TrainConfig`:
 - **Lazy dataset initialization:** Datasets create per-worker `BscanProcessor` instances in `__getitem__` (not `__init__`) to work with multiprocessing DataLoaders
 - **LRU frame caching:** Workers cache processed frames to avoid redundant I/O
 - **Centralized loss computation:** `compute_total_loss()` in `engine/losses.py` computes `w_charb * Charbonnier + w_grad * gradient_L1`, used by both training and evaluation
-- **Composite validation score:** `score = w_loss * val_loss - w_snr * snr - w_cnr * cnr` (lower is better; normalized against first-check baselines)
-- **Checkpoint naming:** `best.pt` (best val loss), `best_by_score.pt` (best composite score), `epoch_NNN.pt` (periodic)
+- **Checkpoint naming:** `best.pt` (best val loss), `epoch_NNN.pt` (periodic)
 - **Run directories:** Auto-versioned via `make_run_dir()` — creates `runs/<experiment>/<timestamp>/`
 
 ### Tensor Conventions
