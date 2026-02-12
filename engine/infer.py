@@ -103,7 +103,12 @@ def predict_raw_to_tiffs(
     print(f"[INFO] Loading checkpoint from: {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location="cpu")
     print(f"[INFO] Creating model: {model_name}")
-    model = create_model(model_name, base=base).to(device)
+    model_kwargs = {"base": base}
+    n_sub = getattr(folder_spec, "n_sub_windows", 0)
+    n_sub_channels = 2 * n_sub
+    if n_sub_channels > 0:
+        model_kwargs["n_sub_channels"] = n_sub_channels
+    model = create_model(model_name, **model_kwargs).to(device)
     model.load_state_dict(ckpt["model"], strict=True)
     model.eval()
     print(f"[INFO] Model loaded and set to eval mode")
@@ -138,9 +143,9 @@ def predict_raw_to_tiffs(
 
 
     # helper: full-frame or tiled inference
-    def _infer_1(x2hw: np.ndarray) -> np.ndarray:
-        # x2hw: [2,H,W]
-        x = torch.from_numpy(x2hw[None, ...]).to(device, non_blocking=True)
+    def _infer_1(x_chw: np.ndarray) -> np.ndarray:
+        # x_chw: [C,H,W] where C=2 (standard) or C=2+n_sub_channels (multilevel)
+        x = torch.from_numpy(x_chw[None, ...]).to(device, non_blocking=True)
 
         if tile_hw is None:
             yhat = model(x)  # [1,1,H,W]
@@ -182,22 +187,29 @@ def predict_raw_to_tiffs(
     sy0, sy1, sx0, sx1 = sig_roi_c
     bg_roi_c = bg_bounds(H, W, x0=sx0, x1=sx1)
 
+    def _gather_input(out: dict) -> np.ndarray:
+        """Stack all input channels: Level 1 (w1, w2) + optional Level 2 sub-windows."""
+        channels = [out["input_w1"], out["input_w2"]]
+        if "input_sub_windows" in out:
+            channels.extend(out["input_sub_windows"])
+        return np.stack(channels, axis=0).astype(np.float32)
+
     # Warmup
     print(f"[INFO] Running warmup inference...")
-    _ = _infer_1(np.stack([out0["input_w1"], out0["input_w2"]], axis=0).astype(np.float32))
+    _ = _infer_1(_gather_input(out0))
     if device.startswith("cuda"):
         torch.cuda.synchronize()
     print(f"[INFO] Warmup complete, starting predictions...")
 
     for i, p in enumerate(paths):
         out = proc.process_one(p, frame_idx=i)
-        x2hw = np.stack([out["input_w1"], out["input_w2"]], axis=0).astype(np.float32)
+        x_chw = _gather_input(out)
         gt = out["target_full"].astype(np.float32)
         target_mu = float(out["target_mu"])
         target_sd = float(out["target_sd"])
 
         t0 = time.time()
-        pred = _infer_1(x2hw)
+        pred = _infer_1(x_chw)
         if device.startswith("cuda"):
             torch.cuda.synchronize()
         elapsed_time = time.time() - t0

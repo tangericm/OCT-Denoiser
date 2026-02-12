@@ -300,6 +300,54 @@ def make_two_window_masks(pixels: int, gap: float, sigma: float) -> Tuple[np.nda
     return w1, w2
 
 
+def make_multilevel_window_masks(
+    pixels: int,
+    gap: float,
+    sigma: float,
+    n_sub: int = 8,
+    spread: float = 2.0,
+) -> Tuple[list, list]:
+    """
+    Generate sub-windows for multi-level spectral analysis.
+
+    For each parent window (w1, w2), creates n_sub smaller Gaussian windows
+    distributed evenly within the parent's effective range (+-spread*sigma
+    around the parent center).
+
+    Parameters
+    ----------
+    pixels : number of spectral samples
+    gap    : parent window gap (same as make_two_window_masks)
+    sigma  : parent window sigma
+    n_sub  : number of sub-windows per parent (total = 2 * n_sub)
+    spread : sub-window center spread in sigma units
+
+    Returns
+    -------
+    (sub_w1s, sub_w2s) : each is a list of n_sub arrays of shape [pixels]
+    """
+    c1 = float(np.clip(0.5 - gap / 2.0, 0.05, 0.95))
+    c2 = float(np.clip(0.5 + gap / 2.0, 0.05, 0.95))
+
+    # Sub-window sigma: narrower than parent, scaled to spacing
+    spacing = 2.0 * spread * sigma / max(n_sub - 1, 1)
+    sub_sigma = max(spacing / 1.5, sigma / n_sub)
+
+    sub_w1s = []
+    sub_w2s = []
+
+    for parent_c, sub_list in [(c1, sub_w1s), (c2, sub_w2s)]:
+        centers = np.linspace(
+            parent_c - spread * sigma,
+            parent_c + spread * sigma,
+            n_sub,
+        )
+        for sc in centers:
+            sc_clipped = float(np.clip(sc, 0.01, 0.99))
+            sub_list.append(gaussian_window_1d(pixels, sc_clipped, sub_sigma))
+
+    return sub_w1s, sub_w2s
+
 
 # -----------------------------
 # High-level processor
@@ -359,6 +407,17 @@ class BscanProcessor:
         # Precompute two spectral windows
         self.w1, self.w2 = make_two_window_masks(cfg.pixels, cfg.gap, cfg.window_sigma)
 
+        # Multi-level sub-windows (disabled when n_sub_windows == 0)
+        self.sub_w1s: list = []
+        self.sub_w2s: list = []
+        n_sub = getattr(cfg, "n_sub_windows", 0)
+        if n_sub > 0:
+            sub_spread = getattr(cfg, "sub_window_spread", 2.0)
+            self.sub_w1s, self.sub_w2s = make_multilevel_window_masks(
+                cfg.pixels, cfg.gap, cfg.window_sigma,
+                n_sub=n_sub, spread=sub_spread,
+            )
+
         # Cache reusable grids and buffers
         self._x = np.linspace(0.0, 1.0, cfg.pixels, dtype=np.float32)           # uniform grid
         self._xp = self.resampling.astype(np.float32, copy=False)              # CLB grid
@@ -382,8 +441,9 @@ class BscanProcessor:
         self._spec_full_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
         self._spec1_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
         self._spec2_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
-        # Pre-allocated batch buffer for 3-way batched FFT [full, w1, w2]
-        self._spec_batch_c64 = np.empty((3, cfg.pixels, cfg.alines), dtype=np.complex64)
+        # Pre-allocated batch buffer for batched FFT [full, w1, w2, + sub-windows]
+        n_batch_total = 3 + len(self.sub_w1s) + len(self.sub_w2s)
+        self._spec_batch_c64 = np.empty((n_batch_total, cfg.pixels, cfg.alines), dtype=np.complex64)
 
     def save_window_figure(self, out_path: str, bscan_path: Optional[str] = None) -> None:
         cfg = self.cfg
@@ -421,6 +481,16 @@ class BscanProcessor:
         ax.plot(spectrum_norm, color="steelblue", linewidth=0.9, label="Spectrum (center A-line)")
         ax.plot(self.w1, color="red", alpha=0.8, label="Window 1")
         ax.plot(self.w2, color="orange", alpha=0.8, label="Window 2")
+
+        # Plot sub-windows if multi-level is enabled
+        if self.sub_w1s:
+            for i, sw in enumerate(self.sub_w1s):
+                label = f"Level 2 w1 ({len(self.sub_w1s)})" if i == 0 else None
+                ax.plot(sw, color="darkred", alpha=0.35, linewidth=0.5, linestyle="--", label=label)
+            for i, sw in enumerate(self.sub_w2s):
+                label = f"Level 2 w2 ({len(self.sub_w2s)})" if i == 0 else None
+                ax.plot(sw, color="darkorange", alpha=0.35, linewidth=0.5, linestyle="--", label=label)
+
         ax.set_xlabel("Pixel")
         ax.set_ylabel("Normalized amplitude")
         ax.set_title(f"window_sigma={cfg.window_sigma:.4f}  gap={cfg.gap:.4f}")
@@ -481,18 +551,31 @@ class BscanProcessor:
         self._spec_batch_c64[0] = spec_full
         self._spec_batch_c64[1] = self._spec1_c64
         self._spec_batch_c64[2] = self._spec2_c64
+
+        n_batch = 3
+
+        # Sub-windows (multi-level)
+        if self.sub_w1s:
+            for i, sw in enumerate(self.sub_w1s + self.sub_w2s):
+                np.multiply(spec_full, sw[:, None], out=self._spec_batch_c64[n_batch + i])
+            n_batch += len(self.sub_w1s) + len(self.sub_w2s)
+
         batch_imgs, batch_stats = recon_bscan_batch(
-            self._spec_batch_c64,
+            self._spec_batch_c64[:n_batch],
             cfg.crop_depth,
             cfg.use_log,
             cfg.log_eps,
             cfg.apply_fftshift_depth,
             return_stats=True,
         )
-        target_full, input_w1, input_w2 = batch_imgs
-        target_stats, input_w1_stats, input_w2_stats = batch_stats
+        target_full = batch_imgs[0]
+        input_w1 = batch_imgs[1]
+        input_w2 = batch_imgs[2]
+        target_stats = batch_stats[0]
+        input_w1_stats = batch_stats[1]
+        input_w2_stats = batch_stats[2]
 
-        return {
+        result = {
             "target_full": target_full,
             "input_w1": input_w1,
             "input_w2": input_w2,
@@ -503,6 +586,11 @@ class BscanProcessor:
             "input_w2_mu": input_w2_stats["mu"],
             "input_w2_sd": input_w2_stats["sd"],
         }
+
+        if self.sub_w1s:
+            result["input_sub_windows"] = batch_imgs[3:]
+
+        return result
 
 
     def process_all(self,

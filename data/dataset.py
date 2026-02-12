@@ -148,22 +148,21 @@ class RawBscanDataset(Dataset):
 
     def _random_crop(
         self,
-        img1: np.ndarray,
-        img2: np.ndarray,
+        inputs: list,
         tgt: np.ndarray,
     ) -> Tuple[np.ndarray, np.ndarray]:
         H, W = tgt.shape
         if self.patch_mode == "strip":
             x0 = self._rng.randint(0, W - self.patch_w + 1)
-            x = np.stack([img1[:, x0:x0 + self.patch_w],
-                          img2[:, x0:x0 + self.patch_w]], axis=0).astype(np.float32)
+            x = np.stack([img[:, x0:x0 + self.patch_w] for img in inputs],
+                         axis=0).astype(np.float32)
             y = tgt[:, x0:x0 + self.patch_w][None, ...].astype(np.float32)
             return x, y
 
         y0 = self._rng.randint(0, H - self.patch_h + 1)
         x0 = self._rng.randint(0, W - self.patch_w + 1)
-        x = np.stack([img1[y0:y0 + self.patch_h, x0:x0 + self.patch_w],
-                      img2[y0:y0 + self.patch_h, x0:x0 + self.patch_w]], axis=0).astype(np.float32)
+        x = np.stack([img[y0:y0 + self.patch_h, x0:x0 + self.patch_w] for img in inputs],
+                     axis=0).astype(np.float32)
         y = tgt[y0:y0 + self.patch_h, x0:x0 + self.patch_w][None, ...].astype(np.float32)
         return x, y
 
@@ -200,6 +199,14 @@ class RawBscanDataset(Dataset):
         self._build_index()
         return self._estimated_len
 
+    @staticmethod
+    def _gather_inputs(out: dict) -> list:
+        """Collect all input channels: Level 1 (w1, w2) + optional Level 2 sub-windows."""
+        inputs = [out["input_w1"], out["input_w2"]]
+        if "input_sub_windows" in out:
+            inputs.extend(out["input_sub_windows"])
+        return inputs
+
     def __getitem__(self, idx: int):
         self._init_worker_state()
         entry = self._index[idx]
@@ -207,12 +214,14 @@ class RawBscanDataset(Dataset):
         if self.full_frame:
             fidx, frame_idx = entry
             out = self._fetch_frame(fidx, frame_idx)
-            x = np.stack([out["input_w1"], out["input_w2"]], axis=0).astype(np.float32)
+            inputs = self._gather_inputs(out)
+            x = np.stack(inputs, axis=0).astype(np.float32)
             y = out["target_full"][None, ...].astype(np.float32)
         else:
             fidx, frame_idx, _pr = entry
             out = self._fetch_frame(fidx, frame_idx)
-            x, y = self._random_crop(out["input_w1"], out["input_w2"], out["target_full"])
+            inputs = self._gather_inputs(out)
+            x, y = self._random_crop(inputs, out["target_full"])
             if self.augment:
                 x, y = self._random_flips(x, y)
             x = np.ascontiguousarray(x)
