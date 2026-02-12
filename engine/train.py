@@ -107,7 +107,12 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     val_full_loader = dm.val_full_loader()
 
     # Model
-    model = create_model(cfg.model_name, base=cfg.base).to(device)
+    model_kwargs = {"base": cfg.base}
+    if cfg.folder_specs:
+        n_sub = getattr(cfg.folder_specs[0], "n_sub_windows", 0)
+        if n_sub > 0:
+            model_kwargs["n_sub_channels"] = 2 * n_sub
+    model = create_model(cfg.model_name, **model_kwargs).to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 

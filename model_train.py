@@ -51,17 +51,27 @@ def main():
         save_every=5,
         early_stop_patience=20,
         also_save_float32=True,
+
+        # Uncomment to enable multi-run sweep over spectral parameters:
+        # sweep_sigmas=[0.01, 0.02, 0.04, 0.08, 0.12, 0.16],
+        # sweep_gaps=[0.10, 0.25, 0.50, 0.75, 1.00],
     )
 
-    seed_all(cfg.seed, deterministic=cfg.deterministic)
+    if cfg.sweep_sigmas and cfg.sweep_gaps:
+        # Multi-run sweep mode: train one model per (sigma, gap) combination
+        from engine.sweep import run_sweep
+        run_sweep(cfg)
+    else:
+        # Single run mode
+        seed_all(cfg.seed, deterministic=cfg.deterministic)
 
-    run_dir = make_run_dir(cfg.runs_root, cfg.experiment_name)
-    paths = setup_run_dirs(run_dir)
+        run_dir = make_run_dir(cfg.runs_root, cfg.experiment_name)
+        paths = setup_run_dirs(run_dir)
 
-    result = run_training(cfg, paths)
+        result = run_training(cfg, paths)
 
-    for folder_spec in cfg.folder_specs:
-        predict_from_config(cfg, folder_spec, result["best_ckpt_path"], paths["pred_tiff"])
+        for folder_spec in cfg.folder_specs:
+            predict_from_config(cfg, folder_spec, result["best_ckpt_path"], paths["pred_tiff"])
 
 
 if __name__ == "__main__":
