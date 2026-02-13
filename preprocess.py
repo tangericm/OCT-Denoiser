@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import glob
-from typing import TYPE_CHECKING, Tuple, Dict, Any
+from typing import TYPE_CHECKING, Tuple, Dict, Any, Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -473,7 +473,7 @@ class BscanProcessor:
             spec_full *= self._phase_term[:, None]
 
         aline_idx = spec_full.shape[1] // 2
-        spectrum_mag = np.abs(spec_full[:, aline_idx])
+        spectrum_mag = np.real(spec_full[:, aline_idx])
         spectrum_max = float(np.max(spectrum_mag)) if spectrum_mag.size else 1.0
         spectrum_norm = spectrum_mag / max(spectrum_max, 1e-12)
 
@@ -492,7 +492,7 @@ class BscanProcessor:
         ax.set_xlabel("Pixel")
         ax.set_ylabel("Normalized amplitude")
         ax.set_title(f"window_sigma={cfg.window_sigma:.4f}  gap={cfg.gap:.4f}")
-        ax.set_ylim([-0.05, 1.1])
+        ax.set_ylim([-1.1, 1.1])
         ax.grid(True, alpha=0.3)
         # ax.legend(loc="upper right")
 

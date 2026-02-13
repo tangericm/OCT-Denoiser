@@ -54,7 +54,7 @@ def main():
         val_every=5,
         save_every=5,
         early_stop_patience=20,
-        also_save_float32=True,
+        also_save_float32=False,
 
         # # Uncomment to enable multi-run sweep over spectral parameters:
         # sweep_sigmas=[0.04, 0.05, 0.06, 0.07, 0.08],
