@@ -21,7 +21,7 @@ def main():
                 dispersion=[1.315892282e-06, 5.459678905e-10],
                 window_sigma=0.04,
                 gap=0.50,
-                n_sub_windows=4,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
+                n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
                 sub_window_spread=1.0,    # sub-window center spread in sigma units
             ),
         ],
@@ -56,9 +56,9 @@ def main():
         early_stop_patience=20,
         also_save_float32=True,
 
-        # Uncomment to enable multi-run sweep over spectral parameters:
-        sweep_sigmas=[0.04, 0.05, 0.06, 0.07, 0.08],
-        sweep_gaps=[0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85],
+        # # Uncomment to enable multi-run sweep over spectral parameters:
+        # sweep_sigmas=[0.04, 0.05, 0.06, 0.07, 0.08],
+        # sweep_gaps=[0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85],
     )
 
     if cfg.sweep_sigmas and cfg.sweep_gaps:
