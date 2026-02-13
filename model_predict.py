@@ -18,7 +18,7 @@ def main():
 
     folder_spec = FolderSpec(
         root_folder=r"images\Maestro3",
-        data_folder="6mm_1024Aline",
+        data_folder="mirror_6mm_1024Aline",
         pixels=2048,
         alines=1024,
         crop_depth=(0, 1024),

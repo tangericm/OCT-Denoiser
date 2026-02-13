@@ -494,7 +494,7 @@ class BscanProcessor:
         ax.set_title(f"window_sigma={cfg.window_sigma:.4f}  gap={cfg.gap:.4f}")
         ax.set_ylim([-0.05, 1.1])
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="upper right")
+        # ax.legend(loc="upper right")
 
         fig.tight_layout()
 
