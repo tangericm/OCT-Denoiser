@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.fft as sfft
 import scipy.linalg as sla
+from scipy.signal import hilbert
 
 if TYPE_CHECKING:
     from configs.default import FolderSpec
@@ -277,24 +278,25 @@ def gaussian_window_1d(pixels: int, center: float, sigma: float) -> np.ndarray:
     return w
 
 
-def make_two_window_masks(pixels: int, gap: float, sigma: float) -> Tuple[np.ndarray, np.ndarray]:
+def make_two_window_masks(pixels: int, gap: float, sigma: float, gap_offset: float = 0.0) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Two Gaussian windows placed symmetrically around the spectral midpoint.
+    Two Gaussian windows placed around the spectral midpoint with optional offset.
 
     Parameters
     ----------
     pixels : number of spectral samples
     gap    : distance between the two window centers in normalized [0, 1]
-             coordinates. Centers are placed at 0.5 ± gap/2.
+             coordinates. Centers are placed at 0.5 + offset ± gap/2.
     sigma  : Gaussian standard deviation (controls width only, not position)
+    gap_offset : shared shift for both centers in normalized coordinates
 
     Invariants
     ----------
     - Changing sigma does NOT move the peak positions.
     - Changing gap does NOT change the peak widths.
     """
-    c1 = np.clip(0.5 - gap / 2.0, 0.05, 0.95)
-    c2 = np.clip(0.5 + gap / 2.0, 0.05, 0.95)
+    c1 = np.clip(0.5 + gap_offset - gap / 2.0, 0.05, 0.95)
+    c2 = np.clip(0.5 + gap_offset + gap / 2.0, 0.05, 0.95)
     w1 = gaussian_window_1d(pixels, float(c1), sigma)
     w2 = gaussian_window_1d(pixels, float(c2), sigma)
     return w1, w2
@@ -304,6 +306,7 @@ def make_multilevel_window_masks(
     pixels: int,
     gap: float,
     sigma: float,
+    gap_offset: float = 0.0,
     n_sub: int = 8,
     spread: float = 2.0,
 ) -> Tuple[list, list]:
@@ -326,8 +329,8 @@ def make_multilevel_window_masks(
     -------
     (sub_w1s, sub_w2s) : each is a list of n_sub arrays of shape [pixels]
     """
-    c1 = float(np.clip(0.5 - gap / 2.0, 0.05, 0.95))
-    c2 = float(np.clip(0.5 + gap / 2.0, 0.05, 0.95))
+    c1 = float(np.clip(0.5 + gap_offset - gap / 2.0, 0.05, 0.95))
+    c2 = float(np.clip(0.5 + gap_offset + gap / 2.0, 0.05, 0.95))
 
     # Sub-window sigma: narrower than parent, scaled to spacing
     spacing = 2.0 * spread * sigma / max(n_sub - 1, 1)
@@ -347,6 +350,58 @@ def make_multilevel_window_masks(
             sub_list.append(gaussian_window_1d(pixels, sc_clipped, sub_sigma))
 
     return sub_w1s, sub_w2s
+
+
+def estimate_gap_and_offset_from_fringes(
+    bscan_path: str,
+    pixels: int,
+    alines: int,
+    sigma: float,
+    do_dc_subtract: bool = True,
+    envelope_threshold: float = 0.10,
+) -> Tuple[float, float]:
+    """Estimate (gap, gap_offset) from a representative A-line using Hilbert envelope edges."""
+    data = np.fromfile(bscan_path, dtype=np.uint16)
+    expected = pixels * alines
+    if data.size != expected:
+        raise ValueError(f"{os.path.basename(bscan_path)} has {data.size} elements; expected {expected}.")
+
+    raw = data.reshape((pixels, alines), order="F").astype(np.float32, copy=False)
+    if do_dc_subtract:
+        raw[0, :] = raw[3, :]
+        raw[1, :] = raw[3, :]
+        raw[2, :] = raw[3, :]
+        raw = raw - raw.mean(axis=1, keepdims=True)
+
+    aline_idx = raw.shape[1] // 2
+    fringe = raw[:, aline_idx]
+    fringe = fringe / (np.max(np.abs(fringe)) + 1e-12)
+
+    envelope = np.abs(hilbert(fringe)).astype(np.float32)
+    thr = float(np.max(envelope) * envelope_threshold)
+    idx = np.flatnonzero(envelope >= thr)
+    if idx.size < 2:
+        return 0.15, 0.0
+
+    left_px = int(idx[0])
+    right_px = int(idx[-1])
+
+    margin_px = max(1, int(round(2.0 * sigma * (pixels - 1))))
+    c1_px = int(np.clip(left_px + margin_px, 0, pixels - 1))
+    c2_px = int(np.clip(right_px - margin_px, 0, pixels - 1))
+
+    if c2_px <= c1_px:
+        mid = (left_px + right_px) // 2
+        c1_px = max(0, mid - 1)
+        c2_px = min(pixels - 1, mid + 1)
+
+    denom = float(max(pixels - 1, 1))
+    c1 = c1_px / denom
+    c2 = c2_px / denom
+
+    gap = float(max(c2 - c1, 1.0 / denom))
+    gap_offset = float((c1 + c2) / 2.0 - 0.5)
+    return gap, gap_offset
 
 
 # -----------------------------
@@ -404,8 +459,19 @@ class BscanProcessor:
         else:
             raise ValueError(f"Unknown window_type={cfg.window_type}")
 
+        if getattr(cfg, "auto_gap", False):
+            auto_gap, auto_offset = estimate_gap_and_offset_from_fringes(
+                self.bscan_paths[0],
+                pixels=cfg.pixels,
+                alines=cfg.alines,
+                sigma=cfg.window_sigma,
+                do_dc_subtract=cfg.do_dc_subtract,
+            )
+            cfg.gap = auto_gap
+            cfg.gap_offset = auto_offset
+
         # Precompute two spectral windows
-        self.w1, self.w2 = make_two_window_masks(cfg.pixels, cfg.gap, cfg.window_sigma)
+        self.w1, self.w2 = make_two_window_masks(cfg.pixels, cfg.gap, cfg.window_sigma, cfg.gap_offset)
 
         # Multi-level sub-windows (disabled when n_sub_windows == 0)
         self.sub_w1s: list = []
@@ -415,7 +481,7 @@ class BscanProcessor:
             sub_spread = getattr(cfg, "sub_window_spread", 2.0)
             self.sub_w1s, self.sub_w2s = make_multilevel_window_masks(
                 cfg.pixels, cfg.gap, cfg.window_sigma,
-                n_sub=n_sub, spread=sub_spread,
+                gap_offset=cfg.gap_offset, n_sub=n_sub, spread=sub_spread,
             )
 
         # Cache reusable grids and buffers
@@ -491,7 +557,7 @@ class BscanProcessor:
 
         ax.set_xlabel("Pixel")
         ax.set_ylabel("Normalized amplitude")
-        ax.set_title(f"window_sigma={cfg.window_sigma:.4f}  gap={cfg.gap:.4f}")
+        ax.set_title(f"window_sigma={cfg.window_sigma:.4f}  gap={cfg.gap:.4f}  offset={cfg.gap_offset:.4f}")
         ax.set_ylim([-1.1, 1.1])
         ax.grid(True, alpha=0.3)
         # ax.legend(loc="upper right")
