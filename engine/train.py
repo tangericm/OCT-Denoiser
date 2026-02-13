@@ -97,11 +97,13 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     dm.setup()
     if cfg.folder_specs:
         window_path = os.path.join(paths["run"], "window_figure.png")
+        dc_path = os.path.join(paths["run"], "dc_removal_figure.png")
         if not os.path.exists(window_path):
             from preprocess import BscanProcessor
             fs = cfg.folder_specs[0]
             proc = BscanProcessor(fs)
             proc.save_window_figure(window_path)
+            proc.save_dc_figure(dc_path)
     train_loader = dm.train_loader()
     val_loader = dm.val_loader()
     val_full_loader = dm.val_full_loader()

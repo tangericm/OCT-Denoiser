@@ -394,6 +394,17 @@ class BscanProcessor:
         # Load resampling LUT once
         self.resampling = read_clb_resampling(self.clb_path, cfg.pixels)
 
+        # Precompute polynomial DC removal operators
+        # Fits a low-order polynomial to the spectral envelope of each A-line,
+        # then subtracts it to produce zero-mean fringes.
+        dc_order = cfg.dc_poly_order
+        x_dc = np.linspace(-1.0, 1.0, cfg.pixels, dtype=np.float64)
+        V = np.vander(x_dc, N=dc_order + 1, increasing=True)
+        pinv_V = np.linalg.pinv(V)
+        self._dc_vander = V.astype(np.float32)       # [pixels, order+1]
+        self._dc_pinv = pinv_V.astype(np.float32)     # [order+1, pixels]
+        self._dc_order = dc_order
+
         # Precompute apodization window
         if cfg.window_type == "hann":
             self.apod = hann_window(cfg.pixels)
@@ -462,7 +473,8 @@ class BscanProcessor:
             raw[0, :] = raw[3, :]
             raw[1, :] = raw[3, :]
             raw[2, :] = raw[3, :]
-            raw = raw - raw.mean(axis=1, keepdims=True)
+            coeffs = self._dc_pinv @ raw                  # [order+1, alines]
+            raw = raw - self._dc_vander @ coeffs          # [pixels, alines]
 
         resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
         # resamp *= self.apod[:, None]
@@ -503,7 +515,60 @@ class BscanProcessor:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
-        
+
+    def save_dc_figure(self, out_path: str, bscan_path: str | None = None) -> None:
+        """Save a figure showing a center A-line spectrum, its polynomial DC fit, and the residual."""
+        cfg = self.cfg
+        if bscan_path is None:
+            if not self.bscan_paths:
+                raise ValueError("No bscan paths available to build a representative spectrum.")
+            bscan_path = self.bscan_paths[0]
+
+        data = np.fromfile(bscan_path, dtype=np.uint16)
+        expected = cfg.pixels * cfg.alines
+        if data.size != expected:
+            raise ValueError(f"{os.path.basename(bscan_path)} has {data.size} elements; expected {expected}.")
+
+        raw = data.reshape((cfg.pixels, cfg.alines), order="F").astype(np.float32, copy=False)
+        # Fix first few pixel artifacts (same as process_one)
+        raw[0, :] = raw[3, :]
+        raw[1, :] = raw[3, :]
+        raw[2, :] = raw[3, :]
+
+        # Pick center A-line
+        aline_idx = cfg.alines // 2
+        aline_raw = raw[:, aline_idx].copy()
+
+        # Compute DC fit for this A-line
+        coeffs = self._dc_pinv @ aline_raw          # [order+1]
+        dc_fit = self._dc_vander @ coeffs            # [pixels]
+        residual = aline_raw - dc_fit
+
+        pixel_axis = np.arange(cfg.pixels)
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+
+        # Top: raw spectrum + DC fit
+        ax1.plot(pixel_axis, aline_raw, color="steelblue", linewidth=0.7, label="Raw spectrum")
+        ax1.plot(pixel_axis, dc_fit, color="red", linewidth=1.5, label=f"DC fit (order {self._dc_order})")
+        ax1.set_ylabel("Intensity")
+        ax1.set_title(f"Center A-line spectrum with DC envelope fit  (dc_poly_order={self._dc_order})")
+        ax1.legend(loc="upper right")
+        ax1.grid(True, alpha=0.3)
+
+        # Bottom: residual (zero-mean fringes)
+        ax2.plot(pixel_axis, residual, color="steelblue", linewidth=0.5)
+        ax2.axhline(0, color="gray", linewidth=0.5, linestyle="--")
+        ax2.set_xlabel("Pixel")
+        ax2.set_ylabel("Intensity (DC removed)")
+        ax2.set_title("After DC subtraction (zero-mean fringes)")
+        ax2.grid(True, alpha=0.3)
+
+        fig.tight_layout()
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
     def process_one(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, Any]:
         """
         Process a single raw B-scan file into denoising inputs and target.
@@ -524,12 +589,13 @@ class BscanProcessor:
 
         raw = data.reshape((pixels, alines), order="F").astype(np.float32, copy=False)
 
-        # 2) DC subtract
+        # 2) DC subtract (polynomial envelope fit)
         if cfg.do_dc_subtract:
             raw[0, :] = raw[3, :]
             raw[1, :] = raw[3, :]
             raw[2, :] = raw[3, :]
-            raw = raw - raw.mean(axis=1, keepdims=True)
+            coeffs = self._dc_pinv @ raw                  # [order+1, alines]
+            raw = raw - self._dc_vander @ coeffs          # [pixels, alines]
 
         # 3) Resample to k-linear (cubic spline, vectorized across A-lines)
         resamp = resample_klinear_cubic_operator(raw, self._spline_pre)

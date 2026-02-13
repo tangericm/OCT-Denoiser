@@ -11,6 +11,7 @@ class FolderSpec:
     clb_path: Optional[str] = None
     crop_depth: Tuple[int, int] = (1024, 2048)
     do_dc_subtract: bool = True
+    dc_poly_order: int = 5        # polynomial order for spectral envelope (DC) fitting
     window_type: str = "hann"
     use_log: bool = True
     log_eps: float = 1e-6
