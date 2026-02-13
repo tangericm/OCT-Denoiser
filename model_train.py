@@ -57,7 +57,7 @@ def main():
         also_save_float32=True,
 
         # Uncomment to enable multi-run sweep over spectral parameters:
-        sweep_sigmas=[0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08],
+        sweep_sigmas=[0.04, 0.05, 0.06, 0.07, 0.08],
         sweep_gaps=[0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85],
     )
 
