@@ -1,12 +1,24 @@
 """Robust image registration for OCT frame alignment.
 
 Aligns predicted frames to reference frames under translation and orientation
-changes using a coarse-to-fine approach:
+changes.  Designed for OCT B-scans where a thin tissue band occupies a
+fraction of the image and the rest is dark/noisy background.
 
-  1. Coarse orientation search over the dihedral group D4
-     (4 rotations x 2 optional flips = up to 8 hypotheses)
-  2. Subpixel translation estimation via phase cross-correlation
-  3. Optional fine angle refinement around best coarse orientation
+Strategy (coarse-to-fine, tissue-aware):
+
+  0. **Tissue-ROI detection** — automatically find the row band that contains
+     retinal tissue in both images; crop to that band so the background cannot
+     dominate the correlation.
+  1. **Edge enhancement** — Sobel gradient magnitude emphasises layer
+     boundaries that are present in both denoised predictions and noisy ground
+     truth, making correlation robust to noise-level differences.
+  2. **Coarse orientation search** over the dihedral group D4
+     (4 rotations x 2 optional flips = up to 8 hypotheses).
+  3. **Subpixel translation estimation** via phase cross-correlation on the
+     edge-enhanced tissue crop.
+  4. **Optional fine angle refinement** around the best coarse orientation.
+  5. **NCC scoring on the original (unenhanced) tissue crop** for a
+     meaningful quality metric.
 
 All operations are deterministic and reproducible.
 """
@@ -16,11 +28,16 @@ from __future__ import annotations
 import csv
 import json
 import os
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 from typing import Sequence
 
 import numpy as np
-from scipy.ndimage import rotate as ndi_rotate, shift as ndi_shift
+from scipy.ndimage import (
+    rotate as ndi_rotate,
+    shift as ndi_shift,
+    sobel as ndi_sobel,
+    gaussian_filter1d,
+)
 from skimage.registration import phase_cross_correlation
 
 
@@ -37,9 +54,70 @@ class FrameRegistrationResult:
     refined_angle_deg: float    # final angle after optional refinement
     dy: float                   # translation in y (rows)
     dx: float                   # translation in x (cols)
-    score: float                # normalized cross-correlation of registered result
+    score: float                # NCC on tissue ROI of registered result
     success: bool               # whether registration met quality threshold
+    tissue_y0: int = 0          # detected tissue band start row
+    tissue_y1: int = 0          # detected tissue band end row
     note: str = ""              # e.g. "low_texture", "low_score"
+
+
+# ---------------------------------------------------------------------------
+# Tissue detection
+# ---------------------------------------------------------------------------
+
+def _detect_tissue_rows(
+    img: np.ndarray,
+    smooth_sigma: float = 5.0,
+    threshold_frac: float = 0.35,
+    min_band_height: int = 10,
+) -> tuple[int, int]:
+    """Find the row range containing retinal tissue.
+
+    Computes a smoothed row-wise mean intensity profile, thresholds it to
+    separate the bright tissue band from the dark background, and returns
+    the first/last rows above threshold.
+
+    Parameters
+    ----------
+    img : 2-D array [H, W]
+    smooth_sigma : Gaussian smoothing sigma for the row profile
+    threshold_frac : fraction between profile min and max to use as threshold
+    min_band_height : minimum number of tissue rows to be considered valid
+
+    Returns
+    -------
+    (y0, y1) : row range (y1 exclusive).  Falls back to full height if
+                detection fails.
+    """
+    H = img.shape[0]
+    row_means = img.astype(np.float64).mean(axis=1)
+    smoothed = gaussian_filter1d(row_means, sigma=smooth_sigma)
+
+    lo, hi = float(smoothed.min()), float(smoothed.max())
+    if hi - lo < 1e-10:
+        return 0, H
+
+    threshold = lo + threshold_frac * (hi - lo)
+    above = np.where(smoothed > threshold)[0]
+    if len(above) < min_band_height:
+        return 0, H
+
+    return int(above[0]), int(above[-1] + 1)
+
+
+# ---------------------------------------------------------------------------
+# Edge enhancement
+# ---------------------------------------------------------------------------
+
+def _edge_map(img: np.ndarray) -> np.ndarray:
+    """Sobel gradient magnitude — emphasises structural edges.
+
+    This makes correlation robust to global intensity / noise-level
+    differences between denoised predictions and noisy ground truth.
+    """
+    dx = ndi_sobel(img.astype(np.float64), axis=1)
+    dy = ndi_sobel(img.astype(np.float64), axis=0)
+    return np.sqrt(dx * dx + dy * dy)
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +191,10 @@ def register_frame(
     refine_step_deg: float = 1.0,
     upsample_factor: int = 10,
     min_texture_std: float = 1e-6,
-    success_threshold: float = 0.1,
+    success_threshold: float = 0.3,
+    # Tissue ROI options
+    tissue_roi: tuple[int, int] | None = None,
+    roi_pad: int = 30,
 ) -> tuple[np.ndarray, FrameRegistrationResult]:
     """Register a single predicted frame to a reference frame.
 
@@ -126,8 +207,7 @@ def register_frame(
     frame_idx : int
         Frame index stored in the returned metadata.
     include_flips : bool
-        If True, also test left-right flipped orientations (doubles the
-        number of coarse hypotheses).
+        If True, also test left-right flipped orientations.
     refine_angles : bool
         Whether to refine the angle around the best coarse orientation.
     refine_range_deg / refine_step_deg : float
@@ -137,17 +217,26 @@ def register_frame(
     min_texture_std : float
         Minimum standard deviation to consider a frame registrable.
     success_threshold : float
-        Minimum NCC for the result to be flagged as successful.
+        Minimum NCC (on tissue ROI) for the result to be flagged as
+        successful.
+    tissue_roi : (y0, y1) or None
+        Explicit row range of the tissue band.  If *None*, the tissue
+        band is auto-detected from the reference image.
+    roi_pad : int
+        Padding (in rows) added above/below the tissue band to
+        accommodate vertical shifts during registration.
 
     Returns
     -------
     registered : 2-D array
-        Prediction aligned to the reference.
+        Prediction aligned to the reference (full-frame).
     result : FrameRegistrationResult
         Per-frame metadata (transform parameters, score, status).
     """
     if pred.shape != ref.shape:
         raise ValueError(f"Shape mismatch: pred {pred.shape} vs ref {ref.shape}")
+
+    H, W = ref.shape
 
     # --- Guard: low-texture frames ---
     if pred.std() < min_texture_std or ref.std() < min_texture_std:
@@ -163,6 +252,30 @@ def register_frame(
         )
 
     # ------------------------------------------------------------------
+    # Stage 0: Tissue ROI detection
+    # ------------------------------------------------------------------
+    if tissue_roi is not None:
+        t_y0, t_y1 = tissue_roi
+    else:
+        # Detect tissue band from both images and take the union
+        ref_y0, ref_y1 = _detect_tissue_rows(ref)
+        pred_y0, pred_y1 = _detect_tissue_rows(pred)
+        t_y0 = min(ref_y0, pred_y0)
+        t_y1 = max(ref_y1, pred_y1)
+
+    # Add padding so vertical shifts are visible inside the crop
+    t_y0 = max(0, t_y0 - roi_pad)
+    t_y1 = min(H, t_y1 + roi_pad)
+
+    # Crop reference for ROI-based operations
+    ref_crop = ref[t_y0:t_y1, :]
+    pred_crop = pred[t_y0:t_y1, :]
+
+    # Edge-enhanced versions for phase correlation
+    ref_edge = _edge_map(ref_crop)
+    # (pred edge will be computed per-orientation candidate below)
+
+    # ------------------------------------------------------------------
     # Stage 1: Coarse orientation search (D4 subgroup)
     # ------------------------------------------------------------------
     best_score = -np.inf
@@ -174,16 +287,20 @@ def register_frame(
 
     for angle_deg in (0, 90, 180, 270):
         for flip_lr in flip_options:
-            candidate = _apply_orientation(pred, angle_deg, flip_lr)
+            candidate_full = _apply_orientation(pred, angle_deg, flip_lr)
 
             # 90/270 rotations change (H,W) -> (W,H) for non-square images.
-            if candidate.shape != ref.shape:
+            if candidate_full.shape != ref.shape:
                 continue
+
+            # Crop the oriented candidate to the same tissue ROI
+            cand_crop = candidate_full[t_y0:t_y1, :]
+            cand_edge = _edge_map(cand_crop)
 
             try:
                 result_tuple = phase_cross_correlation(
-                    ref.astype(np.float64),
-                    candidate.astype(np.float64),
+                    ref_edge,
+                    cand_edge,
                     upsample_factor=upsample_factor,
                 )
                 shifts = result_tuple[0]
@@ -191,9 +308,10 @@ def register_frame(
             except Exception:
                 continue
 
-            aligned = ndi_shift(candidate, (dy, dx), order=3,
-                                mode="constant", cval=0.0)
-            score = _ncc(aligned, ref)
+            # Score using NCC on original (unenhanced) tissue crop
+            aligned_crop = ndi_shift(cand_crop, (dy, dx), order=3,
+                                     mode="constant", cval=0.0)
+            score = _ncc(aligned_crop, ref_crop)
 
             if score > best_score:
                 best_score = score
@@ -217,19 +335,22 @@ def register_frame(
             if abs(angle - best_orientation) < 0.01:
                 continue
 
-            candidate = pred.copy()
+            candidate_full = pred.copy()
             if best_flip:
-                candidate = np.ascontiguousarray(candidate[:, ::-1])
-            candidate = ndi_rotate(candidate, angle, reshape=False, order=3,
-                                   mode="constant", cval=0.0)
+                candidate_full = np.ascontiguousarray(candidate_full[:, ::-1])
+            candidate_full = ndi_rotate(candidate_full, angle, reshape=False,
+                                        order=3, mode="constant", cval=0.0)
 
-            if candidate.shape != ref.shape:
+            if candidate_full.shape != ref.shape:
                 continue
+
+            cand_crop = candidate_full[t_y0:t_y1, :]
+            cand_edge = _edge_map(cand_crop)
 
             try:
                 result_tuple = phase_cross_correlation(
-                    ref.astype(np.float64),
-                    candidate.astype(np.float64),
+                    ref_edge,
+                    cand_edge,
                     upsample_factor=upsample_factor,
                 )
                 shifts = result_tuple[0]
@@ -237,9 +358,9 @@ def register_frame(
             except Exception:
                 continue
 
-            aligned = ndi_shift(candidate, (dy, dx), order=3,
-                                mode="constant", cval=0.0)
-            score = _ncc(aligned, ref)
+            aligned_crop = ndi_shift(cand_crop, (dy, dx), order=3,
+                                     mode="constant", cval=0.0)
+            score = _ncc(aligned_crop, ref_crop)
 
             if score > best_score:
                 best_score = score
@@ -247,12 +368,13 @@ def register_frame(
                 best_shift = (dy, dx)
 
     # ------------------------------------------------------------------
-    # Stage 3: Apply final transform and report
+    # Stage 3: Apply final transform to *full frame* and report
     # ------------------------------------------------------------------
     dy_final, dx_final = best_shift
     registered = _apply_transform(pred, best_angle, best_flip, dy_final, dx_final)
 
-    final_score = _ncc(registered, ref)
+    # Final score: NCC on tissue ROI of the registered full frame
+    final_score = _ncc(registered[t_y0:t_y1, :], ref_crop)
     success = final_score >= success_threshold
 
     return registered, FrameRegistrationResult(
@@ -264,6 +386,8 @@ def register_frame(
         dx=dx_final,
         score=final_score,
         success=success,
+        tissue_y0=t_y0,
+        tissue_y1=t_y1,
         note="" if success else "low_score",
     )
 
@@ -308,7 +432,8 @@ def register_stack(
             f"[REG] Frame {i + 1}/{F}: orient={result.orientation_deg}\u00b0 "
             f"flip_lr={result.flip_lr} angle={result.refined_angle_deg:.1f}\u00b0 "
             f"shift=({result.dy:.2f}, {result.dx:.2f}) "
-            f"score={result.score:.4f} [{status}]"
+            f"score={result.score:.4f} "
+            f"tissue=[{result.tissue_y0}:{result.tissue_y1}] [{status}]"
         )
 
     return registered, results
@@ -362,7 +487,7 @@ def save_registration_csv(
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     fieldnames = [
         "frame_idx", "orientation_deg", "flip_lr", "refined_angle_deg",
-        "dy", "dx", "score", "success", "note",
+        "dy", "dx", "score", "success", "tissue_y0", "tissue_y1", "note",
     ]
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
