@@ -289,8 +289,13 @@ def predict_raw_to_tiffs(
     print(f"[OK] Mean dCNR: {(mean_cnr_pred - mean_cnr_gt) if np.isfinite(mean_cnr_pred) and np.isfinite(mean_cnr_gt) else float('nan'):.4f}")
 
     # --- Registration: align predictions to ground truth ---
-    print(f"[INFO] Registering predicted frames to ground truth...")
-    preds_reg, reg_results = register_stack(preds, gts)
+    # Use the SNR signal ROI rows as the tissue band hint so registration
+    # focuses on the retinal tissue rather than the dark background.
+    print(f"[INFO] Registering predicted frames to ground truth "
+          f"(tissue ROI rows {sy0}:{sy1}) ...")
+    preds_reg, reg_results = register_stack(
+        preds, gts, tissue_roi=(sy0, sy1),
+    )
     gts_reg = apply_registration_to_stack(gts, reg_results)
 
     n_ok = sum(1 for r in reg_results if r.success)
