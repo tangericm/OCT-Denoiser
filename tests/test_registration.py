@@ -38,7 +38,6 @@ _ncc = _reg._ncc
 _apply_orientation = _reg._apply_orientation
 _apply_transform = _reg._apply_transform
 _detect_tissue_rows = _reg._detect_tissue_rows
-_edge_map = _reg._edge_map
 
 
 # ---------------------------------------------------------------------------

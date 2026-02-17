@@ -9,16 +9,14 @@ Strategy (coarse-to-fine, tissue-aware):
   0. **Tissue-ROI detection** — automatically find the row band that contains
      retinal tissue in both images; crop to that band so the background cannot
      dominate the correlation.
-  1. **Edge enhancement** — Sobel gradient magnitude emphasises layer
-     boundaries that are present in both denoised predictions and noisy ground
-     truth, making correlation robust to noise-level differences.
-  2. **Coarse orientation search** over the dihedral group D4
+  1. **Coarse orientation search** over the dihedral group D4
      (4 rotations x 2 optional flips = up to 8 hypotheses).
-  3. **Subpixel translation estimation** via phase cross-correlation on the
-     edge-enhanced tissue crop.
-  4. **Optional fine angle refinement** around the best coarse orientation.
-  5. **NCC scoring on the original (unenhanced) tissue crop** for a
-     meaningful quality metric.
+  2. **Translation estimation** via Gaussian-smoothed FFT cross-correlation
+     for a robust coarse integer-pixel shift, followed by subpixel NCC
+     optimisation with Powell's method — similar to MATLAB's ``imregister``.
+  3. **Optional fine angle refinement** around the best coarse orientation.
+  4. **NCC scoring on the original tissue crop** for a meaningful quality
+     metric.
 
 All operations are deterministic and reproducible.
 """
@@ -33,12 +31,14 @@ from typing import Sequence
 
 import numpy as np
 from scipy.ndimage import (
+    gaussian_filter,
+    gaussian_filter1d,
     rotate as ndi_rotate,
     shift as ndi_shift,
     sobel as ndi_sobel,
-    gaussian_filter1d,
 )
-from skimage.registration import phase_cross_correlation
+from scipy.optimize import minimize as sp_minimize
+from scipy.signal import fftconvolve
 
 
 # ---------------------------------------------------------------------------
@@ -106,21 +106,6 @@ def _detect_tissue_rows(
 
 
 # ---------------------------------------------------------------------------
-# Edge enhancement
-# ---------------------------------------------------------------------------
-
-def _edge_map(img: np.ndarray) -> np.ndarray:
-    """Sobel gradient magnitude — emphasises structural edges.
-
-    This makes correlation robust to global intensity / noise-level
-    differences between denoised predictions and noisy ground truth.
-    """
-    dx = ndi_sobel(img.astype(np.float64), axis=1)
-    dy = ndi_sobel(img.astype(np.float64), axis=0)
-    return np.sqrt(dx * dx + dy * dy)
-
-
-# ---------------------------------------------------------------------------
 # Core helpers
 # ---------------------------------------------------------------------------
 
@@ -176,6 +161,92 @@ def _ncc(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.mean((a64 - a64.mean()) * (b64 - b64.mean())) / (a_std * b_std))
 
 
+def _find_translation(
+    ref_crop: np.ndarray,
+    mov_crop: np.ndarray,
+    max_shift: int = 30,
+    smooth_sigma: float = 1.5,
+) -> tuple[float, float]:
+    """Estimate (dy, dx) to align *mov_crop* onto *ref_crop*.
+
+    1. Compute Sobel gradient magnitude of both crops — this captures
+       structural edges in both axes and is invariant to global
+       intensity / noise-level differences (denoised-vs-noisy).
+    2. Lightly Gaussian-smooth the edge maps to reduce noise.
+    3. FFT cross-correlation for fast integer-pixel coarse alignment.
+    4. Powell optimisation of NCC on the *original* crops for subpixel
+       refinement.
+
+    The key difference from scikit-image's ``phase_cross_correlation``
+    is that plain FFT cross-correlation preserves the natural amplitude
+    weighting of structural features, whereas phase normalisation can
+    amplify noise and produce unreliable peaks in OCT data.
+
+    Parameters
+    ----------
+    ref_crop, mov_crop : 2-D float arrays (same shape).
+    max_shift : maximum pixel shift to consider (constrains search).
+    smooth_sigma : Gaussian sigma applied to the Sobel edge maps before
+        FFT cross-correlation.
+
+    Returns
+    -------
+    (dy, dx) : shift for ``ndi_shift(mov_crop, (dy, dx))`` to align it
+        to *ref_crop*.
+    """
+    ref64 = ref_crop.astype(np.float64)
+    mov64 = mov_crop.astype(np.float64)
+
+    # --- Edge enhancement: Sobel gradient magnitude ---
+    # Captures structural boundaries in both y and x while suppressing
+    # DC offset and noise-level differences between pred and ref.
+    def _edge_mag(img: np.ndarray) -> np.ndarray:
+        gx = ndi_sobel(img, axis=1)
+        gy = ndi_sobel(img, axis=0)
+        return np.sqrt(gx * gx + gy * gy)
+
+    ref_e = gaussian_filter(_edge_mag(ref64), sigma=smooth_sigma)
+    mov_e = gaussian_filter(_edge_mag(mov64), sigma=smooth_sigma)
+
+    ref_zm = ref_e - ref_e.mean()
+    mov_zm = mov_e - mov_e.mean()
+
+    if ref_zm.std() < 1e-10 or mov_zm.std() < 1e-10:
+        return 0.0, 0.0
+
+    # --- Coarse: FFT cross-correlation on smoothed edge maps ---
+    xcorr = fftconvolve(ref_zm, mov_zm[::-1, ::-1], mode="full")
+
+    H, W = ref64.shape
+    cy, cx = H - 1, W - 1  # zero-shift location in the xcorr array
+
+    # Restrict peak search to ±max_shift
+    y_lo = max(0, cy - max_shift)
+    y_hi = min(xcorr.shape[0], cy + max_shift + 1)
+    x_lo = max(0, cx - max_shift)
+    x_hi = min(xcorr.shape[1], cx + max_shift + 1)
+
+    roi = xcorr[y_lo:y_hi, x_lo:x_hi]
+    peak = np.unravel_index(roi.argmax(), roi.shape)
+    coarse_dy = float(peak[0] + y_lo - cy)
+    coarse_dx = float(peak[1] + x_lo - cx)
+
+    # --- Fine: optimise NCC on original (unsmoothed) crops ---
+    def _neg_ncc(params):
+        shifted = ndi_shift(mov64, (params[0], params[1]),
+                            order=3, mode="constant", cval=0.0)
+        return -_ncc(shifted, ref64)
+
+    res = sp_minimize(
+        _neg_ncc,
+        [coarse_dy, coarse_dx],
+        method="Powell",
+        options={"xtol": 0.05, "ftol": 1e-8, "maxiter": 200},
+    )
+
+    return float(res.x[0]), float(res.x[1])
+
+
 # ---------------------------------------------------------------------------
 # Per-frame registration
 # ---------------------------------------------------------------------------
@@ -189,7 +260,7 @@ def register_frame(
     refine_angles: bool = True,
     refine_range_deg: float = 10.0,
     refine_step_deg: float = 1.0,
-    upsample_factor: int = 10,
+    max_shift: int = 30,
     min_texture_std: float = 1e-6,
     success_threshold: float = 0.3,
     # Tissue ROI options
@@ -212,8 +283,8 @@ def register_frame(
         Whether to refine the angle around the best coarse orientation.
     refine_range_deg / refine_step_deg : float
         Range and step of the fine angle search.
-    upsample_factor : int
-        Sub-pixel precision factor for ``phase_cross_correlation``.
+    max_shift : int
+        Maximum translation in pixels to consider during alignment.
     min_texture_std : float
         Minimum standard deviation to consider a frame registrable.
     success_threshold : float
@@ -269,11 +340,6 @@ def register_frame(
 
     # Crop reference for ROI-based operations
     ref_crop = ref[t_y0:t_y1, :]
-    pred_crop = pred[t_y0:t_y1, :]
-
-    # Edge-enhanced versions for phase correlation
-    ref_edge = _edge_map(ref_crop)
-    # (pred edge will be computed per-orientation candidate below)
 
     # ------------------------------------------------------------------
     # Stage 1: Coarse orientation search (D4 subgroup)
@@ -295,20 +361,14 @@ def register_frame(
 
             # Crop the oriented candidate to the same tissue ROI
             cand_crop = candidate_full[t_y0:t_y1, :]
-            cand_edge = _edge_map(cand_crop)
 
             try:
-                result_tuple = phase_cross_correlation(
-                    ref_edge,
-                    cand_edge,
-                    upsample_factor=upsample_factor,
-                )
-                shifts = result_tuple[0]
-                dy, dx = float(shifts[0]), float(shifts[1])
+                dy, dx = _find_translation(ref_crop, cand_crop,
+                                           max_shift=max_shift)
             except Exception:
                 continue
 
-            # Score using NCC on original (unenhanced) tissue crop
+            # Score using NCC on original tissue crop
             aligned_crop = ndi_shift(cand_crop, (dy, dx), order=3,
                                      mode="constant", cval=0.0)
             score = _ncc(aligned_crop, ref_crop)
@@ -345,16 +405,10 @@ def register_frame(
                 continue
 
             cand_crop = candidate_full[t_y0:t_y1, :]
-            cand_edge = _edge_map(cand_crop)
 
             try:
-                result_tuple = phase_cross_correlation(
-                    ref_edge,
-                    cand_edge,
-                    upsample_factor=upsample_factor,
-                )
-                shifts = result_tuple[0]
-                dy, dx = float(shifts[0]), float(shifts[1])
+                dy, dx = _find_translation(ref_crop, cand_crop,
+                                           max_shift=max_shift)
             except Exception:
                 continue
 
