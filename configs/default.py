@@ -19,7 +19,6 @@ class FolderSpec:
     window_sigma: float = 0.08
     gap: float = 0.15
     gap_offset: float = 0.0
-    auto_gap: bool = False
     n_sub_windows: int = 0            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
     sub_window_spread: float = 2.0    # sub-window center spread in sigma units
 

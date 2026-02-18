@@ -1,3 +1,4 @@
+import os
 from configs.default import TrainConfig, FolderSpec
 from utils.helpers import seed_all
 from utils.run_manager import make_run_dir, setup_run_dirs
@@ -22,7 +23,6 @@ def main():
                 window_sigma=0.05,
                 gap=0.60,
                 gap_offset=0.015,
-                auto_gap=False,
                 n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
                 sub_window_spread=0.5,    # sub-window center spread in sigma units
             ),
@@ -36,7 +36,6 @@ def main():
                 window_sigma=0.05,
                 gap=0.60,
                 gap_offset=0.015,
-                auto_gap=False,
                 n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
                 sub_window_spread=0.5,    # sub-window center spread in sigma units
             ),
@@ -91,7 +90,7 @@ def main():
         result = run_training(cfg, paths)
 
         for folder_spec in cfg.folder_specs:
-            predict_from_config(cfg, folder_spec, result["best_ckpt_path"], paths["pred_tiff"])
+            predict_from_config(cfg, folder_spec, result["best_ckpt_path"], os.path.join(paths["pred_tiff"], folder_spec.data_folder))
 
 
 if __name__ == "__main__":
