@@ -96,12 +96,14 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     dm = RawBscanDataModule(cfg)
     dm.setup()
     if cfg.folder_specs:
-        window_path = os.path.join(paths["run"], "window_figure.png")
-        if not os.path.exists(window_path):
-            from preprocess import BscanProcessor
-            fs = cfg.folder_specs[0]
-            proc = BscanProcessor(fs)
-            proc.save_window_figure(window_path)
+        from preprocess import BscanProcessor
+
+        for folder_spec in cfg.folder_specs:
+            folder_name = os.path.basename(folder_spec.data_folder.rstrip("/\\")) or "folder"
+            window_path = os.path.join(paths["run"], f"window_figure_{folder_name}.png")
+            if not os.path.exists(window_path):
+                proc = BscanProcessor(folder_spec)
+                proc.save_window_figure(window_path)
     train_loader = dm.train_loader()
     val_loader = dm.val_loader()
     val_full_loader = dm.val_full_loader()

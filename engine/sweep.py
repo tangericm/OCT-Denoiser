@@ -74,7 +74,7 @@ def run_sweep(cfg) -> Dict[str, Any]:
             # Run inference with best checkpoint
             for fs in run_cfg.folder_specs:
                 predict_from_config(
-                    run_cfg, fs, result["best_ckpt_path"], paths["pred_tiff"]
+                    run_cfg, fs, result["best_ckpt_path"], os.path.join(paths["pred_tiff"], fs.data_folder)
                 )
 
             # Extract best validation entry

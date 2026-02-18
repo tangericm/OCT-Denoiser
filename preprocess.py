@@ -8,7 +8,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.fft as sfft
 import scipy.linalg as sla
-from scipy.signal import hilbert
 
 if TYPE_CHECKING:
     from configs.default import FolderSpec
@@ -352,57 +351,6 @@ def make_multilevel_window_masks(
     return sub_w1s, sub_w2s
 
 
-def estimate_gap_and_offset_from_fringes(
-    bscan_path: str,
-    pixels: int,
-    alines: int,
-    sigma: float,
-    do_dc_subtract: bool = True,
-    envelope_threshold: float = 0.10,
-) -> Tuple[float, float]:
-    """Estimate (gap, gap_offset) from a representative A-line using Hilbert envelope edges."""
-    data = np.fromfile(bscan_path, dtype=np.uint16)
-    expected = pixels * alines
-    if data.size != expected:
-        raise ValueError(f"{os.path.basename(bscan_path)} has {data.size} elements; expected {expected}.")
-
-    raw = data.reshape((pixels, alines), order="F").astype(np.float32, copy=False)
-    if do_dc_subtract:
-        raw[0, :] = raw[3, :]
-        raw[1, :] = raw[3, :]
-        raw[2, :] = raw[3, :]
-        raw = raw - raw.mean(axis=1, keepdims=True)
-
-    aline_idx = raw.shape[1] // 2
-    fringe = raw[:, aline_idx]
-    fringe = fringe / (np.max(np.abs(fringe)) + 1e-12)
-
-    envelope = np.abs(hilbert(fringe)).astype(np.float32)
-    thr = float(np.max(envelope) * envelope_threshold)
-    idx = np.flatnonzero(envelope >= thr)
-    if idx.size < 2:
-        return 0.15, 0.0
-
-    left_px = int(idx[0])
-    right_px = int(idx[-1])
-
-    margin_px = max(1, int(round(2.0 * sigma * (pixels - 1))))
-    c1_px = int(np.clip(left_px + margin_px, 0, pixels - 1))
-    c2_px = int(np.clip(right_px - margin_px, 0, pixels - 1))
-
-    if c2_px <= c1_px:
-        mid = (left_px + right_px) // 2
-        c1_px = max(0, mid - 1)
-        c2_px = min(pixels - 1, mid + 1)
-
-    denom = float(max(pixels - 1, 1))
-    c1 = c1_px / denom
-    c2 = c2_px / denom
-
-    gap = float(max(c2 - c1, 1.0 / denom))
-    gap_offset = float((c1 + c2) / 2.0 - 0.5)
-    return gap, gap_offset
-
 
 # -----------------------------
 # High-level processor
@@ -459,16 +407,6 @@ class BscanProcessor:
         else:
             raise ValueError(f"Unknown window_type={cfg.window_type}")
 
-        if getattr(cfg, "auto_gap", False):
-            auto_gap, auto_offset = estimate_gap_and_offset_from_fringes(
-                self.bscan_paths[0],
-                pixels=cfg.pixels,
-                alines=cfg.alines,
-                sigma=cfg.window_sigma,
-                do_dc_subtract=cfg.do_dc_subtract,
-            )
-            cfg.gap = auto_gap
-            cfg.gap_offset = auto_offset
 
         # Precompute two spectral windows
         self.w1, self.w2 = make_two_window_masks(cfg.pixels, cfg.gap, cfg.window_sigma, cfg.gap_offset)
