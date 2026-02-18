@@ -291,19 +291,19 @@ def predict_raw_to_tiffs(
     # --- Registration: align predictions to ground truth ---
     # Use the SNR signal ROI rows as the tissue band hint so registration
     # focuses on the retinal tissue rather than the dark background.
-    print(f"[INFO] Registering predicted frames to ground truth "
-          f"(tissue ROI rows {sy0}:{sy1}) ...")
-    preds_reg, reg_results = register_stack(
-        preds, gts, tissue_roi=(sy0, sy1),
-    )
-    gts_reg = apply_registration_to_stack(gts, reg_results)
+    # print(f"[INFO] Registering predicted frames to ground truth "
+    #       f"(tissue ROI rows {sy0}:{sy1}) ...")
+    # preds_reg, reg_results = register_stack(
+    #     preds, gts, tissue_roi=(sy0, sy1),
+    # )
+    # gts_reg = apply_registration_to_stack(gts, reg_results)
 
-    n_ok = sum(1 for r in reg_results if r.success)
-    print(f"[OK] Registration complete: {n_ok}/{F} frames succeeded")
+    # n_ok = sum(1 for r in reg_results if r.success)
+    # print(f"[OK] Registration complete: {n_ok}/{F} frames succeeded")
 
-    reg_csv_path = os.path.join(outdir, f"registration_{param_suffix}.csv")
-    save_registration_csv(reg_csv_path, reg_results)
-    print(f"[OK] Saved registration CSV: {reg_csv_path}")
+    # reg_csv_path = os.path.join(outdir, f"registration_{param_suffix}.csv")
+    # save_registration_csv(reg_csv_path, reg_results)
+    # print(f"[OK] Saved registration CSV: {reg_csv_path}")
 
     # save TIFFs
     print(f"[INFO] Saving TIFF stacks to {outdir}...")
@@ -316,17 +316,17 @@ def predict_raw_to_tiffs(
     w2_path       = os.path.join(outdir, f"w2_{param_suffix}.tiff")
 
     save_tiff_stack(pred_path, preds, dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(pred_reg_path, preds_reg, dtype=tiff_dtype, scale_per_slice=True)
-    # save_tiff_stack(gt_path,   gts,   dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(gt_reg_path, gts_reg, dtype=tiff_dtype, scale_per_slice=True)
+    # save_tiff_stack(pred_reg_path, preds_reg, dtype=tiff_dtype, scale_per_slice=True)
+    save_tiff_stack(gt_path,   gts,   dtype=tiff_dtype, scale_per_slice=True)
+    # save_tiff_stack(gt_reg_path, gts_reg, dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(w1_path,   w1,    dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(w2_path,   w2,    dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
         save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds, dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, f"pred_registered_{param_suffix}_float32.tiff"), preds_reg, dtype="float32", scale_per_slice=True)
+        # save_tiff_stack(os.path.join(outdir, f"pred_registered_{param_suffix}_float32.tiff"), preds_reg, dtype="float32", scale_per_slice=True)
         # save_tiff_stack(os.path.join(outdir, f"gt_{param_suffix}_float32.tiff"), gts, dtype="float32", scale_per_slice=True)
-        save_tiff_stack(os.path.join(outdir, f"gt_registered_{param_suffix}_float32.tiff"), gts_reg, dtype="float32", scale_per_slice=True)
+        # save_tiff_stack(os.path.join(outdir, f"gt_registered_{param_suffix}_float32.tiff"), gts_reg, dtype="float32", scale_per_slice=True)
 
 
 def predict_from_config(cfg, folder_spec, ckpt_path: str, outdir: str, **overrides) -> None:

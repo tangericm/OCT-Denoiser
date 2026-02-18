@@ -8,7 +8,7 @@ from engine.infer import predict_from_config
 def main():
     cfg = TrainConfig(
         runs_root=r"runs",
-        experiment_name="6mm_1024Aline_strip",
+        experiment_name="multidevice",
         model_name="resunet_pseudo3d_multilevel",
 
         folder_specs=[
@@ -19,9 +19,23 @@ def main():
                 alines=1024,
                 crop_depth=(0, 1024),
                 dispersion=[1.315892282e-06, 5.459678905e-10],
-                window_sigma=0.04,
-                gap=0.50,
-                gap_offset=-0.01,
+                window_sigma=0.05,
+                gap=0.60,
+                gap_offset=0.015,
+                auto_gap=False,
+                n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
+                sub_window_spread=0.5,    # sub-window center spread in sigma units
+            ),
+            FolderSpec(
+                root_folder=r"images\Maestro2",
+                data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
+                pixels=2048,
+                alines=2048,
+                crop_depth=(0, 1024),
+                dispersion=[4.778474717e-06, 6.475358372e-09],
+                window_sigma=0.05,
+                gap=0.60,
+                gap_offset=0.015,
                 auto_gap=False,
                 n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
                 sub_window_spread=0.5,    # sub-window center spread in sigma units
@@ -48,7 +62,7 @@ def main():
         w_charb=0.010307111599432855,
         # w_grad=0.010163544565911599,
         # w_charb=0.05,
-        w_grad=0.0,
+        # w_grad=0.0,
 
         snr_sig_y0=111,
         snr_sig_y1=600,
