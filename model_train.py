@@ -26,19 +26,45 @@ def main():
                 n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
                 sub_window_spread=0.5,    # sub-window center spread in sigma units
             ),
-            FolderSpec(
-                root_folder=r"images\Maestro2",
-                data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
-                pixels=2048,
-                alines=2048,
-                crop_depth=(0, 1024),
-                dispersion=[4.778474717e-06, 6.475358372e-09],
-                window_sigma=0.05,
-                gap=0.60,
-                gap_offset=0.015,
-                n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
-                sub_window_spread=0.5,    # sub-window center spread in sigma units
-            ),
+            # FolderSpec(
+            #     root_folder=r"images\Maestro3",
+            #     data_folder="6mm_1024Aline_disc",
+            #     pixels=2048,
+            #     alines=1024,
+            #     crop_depth=(0, 1024),
+            #     dispersion=[1.315892282e-06, 5.459678905e-10],
+            #     window_sigma=0.05,
+            #     gap=0.60,
+            #     gap_offset=0.015,
+            #     n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
+            #     sub_window_spread=0.5,    # sub-window center spread in sigma units
+            # ),
+            # FolderSpec(
+            #     root_folder=r"images\Maestro3",
+            #     data_folder="6mm_1024Aline_center",
+            #     pixels=2048,
+            #     alines=1024,
+            #     crop_depth=(0, 1024),
+            #     dispersion=[1.315892282e-06, 5.459678905e-10],
+            #     window_sigma=0.05,
+            #     gap=0.60,
+            #     gap_offset=0.015,
+            #     n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
+            #     sub_window_spread=0.5,    # sub-window center spread in sigma units
+            # ),
+            # FolderSpec(
+            #     root_folder=r"images\Maestro2",
+            #     data_folder="Line_6mm_2048Aline_135degCW_50frame_gain165",
+            #     pixels=2048,
+            #     alines=2048,
+            #     crop_depth=(0, 1024),
+            #     dispersion=[4.778474717e-06, 6.475358372e-09],
+            #     window_sigma=0.05,
+            #     gap=0.60,
+            #     gap_offset=0.015,
+            #     n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
+            #     sub_window_spread=0.5,    # sub-window center spread in sigma units
+            # ),
         ],
         cache_frames_per_worker=1000,
 
@@ -54,7 +80,7 @@ def main():
         augment=True,
 
         patch_h=288,
-        patch_w=16,
+        patch_w=1,
         patches_per_frame=16,
         patch_mode="strip",
 

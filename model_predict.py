@@ -12,8 +12,8 @@ def main():
     )
 
     run = r"s005_g060_o0015"
-    path =r"runs\6mm_1024Aline_strip\\" + run + r"\\checkpoints\best.pt"
-    outdir=r"runs\6mm_1024Aline_strip\\" + run + r"\\predictions"
+    path =r"runs\multidevice\\" + run + r"\\checkpoints\best.pt"
+    outdir=r"runs\multidevice\\" + run + r"\\predictions"
 
     window_sigma = 0.05
     gap = 0.60
@@ -21,7 +21,7 @@ def main():
 
     folder_spec = FolderSpec(
         root_folder=r"images\Maestro3",
-        data_folder="mirror_6mm_1024Aline",
+        data_folder="6mm_1024Aline_disc",
         pixels=2048,
         alines=1024,
         crop_depth=(0, 1024),
@@ -42,7 +42,7 @@ def main():
 
     folder_spec = FolderSpec(
         root_folder=r"images\Maestro3",
-        data_folder="mirror_6mm_1024Aline_5",
+        data_folder="9mm_1024Aline_disc",
         pixels=2048,
         alines=1024,
         crop_depth=(0, 1024),
