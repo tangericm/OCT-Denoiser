@@ -3,9 +3,6 @@ from __future__ import annotations
 import numpy as np
 
 
-_LOG10_MAX_FLOAT32 = np.log10(np.finfo(np.float32).max)
-
-
 def roi_snr_cnr(
     img2d: np.ndarray,
     sig_roi,
@@ -33,9 +30,6 @@ def roi_snr_cnr(
     sig = np.where(np.isfinite(sig), sig, np.nan)
     bg = np.where(np.isfinite(bg), bg, np.nan)
 
-    if not np.isfinite(sig).any() or not np.isfinite(bg).any():
-        return float("nan"), float("nan")
-
     sig_stat_key = sig_stat.lower().strip()
     if sig_stat_key == "max":
         signal_level = float(np.nanmean(np.nanmax(sig, axis=0)))
@@ -53,9 +47,6 @@ def roi_snr_cnr(
     mean_sig = float(np.nanmean(sig))
     std_bg = float(np.nanstd(bg))
 
-    if not np.isfinite(signal_level) or not np.isfinite(mean_sig) or not np.isfinite(std_bg):
-        return float("nan"), float("nan")
-
     snr = 20.0 * np.log10((signal_level + eps) / (std_bg + eps))
     cnr = 20.0 * np.log10((mean_sig + eps) / (std_bg + eps))
     if not np.isfinite(snr):
@@ -70,11 +61,7 @@ def to_physical_intensity(img: np.ndarray, meta: dict | None) -> np.ndarray:
     if not meta:
         return img
     img_log = img * float(meta["target_sd"]) + float(meta["target_mu"])
-    img_log = np.clip(img_log, -30.0, _LOG10_MAX_FLOAT32).astype(np.float32, copy=False)
-    with np.errstate(over="ignore", invalid="ignore"):
-        lin = np.power(np.float32(10.0), img_log, dtype=np.float32)
-    lin = lin - np.float32(meta["log_eps"])
-    return np.maximum(lin, 0.0)
+    return np.maximum(10.0 ** img_log - float(meta["log_eps"]), 0.0)
 
 
 def roi_bounds(height: int, width: int, y0: int, y1: int, x_pad: int = 10) -> tuple[int, int, int, int]:
