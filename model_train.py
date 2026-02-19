@@ -9,7 +9,7 @@ from engine.infer import predict_from_config
 def main():
     cfg = TrainConfig(
         runs_root=r"runs",
-        experiment_name="multidevice",
+        experiment_name="A-Line",
         model_name="resunet_pseudo3d_multilevel",
 
         folder_specs=[
@@ -80,12 +80,12 @@ def main():
         augment=True,
 
         patch_h=288,
-        patch_w=16,
-        patches_per_frame=16,
+        patch_w=1,
+        patches_per_frame=256,
         patch_mode="strip",
 
         w_charb=0.010307111599432855,
-        # w_grad=0.010163544565911599,
+        w_grad=0.010163544565911599,
         # w_charb=0.05,
         # w_grad=0.0,
 
