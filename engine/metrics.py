@@ -30,6 +30,13 @@ def roi_snr_cnr(
     sig = np.where(np.isfinite(sig), sig, np.nan)
     bg = np.where(np.isfinite(bg), bg, np.nan)
 
+    # Guard against empty/invalid ROIs so downstream nanmax/nanpercentile don't emit
+    # warnings and the caller gets explicit NaN metrics.
+    if sig.size == 0 or bg.size == 0:
+        return float("nan"), float("nan")
+    if not np.any(np.isfinite(sig)) or not np.any(np.isfinite(bg)):
+        return float("nan"), float("nan")
+
     sig_stat_key = sig_stat.lower().strip()
     if sig_stat_key == "max":
         signal_level = float(np.nanmean(np.nanmax(sig, axis=0)))
@@ -61,7 +68,13 @@ def to_physical_intensity(img: np.ndarray, meta: dict | None) -> np.ndarray:
     if not meta:
         return img
     img_log = img * float(meta["target_sd"]) + float(meta["target_mu"])
-    return np.maximum(10.0 ** img_log - float(meta["log_eps"]), 0.0)
+    # Keep conversion numerically stable: very large predictions can happen early in
+    # training (especially with tiny patches), which would overflow 10**x.
+    # Clip to float64-safe exponent range before exponentiation.
+    max_log10 = np.log10(np.finfo(np.float64).max)
+    img_log64 = np.clip(img_log.astype(np.float64, copy=False), -max_log10, max_log10)
+    out = np.power(10.0, img_log64) - float(meta["log_eps"])
+    return np.maximum(out, 0.0)
 
 
 def roi_bounds(height: int, width: int, y0: int, y1: int, x_pad: int = 10) -> tuple[int, int, int, int]:
