@@ -99,6 +99,12 @@ def predict_raw_to_tiffs(
     if not proc.cfg.use_log:
         raise ValueError("predict_raw_to_tiffs currently expects cfg.use_log=True for linear-domain metric recovery")
 
+    folder_name = os.path.basename(folder_spec.data_folder.rstrip("/\\")) or "folder"
+    window_path = os.path.join(outdir, f"window_figure_{folder_name}.png")
+    if not os.path.exists(window_path):
+        proc.save_window_figure(window_path)
+        print(f"[OK] Saved window figure: {window_path}")
+
     # Load model
     print(f"[INFO] Loading checkpoint from: {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location="cpu")
@@ -139,7 +145,7 @@ def predict_raw_to_tiffs(
     # Format filename with sigma and gap parameters
     sigma = int(round(folder_spec.window_sigma * 100))  # e.g., 0.08 -> 080
     gap = int(round(folder_spec.gap * 100))              # e.g., 0.25 -> 250
-    folder_tag = os.path.basename(folder_spec.data_folder.rstrip("/\\"))
+    folder_tag = folder_name
     folder_tag = folder_tag.replace(" ", "_")
     param_suffix = f"{folder_tag}_s{sigma:03d}_g{gap:03d}"
 
