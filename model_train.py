@@ -80,7 +80,7 @@ def main():
         augment=True,
 
         patch_h=288,
-        patch_w=1,
+        patch_w=16,
         patches_per_frame=16,
         patch_mode="strip",
 

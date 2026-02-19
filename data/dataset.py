@@ -13,6 +13,15 @@ from preprocess import BscanProcessor
 
 
 
+
+def _to_torch_float32(arr: np.ndarray) -> torch.Tensor:
+    """Convert any numpy-like view to a safe float32 torch tensor.
+
+    Forces a C-order copy so negative/non-contiguous strides from slicing/flips
+    cannot propagate into torch.from_numpy.
+    """
+    return torch.from_numpy(np.array(arr, dtype=np.float32, copy=True, order="C"))
+
 class _LRU:
     """Simple LRU cache for processed B-scan frames."""
 
@@ -174,7 +183,7 @@ class RawBscanDataset(Dataset):
         if self._rng.rand() < 0.5:
             x = x[:, ::-1, :]
             y = y[:, ::-1, :]
-        return x, y
+        return x.copy(order="C"), y.copy(order="C")
 
     def _build_meta(self, fidx: int, frame_idx: int, out: dict | None = None) -> dict:
         fs = self.folder_specs[fidx]
@@ -233,4 +242,4 @@ class RawBscanDataset(Dataset):
         y = np.ascontiguousarray(y)
 
         meta_out = out if self.full_frame else None
-        return torch.from_numpy(x), torch.from_numpy(y), self._build_meta(fidx, frame_idx, out=meta_out)
+        return _to_torch_float32(x), _to_torch_float32(y), self._build_meta(fidx, frame_idx, out=meta_out)
