@@ -108,7 +108,10 @@ def evaluate_full_frames(
         if len(arr) == 0:
             return float("nan")
         a = np.asarray(arr, dtype=np.float64)
-        return float(np.nanmean(np.where(np.isfinite(a), a, np.nan)))
+        finite = a[np.isfinite(a)]
+        if finite.size == 0:
+            return float("nan")
+        return float(finite.mean())
 
     return {
         "val_loss": val_loss,
