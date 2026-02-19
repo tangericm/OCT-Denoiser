@@ -10,7 +10,7 @@ def main():
     cfg = TrainConfig(
         runs_root=r"runs",
         experiment_name="A-Line",
-        model_name="resunet_pseudo3d_multilevel",
+        model_name="resunet_multilevel_1d",
 
         folder_specs=[
             FolderSpec(
@@ -81,7 +81,7 @@ def main():
 
         patch_h=288,
         patch_w=1,
-        patches_per_frame=256,
+        patches_per_frame=16,
         patch_mode="strip",
 
         w_charb=0.010307111599432855,
