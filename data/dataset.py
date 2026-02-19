@@ -227,5 +227,9 @@ class RawBscanDataset(Dataset):
             x = np.ascontiguousarray(x)
             y = np.ascontiguousarray(y)
 
+        # Ensure positive/contiguous strides before torch.from_numpy; slicing/flip ops can produce negative strides.
+        x = np.ascontiguousarray(x)
+        y = np.ascontiguousarray(y)
+
         meta_out = out if self.full_frame else None
         return torch.from_numpy(x), torch.from_numpy(y), self._build_meta(fidx, frame_idx, out=meta_out)
