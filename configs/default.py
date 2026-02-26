@@ -36,7 +36,7 @@ class PostprocessConfig:
     use_ecc: bool = False
     use_clahe: bool = True
     max_translation: float = 100.0     # pixels
-    max_rotation_deg: float = 5.0      # degrees
+    max_rotation_deg: float = 10.0      # degrees
 
     # Deconvolution
     do_deconv: bool = True

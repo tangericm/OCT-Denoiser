@@ -4,29 +4,30 @@ from engine.infer import predict_from_config
 
 def main():
     cfg = TrainConfig(
-        model_name="resunet_pseudo3d_multilevel",
+        model_name="resunet_multilevel_1d",
         base=32,
         device="cuda",
-        also_save_float32=True,
+        also_save_float32=False,
         snr_sig_stat="p99.99",  # change to e.g. "p95" to use percentile statistic
         postprocess=PostprocessConfig(
             enable=True,
             # Registration
             do_register=True,
             ref_strategy="middle",
-            transform_model="euclidean",
+            transform_model="affine",
             use_clahe=True,
+            use_ecc=True,
             # Deconvolution
-            do_deconv=True,
+            do_deconv=False,
             deconv_method="wiener",
             psf_sigma=1.5,
             wiener_nsr=0.01,
         ),
     )
 
-    run = r"s005_g060_o0015"
-    path =r"runs\6mm_1024Aline_strip\\" + run + r"\\checkpoints\best.pt"
-    outdir=r"runs\6mm_1024Aline_strip\\" + run + r"\\predictions"
+    run = r"1D_npatch=256"
+    path =r"runs\A-Line\\" + run + r"\\checkpoints\best.pt"
+    outdir=r"runs\A-Line\\" + run + r"\\predictions"
 
     window_sigma = 0.05
     gap = 0.60
@@ -34,7 +35,7 @@ def main():
 
     folder_spec = FolderSpec(
         root_folder=r"images\Maestro3",
-        data_folder="9mm_1024Aline_disc",
+        data_folder="6mm_1024Aline",
         pixels=2048,
         alines=1024,
         crop_depth=(0, 1024),
@@ -55,7 +56,7 @@ def main():
 
     folder_spec = FolderSpec(
         root_folder=r"images\Maestro3",
-        data_folder="9mm_1024Aline_center",
+        data_folder="6mm_1024Aline_disc",
         pixels=2048,
         alines=1024,
         crop_depth=(0, 1024),

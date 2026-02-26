@@ -36,7 +36,7 @@ class RegistrationConfig:
     ref_strategy: str = "middle"      # "middle" or "sharpness"
 
     # DFT phase-correlation
-    dft_upsample_factor: int = 10
+    dft_upsample_factor: int = 100
 
     # AKAZE feature matching
     akaze_threshold: float = 0.001
