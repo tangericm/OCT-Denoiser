@@ -36,7 +36,7 @@ class RegistrationConfig:
     ref_strategy: str = "middle"      # "middle" or "sharpness"
 
     # DFT phase-correlation
-    dft_upsample_factor: int = 100
+    dft_upsample_factor: int = 10
 
     # AKAZE feature matching
     akaze_threshold: float = 0.001
@@ -64,6 +64,11 @@ class RegistrationConfig:
     # Preprocessing toggle
     register_on_preprocessed: bool = True
 
+    # Debug visualization
+    debug_vis: bool = True
+    debug_save_dir: Optional[str] = r"C:\Users\erict\OneDrive\Desktop\Projects\OCT Denoiser\runs\A-Line\1D_npatch=256\predictions\6mm_1024Aline"  # e.g. "debug_akaze"
+    debug_max_matches_draw: int = 80
+
 
 @dataclass
 class FrameResult:
@@ -82,6 +87,13 @@ class FrameResult:
     inlier_count: int = 0
     inlier_ratio: float = 0.0
     fallback_reason: str = ""
+
+@dataclass
+class AkazeDebug:
+    kp_ref: List[cv2.KeyPoint]
+    kp_mov: List[cv2.KeyPoint]
+    good_matches: List[cv2.DMatch]
+    inlier_mask: Optional[np.ndarray]  # shape [len(good), 1] or [len(good),]
 
 
 # ── Metrics ───────────────────────────────────────────────────────────────
@@ -143,17 +155,14 @@ def _akaze_register(
     ref_u8: np.ndarray,
     mov_u8: np.ndarray,
     cfg: RegistrationConfig,
-) -> Tuple[Optional[np.ndarray], int, float]:
-    """AKAZE keypoint matching -> robust transform.
-
-    Returns ``(M_2x3 | None, inlier_count, inlier_ratio)``.
-    """
+) -> Tuple[Optional[np.ndarray], int, float, Optional[AkazeDebug]]:
     akaze = cv2.AKAZE_create(threshold=cfg.akaze_threshold)
-    kp1, des1 = akaze.detectAndCompute(ref_u8, None)
-    kp2, des2 = akaze.detectAndCompute(mov_u8, None)
+    kp1, des1 = akaze.detectAndCompute(ref_u8, None)  # ref
+    kp2, des2 = akaze.detectAndCompute(mov_u8, None)  # mov
 
     if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
-        return None, 0, 0.0
+        dbg = AkazeDebug(kp1, kp2, [], None) if cfg.debug_vis else None
+        return None, 0, 0.0, dbg
 
     bf = cv2.BFMatcher(cv2.NORM_HAMMING)
     raw_matches = bf.knnMatch(des2, des1, k=2)
@@ -166,31 +175,69 @@ def _akaze_register(
                 good.append(m)
 
     if len(good) < cfg.min_inliers:
-        return None, len(good), 0.0
+        dbg = AkazeDebug(kp1, kp2, good, None) if cfg.debug_vis else None
+        return None, len(good), 0.0, dbg
 
     pts_mov = np.float32([kp2[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
     pts_ref = np.float32([kp1[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
 
     if cfg.transform_model == "affine":
         M, mask = cv2.estimateAffine2D(
-            pts_mov, pts_ref,
-            method=cv2.RANSAC,
-            ransacReprojThreshold=cfg.ransac_reproj,
+            pts_mov, pts_ref, method=cv2.RANSAC, ransacReprojThreshold=cfg.ransac_reproj
         )
     else:
         M, mask = cv2.estimateAffinePartial2D(
-            pts_mov, pts_ref,
-            method=cv2.RANSAC,
-            ransacReprojThreshold=cfg.ransac_reproj,
+            pts_mov, pts_ref, method=cv2.RANSAC, ransacReprojThreshold=cfg.ransac_reproj
         )
 
     if M is None or mask is None:
-        return None, 0, 0.0
+        dbg = AkazeDebug(kp1, kp2, good, None) if cfg.debug_vis else None
+        return None, 0, 0.0, dbg
 
     inliers = int(mask.sum())
     ratio = inliers / len(good) if len(good) > 0 else 0.0
-    return M, inliers, ratio
+    dbg = AkazeDebug(kp1, kp2, good, mask) if cfg.debug_vis else None
+    return M, inliers, ratio, dbg
 
+def _draw_keypoints(img_u8: np.ndarray, kps: List[cv2.KeyPoint]) -> np.ndarray:
+    return cv2.drawKeypoints(
+        img_u8, kps, None,
+        flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS
+    )
+
+def _draw_matches(
+    ref_u8: np.ndarray,
+    mov_u8: np.ndarray,
+    kp_ref: List[cv2.KeyPoint],
+    kp_mov: List[cv2.KeyPoint],
+    matches: List[cv2.DMatch],
+    inlier_mask: Optional[np.ndarray],
+    max_draw: int = 80,
+) -> np.ndarray:
+    matches_draw = matches[:max_draw]
+
+    if inlier_mask is None:
+        return cv2.drawMatches(
+            mov_u8, kp_mov,
+            ref_u8, kp_ref,
+            matches_draw, None,
+            flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS,
+        )
+
+    # --- IMPORTANT: convert to *plain* Python ints 0/1 ---
+    mask = np.asarray(inlier_mask).reshape(-1)  # handles (N,1) or (N,)
+    mask = mask[: len(matches_draw)]
+    matchesMask = [int(x) for x in mask]  # ensures pure Python int list
+
+    # Use keyword args so OpenCV can't mis-interpret positional params
+    return cv2.drawMatches(
+        img1=mov_u8, keypoints1=kp_mov,
+        img2=ref_u8, keypoints2=kp_ref,
+        matches1to2=matches_draw,
+        outImg=None,
+        matchesMask=matchesMask,
+        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS,
+    )
 
 # ── ECC refinement ────────────────────────────────────────────────────────
 _ECC_MOTION = {
@@ -299,7 +346,36 @@ def register_one(
     # Step 2: AKAZE feature-based
     ref_u8 = _to_u8(ref_prep)
     mov_u8 = _to_u8(mov_prep)
-    M_feat, inliers, inlier_ratio = _akaze_register(ref_u8, mov_u8, cfg)
+    M_feat, inliers, inlier_ratio, dbg = _akaze_register(ref_u8, mov_u8, cfg)
+
+    if cfg.debug_vis and dbg is not None:
+        vis_ref_kp = _draw_keypoints(ref_u8, dbg.kp_ref)
+        vis_mov_kp = _draw_keypoints(mov_u8, dbg.kp_mov)
+        vis_matches_all = _draw_matches(
+            ref_u8, mov_u8, dbg.kp_ref, dbg.kp_mov,
+            dbg.good_matches, None,
+            max_draw=cfg.debug_max_matches_draw,
+        )
+        vis_matches_inl = _draw_matches(
+            ref_u8, mov_u8, dbg.kp_ref, dbg.kp_mov,
+            dbg.good_matches, dbg.inlier_mask,
+            max_draw=cfg.debug_max_matches_draw,
+        )
+
+        if cfg.debug_save_dir:
+            import os
+            os.makedirs(cfg.debug_save_dir, exist_ok=True)
+            cv2.imwrite(f"{cfg.debug_save_dir}/frame_{idx:04d}_ref_kp.png", vis_ref_kp)
+            cv2.imwrite(f"{cfg.debug_save_dir}/frame_{idx:04d}_mov_kp.png", vis_mov_kp)
+            cv2.imwrite(f"{cfg.debug_save_dir}/frame_{idx:04d}_matches_all.png", vis_matches_all)
+            cv2.imwrite(f"{cfg.debug_save_dir}/frame_{idx:04d}_matches_inliers.png", vis_matches_inl)
+        else:
+            # Quick interactive debug (blocks on waitKey)
+            cv2.imshow("AKAZE ref keypoints", vis_ref_kp)
+            cv2.imshow("AKAZE mov keypoints", vis_mov_kp)
+            cv2.imshow("AKAZE matches (good)", vis_matches_all)
+            cv2.imshow("AKAZE matches (inliers)", vis_matches_inl)
+            cv2.waitKey(1)
 
     # Step 3: collect candidates
     candidates: List[Tuple[np.ndarray, TransformType]] = []

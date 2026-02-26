@@ -14,7 +14,7 @@ def main():
             do_register=True,
             ref_strategy="middle",
             transform_model="affine",
-            use_clahe=True,
+            use_clahe=False,
             use_ecc=True,
         ),
     )
@@ -48,19 +48,19 @@ def main():
         outdir=outdir + r"\\" + folder_spec.data_folder,
     )
 
-    folder_spec = FolderSpec(
-        root_folder=r"images\Maestro3",
-        data_folder="6mm_1024Aline_disc",
-        pixels=2048,
-        alines=1024,
-        crop_depth=(0, 1024),
-        dispersion=[1.315892282e-06, 5.459678905e-10],
-        window_sigma=window_sigma,
-        gap=gap,
-        gap_offset=offset,
-        n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
-        sub_window_spread=0.5,    # sub-window center spread in sigma units
-    )
+    # folder_spec = FolderSpec(
+    #     root_folder=r"images\Maestro3",
+    #     data_folder="6mm_1024Aline_disc",
+    #     pixels=2048,
+    #     alines=1024,
+    #     crop_depth=(0, 1024),
+    #     dispersion=[1.315892282e-06, 5.459678905e-10],
+    #     window_sigma=window_sigma,
+    #     gap=gap,
+    #     gap_offset=offset,
+    #     n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
+    #     sub_window_spread=0.5,    # sub-window center spread in sigma units
+    # )
 
 
     # folder_spec = FolderSpec(
@@ -77,12 +77,12 @@ def main():
     #     sub_window_spread=0.5,    # sub-window center spread in sigma units
     # )
 
-    predict_from_config(
-        cfg=cfg,
-        folder_spec=folder_spec,
-        ckpt_path=path,
-        outdir=outdir + r"\\" + folder_spec.data_folder,
-    )
+    # predict_from_config(
+    #     cfg=cfg,
+    #     folder_spec=folder_spec,
+    #     ckpt_path=path,
+    #     outdir=outdir + r"\\" + folder_spec.data_folder,
+    # )
 
 
 if __name__ == "__main__":
