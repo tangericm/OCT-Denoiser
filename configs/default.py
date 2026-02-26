@@ -24,6 +24,32 @@ class FolderSpec:
 
 
 @dataclass
+class PostprocessConfig:
+    """Post-processing settings for registration + axial deconvolution."""
+
+    enable: bool = False
+
+    # Registration
+    do_register: bool = True
+    ref_strategy: str = "middle"       # "middle" or "sharpness"
+    transform_model: str = "euclidean" # "euclidean" or "affine"
+    use_ecc: bool = False
+    use_clahe: bool = True
+    max_translation: float = 100.0     # pixels
+    max_rotation_deg: float = 5.0      # degrees
+
+    # Deconvolution
+    do_deconv: bool = True
+    deconv_method: str = "wiener"      # "wiener" or "richardson_lucy"
+    psf_sigma: float = 1.5             # Gaussian PSF sigma in axial pixels
+    wiener_nsr: float = 0.01
+    rl_iterations: int = 15
+    rl_tv_lambda: float = 0.002
+    pre_smooth_sigma: float = 0.0
+    post_smooth_sigma: float = 0.0
+
+
+@dataclass
 class TrainConfig:
     # Paths
     runs_root: str = "runs"
@@ -85,3 +111,6 @@ class TrainConfig:
     # Inference outputs
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False
+
+    # Post-processing (registration + deconvolution after prediction)
+    postprocess: Optional[PostprocessConfig] = None
