@@ -123,11 +123,6 @@ def run_self_test(verbose: bool = True) -> bool:
         RegistrationConfig,
         register_stack,
     )
-    from .deconvolution import (
-        DeconvConfig,
-        deconvolve_image,
-        make_gaussian_psf,
-    )
 
     rng = np.random.default_rng(42)
     H, W = 256, 256
@@ -162,9 +157,6 @@ def run_self_test(verbose: bool = True) -> bool:
     # Check recovered shifts are close to true shifts
     for i, (dy_true, dx_true) in enumerate(true_shifts):
         r = results[i]
-        # Transform applied to frame i should undo the shift, so
-        # dx_recovered ~ -dx_true, dy_recovered ~ -dy_true
-        # But we measure the transform from mov->ref, so M brings mov to ref
         if i == 0:
             continue
         err_dx = abs(r.dx - (-dx_true))
@@ -181,60 +173,6 @@ def run_self_test(verbose: bool = True) -> bool:
                 f"  OK: frame {i} shift error "
                 f"dx={err_dx:.2f} dy={err_dy:.2f}"
             )
-
-    # --- Deconvolution test ---
-    # Blur a sharp image, deconvolve, check sharpness improves
-    sharp = np.zeros((128, 64), dtype=np.float32)
-    sharp[60:68, :] = 1.0  # bright band
-    psf = make_gaussian_psf(2.0).astype(np.float32)
-    from scipy.ndimage import convolve1d
-    blurred = convolve1d(sharp, psf, axis=0, mode="constant")
-    blurred = np.clip(blurred, 0, 1)
-
-    dcfg = DeconvConfig(method="wiener", psf_sigma=2.0, wiener_nsr=0.01)
-    recovered = deconvolve_image(blurred, dcfg)
-
-    # Sharpness proxy: variance of axial gradient
-    def axial_sharpness(img):
-        g = np.diff(img, axis=0)
-        return float(np.var(g))
-
-    s_blur = axial_sharpness(blurred)
-    s_rec = axial_sharpness(recovered)
-    if s_rec <= s_blur:
-        if verbose:
-            print(
-                f"  WARN: deconv did not improve axial sharpness "
-                f"({s_blur:.6f} -> {s_rec:.6f})"
-            )
-        ok = False
-    elif verbose:
-        print(
-            f"  OK: axial sharpness improved "
-            f"{s_blur:.6f} -> {s_rec:.6f} "
-            f"({s_rec/s_blur:.1f}x)"
-        )
-
-    # RL test
-    dcfg_rl = DeconvConfig(
-        method="richardson_lucy", psf_sigma=2.0,
-        rl_iterations=20, rl_tv_lambda=0.001,
-    )
-    recovered_rl = deconvolve_image(blurred, dcfg_rl)
-    s_rl = axial_sharpness(recovered_rl)
-    if s_rl <= s_blur:
-        if verbose:
-            print(
-                f"  WARN: RL deconv did not improve axial sharpness "
-                f"({s_blur:.6f} -> {s_rl:.6f})"
-            )
-        ok = False
-    elif verbose:
-        print(
-            f"  OK: RL axial sharpness improved "
-            f"{s_blur:.6f} -> {s_rl:.6f} "
-            f"({s_rl/s_blur:.1f}x)"
-        )
 
     status = "PASSED" if ok else "FAILED (see warnings above)"
     if verbose:

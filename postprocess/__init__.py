@@ -1,9 +1,9 @@
-"""OCT post-processing pipeline: registration, deconvolution, and QC.
+"""OCT post-processing pipeline: registration and QC.
 
 Public API
 ----------
-postprocess_stacks : High-level function to register and deconvolve stacks.
-run_self_test      : Synthetic validation of registration + deconvolution.
+postprocess_stacks : High-level function to register stacks.
+run_self_test      : Synthetic validation of registration.
 """
 from .pipeline import postprocess_stacks
 from .reporting import run_self_test

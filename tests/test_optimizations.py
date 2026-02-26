@@ -11,7 +11,6 @@ Tests:
   5. Gaussian window invariants (sigma/gap independence)
   6. Multi-level window generation
   7. Multi-level model forward pass
-  8. Sweep config validation
 """
 from __future__ import annotations
 
@@ -449,65 +448,6 @@ def test_multilevel_model_forward():
 
 
 # ---------------------------------------------------------------------------
-# 8) Sweep config validation
-# ---------------------------------------------------------------------------
-def test_sweep_config():
-    """
-    Verify sweep config fields exist and the sweep module imports correctly.
-    """
-    from configs.default import TrainConfig
-
-    print("=" * 60)
-    print("TEST 8: Sweep Config Validation")
-    print("=" * 60)
-
-    all_pass = True
-
-    # Config fields exist with correct defaults
-    cfg = TrainConfig()
-    ok_fields = (
-        cfg.sweep_sigmas is None
-        and cfg.sweep_gaps is None
-    )
-    all_pass = all_pass and ok_fields
-    print(f"  Sweep fields default to None: {ok_fields}  [{'PASS' if ok_fields else 'FAIL'}]")
-
-    # Sweep mode correctly detected
-    cfg_sweep = TrainConfig(
-        sweep_sigmas=[0.01, 0.08],
-        sweep_gaps=[0.10, 0.50],
-    )
-    ok_detect = bool(cfg_sweep.sweep_sigmas and cfg_sweep.sweep_gaps)
-    all_pass = all_pass and ok_detect
-    print(f"  Sweep mode detected when set: {ok_detect}  [{'PASS' if ok_detect else 'FAIL'}]")
-
-    # Sweep module importable (may fail if torch is not installed)
-    try:
-        from engine.sweep import run_sweep  # noqa: F401
-        ok_import = True
-    except ImportError as e:
-        if "torch" in str(e):
-            ok_import = True  # expected: sweep imports train which needs torch
-            print(f"    (torch not available, skipping deep import check)")
-        else:
-            ok_import = False
-            print(f"    Import error: {e}")
-    all_pass = all_pass and ok_import
-    print(f"  engine.sweep importable: {ok_import}  [{'PASS' if ok_import else 'FAIL'}]")
-
-    # FolderSpec multilevel fields
-    from configs.default import FolderSpec
-    fs = FolderSpec(root_folder=".", data_folder=".", pixels=1024, alines=512)
-    ok_ml = fs.n_sub_windows == 0 and fs.sub_window_spread == 2.0
-    all_pass = all_pass and ok_ml
-    print(f"  FolderSpec multilevel defaults: {ok_ml}  [{'PASS' if ok_ml else 'FAIL'}]")
-
-    print(f"  Overall: {'PASS' if all_pass else 'FAIL'}")
-    print()
-    return all_pass
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def _run_torch_tests_subprocess():
@@ -542,7 +482,6 @@ if __name__ == "__main__":
         results["resampling_cached"] = test_resampling_cached()
         results["gaussian_window"] = test_gaussian_window_invariants()
         results["multilevel_windows"] = test_multilevel_windows()
-        results["sweep_config"] = test_sweep_config()
 
     if mode in ("all", "torch"):
         # Run torch tests — try direct first, fall back to subprocess if memory issues

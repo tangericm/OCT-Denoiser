@@ -25,7 +25,7 @@ class FolderSpec:
 
 @dataclass
 class PostprocessConfig:
-    """Post-processing settings for registration + axial deconvolution."""
+    """Post-processing settings for inter-frame registration."""
 
     enable: bool = False
 
@@ -37,16 +37,6 @@ class PostprocessConfig:
     use_clahe: bool = True
     max_translation: float = 100.0     # pixels
     max_rotation_deg: float = 10.0      # degrees
-
-    # Deconvolution
-    do_deconv: bool = True
-    deconv_method: str = "wiener"      # "wiener" or "richardson_lucy"
-    psf_sigma: float = 1.5             # Gaussian PSF sigma in axial pixels
-    wiener_nsr: float = 0.01
-    rl_iterations: int = 15
-    rl_tv_lambda: float = 0.002
-    pre_smooth_sigma: float = 0.0
-    post_smooth_sigma: float = 0.0
 
 
 @dataclass
@@ -104,13 +94,9 @@ class TrainConfig:
     early_stop_min_delta: float = 0.0
     early_stop_warmup_checks: int = 0
 
-    # Sweep mode (grid search over spectral parameters)
-    sweep_sigmas: Optional[List[float]] = None
-    sweep_gaps: Optional[List[float]] = None
-
     # Inference outputs
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False
 
-    # Post-processing (registration + deconvolution after prediction)
+    # Post-processing (registration after prediction)
     postprocess: Optional[PostprocessConfig] = None
