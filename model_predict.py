@@ -11,17 +11,11 @@ def main():
         snr_sig_stat="p99.99",  # change to e.g. "p95" to use percentile statistic
         postprocess=PostprocessConfig(
             enable=True,
-            # Registration
             do_register=True,
             ref_strategy="middle",
             transform_model="affine",
             use_clahe=True,
             use_ecc=True,
-            # Deconvolution
-            do_deconv=False,
-            deconv_method="wiener",
-            psf_sigma=1.5,
-            wiener_nsr=0.01,
         ),
     )
 

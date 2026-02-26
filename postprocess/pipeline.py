@@ -1,4 +1,4 @@
-"""High-level API for OCT post-processing (registration + deconvolution).
+"""High-level API for OCT post-processing (registration).
 
 Called from ``engine/infer.py`` after prediction completes.
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -18,7 +18,6 @@ from .registration import (
     register_stack,
     FrameResult,
 )
-from .deconvolution import DeconvConfig, deconvolve_stack
 from .reporting import print_summary, save_csv_report, save_json_report
 
 logger = logging.getLogger(__name__)
@@ -33,12 +32,10 @@ def postprocess_stacks(
     also_save_float32: bool = False,
     *,
     do_register: bool = True,
-    do_deconv: bool = True,
     reg_cfg: Optional[RegistrationConfig] = None,
-    deconv_cfg: Optional[DeconvConfig] = None,
     use_clahe: bool = True,
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Register and deconvolve prediction (and optionally GT) stacks.
+    """Register prediction (and optionally GT) stacks.
 
     Parameters
     ----------
@@ -49,9 +46,7 @@ def postprocess_stacks(
     tiff_dtype : output TIFF dtype (``"uint16"``, ``"uint8"``, ``"float32"``).
     also_save_float32 : save an additional float32 copy of predictions.
     do_register : run inter-frame registration.
-    do_deconv : run axial deconvolution.
     reg_cfg : registration settings (defaults used if None).
-    deconv_cfg : deconvolution settings (defaults used if None).
     use_clahe : apply CLAHE during registration preprocessing.
 
     Returns
@@ -65,8 +60,6 @@ def postprocess_stacks(
 
     if reg_cfg is None:
         reg_cfg = RegistrationConfig()
-    if deconv_cfg is None:
-        deconv_cfg = DeconvConfig()
 
     # ── Registration ──────────────────────────────────────────────────
     if do_register:
@@ -105,37 +98,6 @@ def postprocess_stacks(
                 os.path.join(outdir, f"pred_registered_{param_suffix}_float32.tiff"),
                 preds, dtype="float32", scale_per_slice=True,
             )
-
-    # ── Deconvolution ─────────────────────────────────────────────────
-    if do_deconv:
-        print(
-            f"[POSTPROCESS] Deconvolving predictions "
-            f"({deconv_cfg.method}, sigma={deconv_cfg.psf_sigma}) ..."
-        )
-        preds_deconv = deconvolve_stack(preds, deconv_cfg)
-        save_tiff_stack(
-            os.path.join(outdir, f"pred_deconvolved_{param_suffix}.tiff"),
-            preds_deconv, dtype=tiff_dtype, scale_per_slice=True,
-        )
-
-        if gts is not None:
-            print("[POSTPROCESS] Deconvolving ground truth ...")
-            gts_deconv = deconvolve_stack(gts, deconv_cfg)
-            save_tiff_stack(
-                os.path.join(outdir, f"gt_deconvolved_{param_suffix}.tiff"),
-                gts_deconv, dtype=tiff_dtype, scale_per_slice=True,
-            )
-
-        if also_save_float32 and tiff_dtype != "float32":
-            save_tiff_stack(
-                os.path.join(outdir, f"pred_deconvolved_{param_suffix}_float32.tiff"),
-                preds_deconv, dtype="float32", scale_per_slice=True,
-            )
-
-        # Use deconvolved as the output
-        preds = preds_deconv
-        if gts is not None:
-            gts = gts_deconv
 
     elapsed = time.time() - t0
     print(f"[POSTPROCESS] Done ({elapsed:.1f}s)")

@@ -84,7 +84,7 @@ def predict_raw_to_tiffs(
     snr_sig_y1: int | None = None,
     snr_sig_stat: str | None = None,
 
-    # Post-processing (registration + deconvolution)
+    # Post-processing (registration)
     postprocess_cfg=None,
 ) -> None:
     """
@@ -311,11 +311,10 @@ def predict_raw_to_tiffs(
     if also_save_float32:
         save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds, dtype="float32", scale_per_slice=True)
 
-    # ── Post-processing (registration + deconvolution) ────────────────
+    # ── Post-processing (registration) ──────────────────────────────
     if postprocess_cfg is not None and postprocess_cfg.enable:
         from postprocess.pipeline import postprocess_stacks
         from postprocess.registration import RegistrationConfig
-        from postprocess.deconvolution import DeconvConfig
 
         pp = postprocess_cfg
         reg_cfg = RegistrationConfig(
@@ -325,15 +324,6 @@ def predict_raw_to_tiffs(
             max_translation=pp.max_translation,
             max_rotation_deg=pp.max_rotation_deg,
         )
-        deconv_cfg = DeconvConfig(
-            method=pp.deconv_method,
-            psf_sigma=pp.psf_sigma,
-            wiener_nsr=pp.wiener_nsr,
-            rl_iterations=pp.rl_iterations,
-            rl_tv_lambda=pp.rl_tv_lambda,
-            pre_smooth_sigma=pp.pre_smooth_sigma,
-            post_smooth_sigma=pp.post_smooth_sigma,
-        )
         postprocess_stacks(
             preds=preds,
             gts=gts,
@@ -342,9 +332,7 @@ def predict_raw_to_tiffs(
             tiff_dtype=tiff_dtype,
             also_save_float32=also_save_float32,
             do_register=pp.do_register,
-            do_deconv=pp.do_deconv,
             reg_cfg=reg_cfg,
-            deconv_cfg=deconv_cfg,
             use_clahe=pp.use_clahe,
         )
 
