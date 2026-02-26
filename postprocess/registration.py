@@ -39,7 +39,7 @@ class RegistrationConfig:
     dft_upsample_factor: int = 10
 
     # AKAZE feature matching
-    akaze_threshold: float = 0.0005
+    akaze_threshold: float = 0.0008
     ratio_test: float = 0.75
     min_inliers: int = 10
     ransac_reproj: float = 5.0
@@ -53,6 +53,11 @@ class RegistrationConfig:
     grid_threshold_decay: float = 0.5  # multiply threshold each retry
     grid_max_retries: int = 3          # retry attempts per cell
     grid_pad: int = 32                 # overlap padding (pixels) for context
+
+    # Detection ROI — restrict keypoints to retinal region (row range)
+    # Set both to None to use the full image.
+    detect_roi_y0: Optional[int] = None   # top row of ROI (inclusive)
+    detect_roi_y1: Optional[int] = None   # bottom row of ROI (exclusive)
 
     # ECC refinement
     use_ecc: bool = False
@@ -129,6 +134,23 @@ def _to_u8(img: np.ndarray) -> np.ndarray:
     return np.clip(img * 255, 0, 255).astype(np.uint8)
 
 
+def _build_roi_mask(shape: Tuple[int, ...], cfg: RegistrationConfig) -> Optional[np.ndarray]:
+    """Build a uint8 mask restricting detection to the retinal ROI rows.
+
+    Returns None if no ROI is configured (full-image detection).
+    """
+    if cfg.detect_roi_y0 is None and cfg.detect_roi_y1 is None:
+        return None
+    H, W = shape[:2]
+    y0 = cfg.detect_roi_y0 if cfg.detect_roi_y0 is not None else 0
+    y1 = cfg.detect_roi_y1 if cfg.detect_roi_y1 is not None else H
+    y0 = max(0, min(y0, H))
+    y1 = max(0, min(y1, H))
+    mask = np.zeros((H, W), dtype=np.uint8)
+    mask[y0:y1, :] = 255
+    return mask
+
+
 # ── Reference selection ───────────────────────────────────────────────────
 def select_reference(stack: np.ndarray, strategy: str = "middle") -> int:
     """Choose the reference frame index."""
@@ -163,6 +185,7 @@ def _dft_register(
 def _detect_gridded(
     img_u8: np.ndarray,
     cfg: RegistrationConfig,
+    mask: Optional[np.ndarray] = None,
 ) -> Tuple[List[cv2.KeyPoint], Optional[np.ndarray]]:
     """Detect AKAZE keypoints on a spatial grid for uniform coverage.
 
@@ -172,6 +195,12 @@ def _detect_gridded(
     each retry).  A small overlap ``grid_pad`` is extracted around each cell
     so features near boundaries have enough context, but only keypoints
     whose centres fall within the cell are kept.
+
+    Parameters
+    ----------
+    mask : optional uint8 mask (same size as *img_u8*).  Keypoints outside
+        non-zero mask pixels are discarded.  Typically built by
+        ``_build_roi_mask`` to restrict detection to retinal rows.
 
     Returns the same ``(keypoints, descriptors)`` tuple as
     ``cv2.Feature2D.detectAndCompute``.
@@ -199,13 +228,14 @@ def _detect_gridded(
             px1 = min(W, x1 + pad)
 
             cell_img = img_u8[py0:py1, px0:px1]
+            cell_mask = mask[py0:py1, px0:px1] if mask is not None else None
             threshold = cfg.akaze_threshold
             best_kps: List[cv2.KeyPoint] = []
             best_des: Optional[np.ndarray] = None
 
             for attempt in range(cfg.grid_max_retries + 1):
                 akaze = cv2.AKAZE_create(threshold=threshold)
-                kps, des = akaze.detectAndCompute(cell_img, None)
+                kps, des = akaze.detectAndCompute(cell_img, cell_mask)
 
                 # Keep only keypoints whose centres are inside the cell
                 kept_kps = []
@@ -243,13 +273,15 @@ def _akaze_register(
     mov_u8: np.ndarray,
     cfg: RegistrationConfig,
 ) -> Tuple[Optional[np.ndarray], int, float, Optional[AkazeDebug]]:
+    roi_mask = _build_roi_mask(ref_u8.shape, cfg)
+
     if cfg.grid_detect:
-        kp1, des1 = _detect_gridded(ref_u8, cfg)
-        kp2, des2 = _detect_gridded(mov_u8, cfg)
+        kp1, des1 = _detect_gridded(ref_u8, cfg, mask=roi_mask)
+        kp2, des2 = _detect_gridded(mov_u8, cfg, mask=roi_mask)
     else:
         akaze = cv2.AKAZE_create(threshold=cfg.akaze_threshold)
-        kp1, des1 = akaze.detectAndCompute(ref_u8, None)  # ref
-        kp2, des2 = akaze.detectAndCompute(mov_u8, None)  # mov
+        kp1, des1 = akaze.detectAndCompute(ref_u8, roi_mask)  # ref
+        kp2, des2 = akaze.detectAndCompute(mov_u8, roi_mask)  # mov
 
     if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
         dbg = AkazeDebug(kp1, kp2, [], None) if cfg.debug_vis else None
