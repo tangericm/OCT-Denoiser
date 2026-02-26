@@ -21,7 +21,7 @@ def main():
 
     folder_spec = FolderSpec(
         root_folder=r"images\Maestro3",
-        data_folder="9mm_1024Aline",
+        data_folder="9mm_1024Aline_disc",
         pixels=2048,
         alines=1024,
         crop_depth=(0, 1024),
@@ -42,7 +42,7 @@ def main():
 
     folder_spec = FolderSpec(
         root_folder=r"images\Maestro3",
-        data_folder="9mm_1024Aline_disc",
+        data_folder="9mm_1024Aline_center",
         pixels=2048,
         alines=1024,
         crop_depth=(0, 1024),

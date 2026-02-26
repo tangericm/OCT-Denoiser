@@ -81,7 +81,7 @@ def main():
 
         patch_h=288,
         patch_w=1,
-        patches_per_frame=32,
+        patches_per_frame=256,
         patch_mode="strip",
 
         w_charb=0.010307111599432855,
