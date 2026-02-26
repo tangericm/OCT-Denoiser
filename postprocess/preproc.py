@@ -15,7 +15,7 @@ def normalize_percentile(
 
 
 def apply_clahe(
-    img: np.ndarray, clip_limit: float = 2.0, tile_grid: int = 8
+    img: np.ndarray, clip_limit: float = 3.0, tile_grid: int = 4
 ) -> np.ndarray:
     """Apply CLAHE to a [0,1] float32 image; returns [0,1] float32."""
     u8 = np.clip(img * 255, 0, 255).astype(np.uint8)
@@ -31,7 +31,7 @@ def prepare_for_registration(
     use_clahe: bool = True,
     p_lo: float = 1.0,
     p_hi: float = 99.0,
-    clahe_clip: float = 2.0,
+    clahe_clip: float = 3.0,
 ) -> np.ndarray:
     """Create a preprocessed copy of *stack* optimized for registration.
 

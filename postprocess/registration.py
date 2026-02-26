@@ -39,11 +39,20 @@ class RegistrationConfig:
     dft_upsample_factor: int = 10
 
     # AKAZE feature matching
-    akaze_threshold: float = 0.001
+    akaze_threshold: float = 0.0005
     ratio_test: float = 0.75
     min_inliers: int = 10
     ransac_reproj: float = 5.0
     transform_model: str = "euclidean"  # "euclidean" or "affine"
+
+    # Gridded keypoint detection for spatial coverage
+    grid_detect: bool = True           # enable grid-based detection
+    grid_rows: int = 2                 # rows in detection grid
+    grid_cols: int = 4                 # columns in detection grid
+    min_kp_per_cell: int = 15          # minimum keypoints per cell
+    grid_threshold_decay: float = 0.5  # multiply threshold each retry
+    grid_max_retries: int = 3          # retry attempts per cell
+    grid_pad: int = 32                 # overlap padding (pixels) for context
 
     # ECC refinement
     use_ecc: bool = False
@@ -150,15 +159,97 @@ def _dft_register(
     return float(shift_yx[0]), float(shift_yx[1]), float(1.0 - error)
 
 
+# ── Gridded keypoint detection ────────────────────────────────────────────
+def _detect_gridded(
+    img_u8: np.ndarray,
+    cfg: RegistrationConfig,
+) -> Tuple[List[cv2.KeyPoint], Optional[np.ndarray]]:
+    """Detect AKAZE keypoints on a spatial grid for uniform coverage.
+
+    Divides the image into ``grid_rows x grid_cols`` cells.  For each cell,
+    if fewer than ``min_kp_per_cell`` keypoints are found, re-detect with a
+    progressively lower threshold (multiplied by ``grid_threshold_decay``
+    each retry).  A small overlap ``grid_pad`` is extracted around each cell
+    so features near boundaries have enough context, but only keypoints
+    whose centres fall within the cell are kept.
+
+    Returns the same ``(keypoints, descriptors)`` tuple as
+    ``cv2.Feature2D.detectAndCompute``.
+    """
+    H, W = img_u8.shape[:2]
+    cell_h = H // cfg.grid_rows
+    cell_w = W // cfg.grid_cols
+    pad = cfg.grid_pad
+
+    all_kps: List[cv2.KeyPoint] = []
+    all_des: List[np.ndarray] = []
+
+    for r in range(cfg.grid_rows):
+        for c in range(cfg.grid_cols):
+            # Cell boundaries (no padding)
+            y0 = r * cell_h
+            y1 = (r + 1) * cell_h if r < cfg.grid_rows - 1 else H
+            x0 = c * cell_w
+            x1 = (c + 1) * cell_w if c < cfg.grid_cols - 1 else W
+
+            # Padded extraction for context
+            py0 = max(0, y0 - pad)
+            py1 = min(H, y1 + pad)
+            px0 = max(0, x0 - pad)
+            px1 = min(W, x1 + pad)
+
+            cell_img = img_u8[py0:py1, px0:px1]
+            threshold = cfg.akaze_threshold
+            best_kps: List[cv2.KeyPoint] = []
+            best_des: Optional[np.ndarray] = None
+
+            for attempt in range(cfg.grid_max_retries + 1):
+                akaze = cv2.AKAZE_create(threshold=threshold)
+                kps, des = akaze.detectAndCompute(cell_img, None)
+
+                # Keep only keypoints whose centres are inside the cell
+                kept_kps = []
+                kept_idx = []
+                for j, kp in enumerate(kps):
+                    gx = kp.pt[0] + px0
+                    gy = kp.pt[1] + py0
+                    if x0 <= gx < x1 and y0 <= gy < y1:
+                        kept_kps.append(kp)
+                        kept_idx.append(j)
+
+                if len(kept_kps) > len(best_kps):
+                    best_kps = kept_kps
+                    best_des = des[kept_idx] if des is not None and kept_idx else None
+
+                if len(kept_kps) >= cfg.min_kp_per_cell or attempt == cfg.grid_max_retries:
+                    break
+                threshold *= cfg.grid_threshold_decay
+
+            # Offset keypoint coordinates to full-image space
+            for kp in best_kps:
+                kp.pt = (kp.pt[0] + px0, kp.pt[1] + py0)
+
+            all_kps.extend(best_kps)
+            if best_des is not None:
+                all_des.append(best_des)
+
+    combined_des = np.vstack(all_des) if all_des else None
+    return all_kps, combined_des
+
+
 # ── AKAZE feature-based registration ─────────────────────────────────────
 def _akaze_register(
     ref_u8: np.ndarray,
     mov_u8: np.ndarray,
     cfg: RegistrationConfig,
 ) -> Tuple[Optional[np.ndarray], int, float, Optional[AkazeDebug]]:
-    akaze = cv2.AKAZE_create(threshold=cfg.akaze_threshold)
-    kp1, des1 = akaze.detectAndCompute(ref_u8, None)  # ref
-    kp2, des2 = akaze.detectAndCompute(mov_u8, None)  # mov
+    if cfg.grid_detect:
+        kp1, des1 = _detect_gridded(ref_u8, cfg)
+        kp2, des2 = _detect_gridded(mov_u8, cfg)
+    else:
+        akaze = cv2.AKAZE_create(threshold=cfg.akaze_threshold)
+        kp1, des1 = akaze.detectAndCompute(ref_u8, None)  # ref
+        kp2, des2 = akaze.detectAndCompute(mov_u8, None)  # mov
 
     if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
         dbg = AkazeDebug(kp1, kp2, [], None) if cfg.debug_vis else None
