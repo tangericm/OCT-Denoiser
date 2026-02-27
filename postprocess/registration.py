@@ -76,7 +76,7 @@ class RegistrationConfig:
     # Debug visualization
     debug_vis: bool = True
     debug_save_dir: Optional[str] = r"C:\Users\erict\OneDrive\Desktop\Projects\OCT Denoiser\runs\A-Line\1D_npatch=256\predictions\6mm_1024Aline"  # e.g. "debug_akaze"
-    debug_max_matches_draw: int = 80
+    debug_max_matches_draw: int = 200
 
 
 @dataclass
