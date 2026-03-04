@@ -39,7 +39,6 @@ OCT-Denoiser/
 ├── networks/resunet_pseudo3d.py              # base ResUNet
 ├── networks/resunet_pseudo3d_multilevel.py   # + multi-level spectral stem
 ├── networks/resunet_multilevel_1d.py         # A-line optimized variant
-├── postprocess/             # inter-frame registration pipeline
 └── utils/                   # run dirs, seeding, TIFF I/O, live plot
 ```
 

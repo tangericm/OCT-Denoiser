@@ -1,4 +1,4 @@
-from configs.default import FolderSpec, PostprocessConfig, TrainConfig
+from configs.default import FolderSpec, TrainConfig
 from engine.infer import predict_from_config
 
 
@@ -9,14 +9,6 @@ def main():
         device="cuda",
         also_save_float32=False,
         snr_sig_stat="p99.99",  # change to e.g. "p95" to use percentile statistic
-        postprocess=PostprocessConfig(
-            enable=True,
-            do_register=True,
-            ref_strategy="middle",
-            transform_model="affine",
-            use_clahe=False,
-            use_ecc=True,
-        ),
     )
 
     run = r"1D_npatch=256"
