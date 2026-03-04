@@ -23,21 +23,6 @@ class FolderSpec:
     sub_window_spread: float = 2.0    # sub-window center spread in sigma units
 
 
-@dataclass
-class PostprocessConfig:
-    """Post-processing settings for inter-frame registration."""
-
-    enable: bool = False
-
-    # Registration
-    do_register: bool = True
-    ref_strategy: str = "middle"       # "middle" or "sharpness"
-    transform_model: str = "euclidean" # "euclidean" or "affine"
-    use_ecc: bool = False
-    use_clahe: bool = True
-    max_translation: float = 100.0     # pixels
-    max_rotation_deg: float = 10.0      # degrees
-
 
 @dataclass
 class TrainConfig:
@@ -98,5 +83,3 @@ class TrainConfig:
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False
 
-    # Post-processing (registration after prediction)
-    postprocess: Optional[PostprocessConfig] = None
