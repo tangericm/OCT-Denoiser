@@ -7,23 +7,20 @@ then exports a sharp averaged image.
 
 Usage
 -----
-    python registration.py                          # uses defaults below
-    python registration.py --dir <tiff_dir> --file <filename> --output avg.tif
-    python registration.py --help
+    Edit the parameters in the ``if __name__`` block at the bottom, then
+    run the file directly (F5 in VS Code).
 
 Dependencies
 ------------
-    numpy, scipy, tifffile, matplotlib (optional, for --show)
+    numpy, scipy, tifffile, matplotlib
 
 Author: Eric Tang (tangericm)
 """
 
 from __future__ import annotations
 
-import argparse
 import os
-import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import numpy as np
@@ -415,118 +412,58 @@ def save_tiff(
 
 
 # ---------------------------------------------------------------------------
-#  CLI
+#  Run directly in VS Code — edit parameters below
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Sub-pixel rigid + strip-wise OCT B-scan registration & averaging.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+
+    # ---- Edit these ----
+    direc = r"runs\A-Line\1D_npatch=256\predictions_tiff\6mm_1024Aline"
+    file = "gt_6mm_1024Aline_s005_g060.tif"
+    output = None  # defaults to <direc>/registered_<file>
+
+    cfg = RegistrationConfig(
+        upsample_factor=100,        # 100 → 0.01 px accuracy
+        estimate_rotation=True,
+        max_rotation_deg=2.0,
+        rotation_step_deg=0.05,
+        strip_registration=True,
+        n_strips=8,
+        strip_overlap=16,
+        n_refine_iters=3,
+        correlation_threshold=0.3,
+        output_dtype="uint16",
     )
+    # --------------------
 
-    parser.add_argument("--dir", type=str,
-                        default=r"runs\A-Line\1D_npatch=256\predictions_tiff\6mm_1024Aline",
-                        help="Directory containing the input TIFF.")
-    parser.add_argument("--file", type=str,
-                        default="gt_6mm_1024Aline_s005_g060.tif",
-                        help="TIFF filename inside --dir.")
-    parser.add_argument("--output", type=str, default=None,
-                        help="Output path.  Defaults to <dir>/registered_<file>.")
+    tiff_path = os.path.join(direc, file)
+    output_path = output or os.path.join(direc, f"registered_{file}")
 
-    # Registration parameters
-    parser.add_argument("--upsample", type=int, default=100,
-                        help="Phase-correlation upsample factor (100 → 0.01 px).")
-    parser.add_argument("--no-rotation", action="store_true",
-                        help="Disable rotation estimation.")
-    parser.add_argument("--max-rotation", type=float, default=2.0,
-                        help="Max rotation search range (degrees).")
-    parser.add_argument("--rotation-step", type=float, default=0.05,
-                        help="Rotation search step (degrees).")
-    parser.add_argument("--no-strips", action="store_true",
-                        help="Disable strip-wise non-rigid registration.")
-    parser.add_argument("--n-strips", type=int, default=8,
-                        help="Number of horizontal strips for non-rigid correction.")
-    parser.add_argument("--strip-overlap", type=int, default=16,
-                        help="Overlap (px) between strips.")
-    parser.add_argument("--refine-iters", type=int, default=3,
-                        help="Number of register→average→re-register iterations.")
-    parser.add_argument("--corr-threshold", type=float, default=0.3,
-                        help="Min cross-correlation to keep a frame.")
-
-    # Output
-    parser.add_argument("--dtype", type=str, default="uint16",
-                        choices=["uint8", "uint16", "float32"],
-                        help="Output TIFF dtype.")
-    parser.add_argument("--show", action="store_true",
-                        help="Display result with matplotlib.")
-
-    args = parser.parse_args()
-
-    # --- Build path ---
-    tiff_path = os.path.join(args.dir, args.file)
-    if not os.path.isfile(tiff_path):
-        sys.exit(f"[reg] ERROR: file not found: {tiff_path}")
-
-    output_path = args.output or os.path.join(
-        args.dir, f"registered_{args.file}"
-    )
-
-    # --- Load ---
     print(f"[reg] loading {tiff_path}")
     stack = load_tiff_stack(tiff_path)
     print(f"[reg] stack shape: {stack.shape}  dtype: {stack.dtype}")
 
-    if stack.shape[0] == 1:
-        print("[reg] single-frame image — nothing to register, saving copy.")
-        save_tiff(output_path, stack[0], dtype=args.dtype)
-        return
-
-    # --- Configure ---
-    cfg = RegistrationConfig(
-        upsample_factor=args.upsample,
-        estimate_rotation=not args.no_rotation,
-        max_rotation_deg=args.max_rotation,
-        rotation_step_deg=args.rotation_step,
-        strip_registration=not args.no_strips,
-        n_strips=args.n_strips,
-        strip_overlap=args.strip_overlap,
-        n_refine_iters=args.refine_iters,
-        correlation_threshold=args.corr_threshold,
-    )
-
-    # --- Register & average ---
     avg, weights = register_and_average(stack, cfg, verbose=True)
 
     n_kept = int(np.sum(weights > 0))
     print(f"[reg] done — {n_kept}/{stack.shape[0]} frames used")
 
-    # --- Save ---
-    save_tiff(output_path, avg, dtype=args.dtype, p_lo=0.5, p_hi=99.5)
+    save_tiff(output_path, avg, dtype=cfg.output_dtype)
 
-    # --- Optional display ---
-    if args.show:
-        try:
-            import matplotlib.pyplot as plt
-        except ImportError:
-            print("[reg] matplotlib not available, skipping display")
-            return
+    # ---- Display comparison ----
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    naive_avg = np.mean(stack, axis=0)
 
-        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-        naive_avg = np.mean(stack, axis=0)
+    axes[0].imshow(naive_avg, cmap="gray", aspect="auto")
+    axes[0].set_title("Naive mean (no registration)")
+    axes[1].imshow(avg, cmap="gray", aspect="auto")
+    axes[1].set_title(f"Registered mean ({n_kept} frames)")
+    axes[2].imshow(np.abs(avg - naive_avg), cmap="hot", aspect="auto")
+    axes[2].set_title("| registered − naive |")
+    for ax in axes:
+        ax.axis("off")
 
-        axes[0].imshow(naive_avg, cmap="gray", aspect="auto")
-        axes[0].set_title("Naive mean (no registration)")
-        axes[1].imshow(avg, cmap="gray", aspect="auto")
-        axes[1].set_title(f"Registered mean ({n_kept} frames)")
-        axes[2].imshow(np.abs(avg - naive_avg), cmap="hot", aspect="auto")
-        axes[2].set_title("| registered − naive |")
-        for ax in axes:
-            ax.axis("off")
-
-        plt.tight_layout()
-        plt.savefig(output_path.replace(".tif", "_comparison.png"), dpi=150)
-        plt.show()
-
-
-if __name__ == "__main__":
-    main()
+    plt.tight_layout()
+    plt.savefig(output_path.replace(".tif", "_comparison.png"), dpi=150)
+    plt.show()
