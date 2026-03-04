@@ -420,7 +420,7 @@ if __name__ == "__main__":
 
     # ---- Edit these ----
     direc = r"runs\A-Line\1D_npatch=256\predictions_tiff\6mm_1024Aline"
-    file = "gt_6mm_1024Aline_s005_g060.tif"
+    file = "gt_6mm_1024Aline_s005_g060.tiff"
     output = None  # defaults to <direc>/registered_<file>
 
     cfg = RegistrationConfig(
