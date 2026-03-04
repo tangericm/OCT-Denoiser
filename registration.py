@@ -156,8 +156,8 @@ def _upsampled_dft(
     )
     col_kern = np.exp(
         (-1j * 2 * np.pi / (nc * upsample_factor))
-        * (np.arange(upsampled_region_size)[:, None] - axis_offsets[1])
-        @ (np.fft.ifftshift(np.arange(nc))[None, :] - np.floor(nc / 2))
+        * (np.fft.ifftshift(np.arange(nc))[:, None] - np.floor(nc / 2))
+        @ (np.arange(upsampled_region_size)[None, :] - axis_offsets[1])
     )
     return row_kern.T @ data @ col_kern
 
