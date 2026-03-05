@@ -51,9 +51,11 @@ def main():
         patches_per_frame=32,
         patch_mode="strip",
 
-        # Pure image-domain loss
-        w_charb=0.010307111599432855,
-        w_grad=0.010163544565911599,
+        # Combined image-domain + small spectral complex loss
+        w_charb=0.8,
+        w_grad=0.5,
+        w_spec_mag=0.05,
+        w_spec_phase=0.02,
 
         snr_sig_y0=111,
         snr_sig_y1=600,

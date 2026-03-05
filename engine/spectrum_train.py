@@ -71,6 +71,10 @@ def _evaluate_patches(model, loader, device, cfg):
         loss = compute_spectrum_loss(
             pred, y,
             **lp,
+            w_charb=cfg.w_charb,
+            w_grad=cfg.w_grad,
+            w_spec_mag=cfg.w_spec_mag,
+            w_spec_phase=cfg.w_spec_phase,
         )
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
@@ -144,6 +148,10 @@ def _evaluate_full_frames(model, loader, device, cfg):
             frame_loss = compute_spectrum_loss(
                 pred_alines[sample_idx], y_alines[sample_idx],
                 **lp,
+                w_charb=cfg.w_charb,
+                w_grad=cfg.w_grad,
+                w_spec_mag=cfg.w_spec_mag,
+                w_spec_phase=cfg.w_spec_phase,
             )
             loss_acc += float(frame_loss.item())
 
@@ -296,6 +304,10 @@ def run_spectrum_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 loss = compute_spectrum_loss(
                     pred, y,
                     **lp,
+                    w_charb=cfg.w_charb,
+                    w_grad=cfg.w_grad,
+                    w_spec_mag=cfg.w_spec_mag,
+                    w_spec_phase=cfg.w_spec_phase,
                 )
 
             scaler.scale(loss).backward()
