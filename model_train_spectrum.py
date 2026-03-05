@@ -38,23 +38,22 @@ def main():
         device="cuda",
         amp=True,
         deterministic=True,
-        epochs=30,
+        epochs=300,
         base=32,
-        batch_size=8,
+        batch_size=12,
         lr=3e-4,
         weight_decay=8e-5,
         num_workers=4,
-        augment=True,
 
         # For spectrum training: 2D patches (patch_w A-lines wide, full spectral depth)
         patch_h=2048,
         patch_w=1,
-        patches_per_frame=16,
+        patches_per_frame=32,
         patch_mode="strip",
 
         # Pure image-domain loss
-        w_charb=0.8,
-        w_grad=0.5,
+        w_charb=0.010307111599432855,
+        w_grad=0.010163544565911599,
 
         snr_sig_y0=111,
         snr_sig_y1=600,
