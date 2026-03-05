@@ -256,7 +256,13 @@ def run_spectrum_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
     total_steps = cfg.epochs * len(train_loader)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=total_steps, eta_min=1e-6)
+    if getattr(cfg, "lr_restart_epochs", 0) > 0:
+        steps_per_restart = cfg.lr_restart_epochs * len(train_loader)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            opt, T_0=steps_per_restart, eta_min=1e-6
+        )
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=total_steps, eta_min=1e-6)
 
     use_cuda_amp = cfg.amp and device.startswith("cuda")
     scaler = torch.amp.GradScaler("cuda", enabled=use_cuda_amp)
