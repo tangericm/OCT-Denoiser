@@ -16,7 +16,6 @@ class AxialDeconvolution(nn.Module):
         lam: float = 1.0e-3,
         learnable_correction: bool = False,
         correction_scale: float = 1.0e-2,
-        use_bscan_average_baseline: bool = True,
     ) -> None:
         super().__init__()
         if lam <= 0:
