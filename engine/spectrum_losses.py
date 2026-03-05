@@ -1,0 +1,61 @@
+"""Hybrid spectrum + image-domain loss for spectrum training.
+
+Combines a direct spectrum-domain Charbonnier loss with an image-domain
+loss computed via differentiable IFFT, enabling the network to optimize
+both spectral fidelity and reconstructed image quality.
+"""
+from __future__ import annotations
+
+import torch
+
+
+def charbonnier_1d(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
+    return torch.mean(torch.sqrt((pred - target) ** 2 + eps ** 2))
+
+
+def spectrum_image_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    crop_depth: tuple[int, int],
+    log_eps: float,
+    apply_fftshift: bool,
+) -> torch.Tensor:
+    """Image-domain loss via differentiable IFFT.
+
+    pred, target: [B, 2, L] (real, imag channels)
+    Returns scalar loss comparing log-magnitude A-lines after IFFT.
+    """
+    pred_c = torch.complex(pred[:, 0], pred[:, 1])     # [B, L]
+    tgt_c = torch.complex(target[:, 0], target[:, 1])
+
+    pred_depth = torch.fft.ifft(pred_c, dim=-1)
+    tgt_depth = torch.fft.ifft(tgt_c, dim=-1)
+
+    pred_mag = pred_depth.abs()    # [B, L]
+    tgt_mag = tgt_depth.abs()
+
+    if apply_fftshift:
+        pred_mag = torch.fft.fftshift(pred_mag, dim=-1)
+        tgt_mag = torch.fft.fftshift(tgt_mag, dim=-1)
+
+    z0, z1 = crop_depth
+    pred_crop = torch.log10(pred_mag[:, z0:z1] + log_eps)
+    tgt_crop = torch.log10(tgt_mag[:, z0:z1] + log_eps)
+
+    return charbonnier_1d(pred_crop, tgt_crop)
+
+
+def compute_spectrum_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    crop_depth: tuple[int, int],
+    log_eps: float,
+    apply_fftshift: bool,
+    w_spectrum: float = 1.0,
+    w_image: float = 0.5,
+) -> torch.Tensor:
+    """Combined spectrum + image-domain hybrid loss."""
+    spec_loss = charbonnier_1d(pred, target)
+    img_loss = spectrum_image_loss(pred, target, crop_depth, log_eps, apply_fftshift)
+    return w_spectrum * spec_loss + w_image * img_loss

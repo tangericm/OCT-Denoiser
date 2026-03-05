@@ -506,6 +506,56 @@ class BscanProcessor:
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         
+    def process_one_spectrum(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, Any]:
+        """
+        Process a single raw B-scan file and return complex spectra before FFT.
+
+        Returns dict with keys:
+          spec_full, spec_w1, spec_w2: [pixels, alines] complex64 (normalized)
+          norm_factor: float (magnitude std used for normalization)
+        """
+        cfg = self.cfg
+        pixels = cfg.pixels
+        alines = cfg.alines
+
+        data = np.fromfile(bscan_path, dtype=np.uint16)
+        expected = pixels * alines
+        if data.size != expected:
+            raise ValueError(
+                f"{os.path.basename(bscan_path)} has {data.size} elements; expected {expected}."
+            )
+
+        raw = data.reshape((pixels, alines), order="F").astype(np.float32, copy=False)
+
+        if cfg.do_dc_subtract:
+            raw[0, :] = raw[3, :]
+            raw[1, :] = raw[3, :]
+            raw[2, :] = raw[3, :]
+            raw = raw - raw.mean(axis=1, keepdims=True)
+
+        resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
+
+        if self._phase_term is not None:
+            spec_full = resamp.astype(np.complex64, copy=True)
+            spec_full *= self._phase_term[:, None]
+        else:
+            spec_full = resamp.astype(np.complex64, copy=True)
+
+        spec_w1 = (spec_full * self.w1[:, None]).astype(np.complex64)
+        spec_w2 = (spec_full * self.w2[:, None]).astype(np.complex64)
+
+        norm_factor = float(np.abs(spec_full).std()) + 1e-8
+        spec_full = spec_full / norm_factor
+        spec_w1 = spec_w1 / norm_factor
+        spec_w2 = spec_w2 / norm_factor
+
+        return {
+            "spec_full": spec_full,
+            "spec_w1": spec_w1,
+            "spec_w2": spec_w2,
+            "norm_factor": norm_factor,
+        }
+
     def process_one(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, Any]:
         """
         Process a single raw B-scan file into denoising inputs and target.

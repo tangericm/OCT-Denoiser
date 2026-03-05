@@ -79,6 +79,11 @@ class TrainConfig:
     early_stop_min_delta: float = 0.0
     early_stop_warmup_checks: int = 0
 
+    # Spectrum training
+    spectrum_mode: bool = False
+    w_spectrum: float = 1.0
+    w_image: float = 0.5
+
     # Inference outputs
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False
