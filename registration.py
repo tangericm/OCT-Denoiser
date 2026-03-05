@@ -230,8 +230,8 @@ def main():
     pred_reg = pred_crop.copy()
 
     # output paths  ←→  MATLAB [inDir '\' file(1:end-5) '_registered.tiff']
-    out_gt   = os.path.join(IN_DIR, os.path.splitext(FILE1)[0] + '_registered.tiff')
-    out_pred = os.path.join(IN_DIR, os.path.splitext(FILE2)[0] + '_registered.tiff')
+    out_gt   = os.path.join(IN_DIR, os.path.splitext(FILE1)[0] + '_registered3.tiff')
+    out_pred = os.path.join(IN_DIR, os.path.splitext(FILE2)[0] + '_registered3.tiff')
 
     # register frame-by-frame; write incrementally to BigTIFF
     # TiffWriter(bigtiff=True)          ←→  Fast_BigTiff_Write
