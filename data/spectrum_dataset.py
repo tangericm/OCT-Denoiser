@@ -57,7 +57,6 @@ class SpectrumDataset(Dataset):
         train_frac: float,
         patches_per_frame: int = 256,
         seed: int = 42,
-        augment: bool = False,
         cache_frames_per_worker: int = 100,
         full_frame: bool = False,
         max_frames: int | None = None,
@@ -67,7 +66,6 @@ class SpectrumDataset(Dataset):
         self.train_frac = train_frac
         self.patches_per_frame = patches_per_frame
         self.seed = seed
-        self.augment = augment and not full_frame
         self.cache_frames_per_worker = cache_frames_per_worker
         self.full_frame = full_frame
         self.max_frames = max_frames
@@ -120,7 +118,6 @@ class SpectrumDataset(Dataset):
 
         wi = get_worker_info()
         wid = 0 if wi is None else wi.id
-        aug_seed = self.seed + wid
 
         self._procs = []
         self._paths = []
@@ -130,7 +127,7 @@ class SpectrumDataset(Dataset):
             self._paths.append(proc.bscan_paths)
 
         self._build_index()
-        self._rng = np.random.RandomState(aug_seed)
+        self._rng = np.random.RandomState(self.seed + wid)
         self._cache = _LRU(max_items=self.cache_frames_per_worker)
 
     def _fetch_frame(self, fidx: int, frame_idx: int):
@@ -205,11 +202,6 @@ class SpectrumDataset(Dataset):
                 spec_full_j.real, spec_full_j.imag,
             ], axis=0).astype(np.float32)  # [2, pixels]
 
-            if self.augment and self._rng.rand() < 0.5:
-                # Spectral flip augmentation
-                x = x[:, ::-1].copy()
-                y = y[:, ::-1].copy()
-
         x = np.ascontiguousarray(x)
         y = np.ascontiguousarray(y)
         meta = self._build_meta(fidx, frame_idx, out)
@@ -233,7 +225,6 @@ class SpectrumDataModule:
             train_frac=c.train_frac,
             patches_per_frame=c.patches_per_frame,
             seed=c.seed,
-            augment=c.augment,
             cache_frames_per_worker=c.cache_frames_per_worker,
         )
         self._val = SpectrumDataset(

@@ -11,6 +11,7 @@ from configs.default import TrainConfig, FolderSpec
 from utils.helpers import seed_all
 from utils.run_manager import make_run_dir, setup_run_dirs
 from engine.spectrum_train import run_spectrum_training
+from engine.spectrum_infer import predict_spectrum_from_config
 
 
 def main():
@@ -38,7 +39,7 @@ def main():
         device="cuda",
         amp=True,
         deterministic=True,
-        epochs=300,
+        epochs=30,
         base=32,
         batch_size=256,
         lr=3e-4,
@@ -53,8 +54,8 @@ def main():
         patch_mode="strip",
 
         # Hybrid loss weights
-        w_spectrum=1.0,
-        w_image=0.5,
+        w_spectrum=0.01,
+        w_image=0.8,
         w_charb=0.8,
         w_grad=0.5,
 
@@ -71,7 +72,13 @@ def main():
     run_dir = make_run_dir(cfg.runs_root, cfg.experiment_name)
     paths = setup_run_dirs(run_dir)
 
-    run_spectrum_training(cfg, paths)
+    result = run_spectrum_training(cfg, paths)
+
+    for folder_spec in cfg.folder_specs:
+        predict_spectrum_from_config(
+            cfg, folder_spec, result["best_ckpt_path"],
+            os.path.join(paths["pred_tiff"], folder_spec.data_folder),
+        )
 
 
 if __name__ == "__main__":
