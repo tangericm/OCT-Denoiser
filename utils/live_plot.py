@@ -36,12 +36,17 @@ class LiveLossPlot:
         self._snr_line = None
 
         try:
+            import matplotlib
             import matplotlib.pyplot as plt
             self._plt = plt
 
             os.makedirs(self.out_dir, exist_ok=True)
 
-            self._fig, self._ax = plt.subplots()
+            if self.show_window:
+                self._fig, self._ax = plt.subplots()
+            else:
+                self._fig = matplotlib.figure.Figure()
+                self._ax = self._fig.add_subplot(111)
             self._ax.set_title(self.title)
             self._ax.set_xlabel("Epoch")
             self._ax.set_ylabel("Loss")
@@ -96,9 +101,9 @@ class LiveLossPlot:
             self._snr_ax.relim()
             self._snr_ax.autoscale_view()
 
-        self._fig.canvas.draw()
-        self._fig.canvas.flush_events()
         if self.show_window:
+            self._fig.canvas.draw()
+            self._fig.canvas.flush_events()
             self._plt.pause(0.001)
 
         self._fig.savefig(

@@ -251,6 +251,7 @@ def run_spectrum_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     plotter = LiveLossPlot(
         out_dir=paths["run"],
         title=f"Loss - {cfg.experiment_name} (Spectrum), Network: {cfg.model_name}",
+        show_window=False,
     )
 
     print(

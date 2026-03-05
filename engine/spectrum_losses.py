@@ -25,8 +25,8 @@ def spectrum_image_loss(
     pred, target: [B, 2, L] (real, imag channels)
     Returns scalar loss comparing log-magnitude A-lines after IFFT.
     """
-    pred_c = torch.complex(pred[:, 0], pred[:, 1])     # [B, L]
-    tgt_c = torch.complex(target[:, 0], target[:, 1])
+    pred_c = torch.complex(pred[:, 0].float(), pred[:, 1].float())     # [B, L]
+    tgt_c = torch.complex(target[:, 0].float(), target[:, 1].float())
 
     pred_depth = torch.fft.ifft(pred_c, dim=-1)
     tgt_depth = torch.fft.ifft(tgt_c, dim=-1)

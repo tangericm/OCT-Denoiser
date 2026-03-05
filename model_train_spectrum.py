@@ -33,7 +33,7 @@ def main():
                 gap_offset=0.015,
             ),
         ],
-        cache_frames_per_worker=100,
+        cache_frames_per_worker=1000,
 
         device="cuda",
         amp=True,
@@ -46,7 +46,7 @@ def main():
         num_workers=4,
         augment=True,
 
-        # Not used for spectrum training (1D per A-line)
+        # For spectrum training: A-lines sampled per frame per epoch
         patch_h=128,
         patch_w=1,
         patches_per_frame=256,
