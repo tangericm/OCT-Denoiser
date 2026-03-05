@@ -62,24 +62,6 @@ class UpBlock1d(nn.Module):
         return self.res(x)
 
 
-class SEBlock1d(nn.Module):
-    """Channel squeeze-and-excitation for global spectral attention."""
-
-    def __init__(self, ch: int, reduction: int = 8):
-        super().__init__()
-        self.gap = nn.AdaptiveAvgPool1d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(ch, max(ch // reduction, 1), bias=False),
-            nn.SiLU(inplace=True),
-            nn.Linear(max(ch // reduction, 1), ch, bias=False),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, c, _ = x.shape
-        w = self.fc(self.gap(x).view(b, c))
-        return x * w.view(b, c, 1)
-
 
 class SpectrumUNet1D(nn.Module):
     """Dual-domain residual 1D UNet for complex OCT spectrum denoising."""
@@ -102,10 +84,8 @@ class SpectrumUNet1D(nn.Module):
         self.enc1 = nn.Sequential(ResBlock1d(base), ResBlock1d(base))
         self.down1 = DownBlock1d(base, base * 2)
         self.down2 = DownBlock1d(base * 2, base * 4)
-        self.down3 = DownBlock1d(base * 4, base * 8)
 
-        self.bottleneck = nn.Sequential(ResBlock1d(base * 8), ResBlock1d(base * 8))
-        self.attn = SEBlock1d(base * 8)
+        self.bottleneck = nn.Sequential(ResBlock1d(base * 4), ResBlock1d(base * 4))
 
         self.image_refine = nn.Sequential(
             nn.Conv1d(base // 2, base // 2, 5, padding=2, bias=False),
@@ -115,7 +95,6 @@ class SpectrumUNet1D(nn.Module):
             ResBlock1d(base // 2),
         )
 
-        self.up2 = UpBlock1d(base * 8, base * 4, base * 4)
         self.up1 = UpBlock1d(base * 4, base * 2, base * 2)
         self.up0 = UpBlock1d(base * 2, base, base)
         self.head = nn.Conv1d(base, out_channels, 1)
@@ -132,8 +111,8 @@ class SpectrumUNet1D(nn.Module):
         trivial = torch.stack([x[:, 0] + x[:, 2], x[:, 1] + x[:, 3]], dim=1)
 
         L = x.shape[-1]
-        # Pad to multiple of 8 for clean 3-level downsampling
-        pad_total = (8 - L % 8) % 8
+        # Pad to multiple of 4 for clean downsampling
+        pad_total = (4 - L % 4) % 4
         if pad_total > 0:
             x = F.pad(x, (0, pad_total), mode="reflect")
             trivial = F.pad(trivial, (0, pad_total), mode="reflect")
@@ -142,16 +121,14 @@ class SpectrumUNet1D(nn.Module):
         s0 = self.enc1(x0)
         s1 = self.down1(s0)
         s2 = self.down2(s1)
-        s3 = self.down3(s2)
 
         depth_feats = torch.fft.ifft(self._to_complex_pairs(s0), dim=-1).abs()
         depth_refined = self.image_refine(depth_feats)
         depth_spec = torch.fft.fft(depth_refined.to(torch.complex64), dim=-1)
         depth_spec_re_im = self._to_re_im_channels(depth_spec)
 
-        b = self.attn(self.bottleneck(s3))
-        x = self.up2(b, s2)
-        x = self.up1(x, s1)
+        b = self.bottleneck(s2)
+        x = self.up1(b, s1)
         x = self.up0(x, s0 + depth_spec_re_im)
         correction = self.head(x)
         corrected = trivial + correction
