@@ -79,9 +79,33 @@ def _evaluate_patches(model, loader, device, cfg):
 
 
 @torch.no_grad()
+def _infer_full_frame_2d(model, x_np: np.ndarray, patch_w: int, device: str) -> np.ndarray:
+    """Sliding-window 2D inference on [4, pixels, alines] → [2, pixels, alines]."""
+    alines = x_np.shape[2]
+    stride = max(1, patch_w // 2)
+
+    accum = np.zeros((2, x_np.shape[1], alines), dtype=np.float64)
+    weights = np.zeros(alines, dtype=np.float64)
+
+    starts = list(range(0, alines - patch_w + 1, stride))
+    if not starts or starts[-1] + patch_w < alines:
+        starts.append(max(0, alines - patch_w))
+
+    for j in starts:
+        chunk = np.ascontiguousarray(x_np[:, :, j:j + patch_w])  # [4, pixels, patch_w]
+        t = torch.from_numpy(chunk).unsqueeze(0).to(device, non_blocking=True)
+        pred = model(t)[0].cpu().numpy()  # [2, pixels, patch_w]
+        accum[:, :, j:j + patch_w] += pred
+        weights[j:j + patch_w] += 1.0
+
+    return (accum / np.maximum(weights[np.newaxis, np.newaxis, :], 1.0)).astype(np.float32)
+
+
+@torch.no_grad()
 def _evaluate_full_frames(model, loader, device, cfg):
     """Full-frame evaluation: reconstruct B-scans from predicted spectra, compute SNR/CNR."""
     model.eval()
+    patch_w = getattr(cfg, "patch_w", 1)
     loss_acc, n = 0.0, 0
     snr_pred_list, snr_gt_list = [], []
     cnr_pred_list, cnr_gt_list = [], []
@@ -97,43 +121,37 @@ def _evaluate_full_frames(model, loader, device, cfg):
         log_eps = float(m["log_eps"])
         apply_fftshift = bool(m["apply_fftshift_depth"])
 
-        # Process A-lines in chunks through 1D network
-        x_2d = x[0]  # [4, pixels, alines]
-        y_2d = y[0]  # [2, pixels, alines]
-        alines = x_2d.shape[2]
-        # Reshape: each A-line as batch element [alines, 4, pixels]
-        x_alines = x_2d.permute(2, 0, 1)
+        x_np = x[0].cpu().numpy()  # [4, pixels, alines]
+        y_2d = y[0]  # [2, pixels, alines] tensor
 
-        pred_chunks = []
-        chunk_size = 512
-        for i in range(0, alines, chunk_size):
-            chunk = x_alines[i:i + chunk_size]
-            pred_chunks.append(model(chunk))
-        pred_alines = torch.cat(pred_chunks, dim=0)  # [alines, 2, pixels]
+        if patch_w > 1:
+            # 2D model: sliding-window inference
+            pred_np = _infer_full_frame_2d(model, x_np, patch_w, device)  # [2, pixels, alines]
+            pred_spec = (pred_np[0] + 1j * pred_np[1]) * norm_factor
+        else:
+            # 1D model: process each A-line as batch element
+            alines = x_np.shape[2]
+            x_alines = torch.from_numpy(np.ascontiguousarray(x_np.transpose(2, 0, 1))).to(device)
+            # [alines, 4, pixels]
+            pred_chunks = []
+            for i in range(0, alines, 512):
+                pred_chunks.append(model(x_alines[i:i + 512]))
+            pred_alines = torch.cat(pred_chunks, dim=0)  # [alines, 2, pixels]
 
-        # Compute patch-level loss for this frame
-        # Use mean over random subset of A-lines for efficiency
-        sample_idx = torch.randperm(alines, device=device)[:min(256, alines)]
-        lp = _loss_params_from_meta(meta)
-        frame_loss = compute_spectrum_loss(
-            pred_alines[sample_idx], x_alines[sample_idx, :2, :].clone(),
-            w_spectrum=cfg.w_spectrum, w_image=cfg.w_image,
-            **lp,
-        )
-        # Recompute properly: compare pred vs target (not input)
-        y_alines = y_2d.permute(2, 0, 1)  # [alines, 2, pixels]
-        frame_loss = compute_spectrum_loss(
-            pred_alines[sample_idx], y_alines[sample_idx],
-            w_spectrum=cfg.w_spectrum, w_image=cfg.w_image,
-            **lp,
-        )
-        loss_acc += float(frame_loss.item())
+            # Frame loss on random subset
+            lp = _loss_params_from_meta(meta)
+            sample_idx = torch.randperm(alines, device=device)[:min(256, alines)]
+            y_alines = y_2d.permute(2, 0, 1)
+            frame_loss = compute_spectrum_loss(
+                pred_alines[sample_idx], y_alines[sample_idx],
+                w_spectrum=cfg.w_spectrum, w_image=cfg.w_image, **lp,
+            )
+            loss_acc += float(frame_loss.item())
+
+            arr = pred_alines.cpu().numpy()  # [alines, 2, pixels]
+            pred_spec = (arr[:, 0, :] + 1j * arr[:, 1, :]).T * norm_factor
+
         n += 1
-
-        # Reconstruct B-scans from spectra (on CPU/numpy)
-        pred_np = pred_alines.cpu().numpy()  # [alines, 2, pixels]
-        # → complex spectrum [pixels, alines]
-        pred_spec = (pred_np[:, 0, :] + 1j * pred_np[:, 1, :]).T * norm_factor
 
         y_np = y_2d.cpu().numpy()  # [2, pixels, alines]
         tgt_spec = (y_np[0] + 1j * y_np[1]) * norm_factor  # [pixels, alines]

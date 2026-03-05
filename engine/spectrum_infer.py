@@ -94,6 +94,29 @@ def _save_roi_plot(
 
 
 @torch.no_grad()
+def _infer_full_frame_2d(model, x_np: np.ndarray, patch_w: int, device: str) -> np.ndarray:
+    """Sliding-window 2D inference on [4, pixels, alines] → [2, pixels, alines]."""
+    alines = x_np.shape[2]
+    stride = max(1, patch_w // 2)
+
+    accum = np.zeros((2, x_np.shape[1], alines), dtype=np.float64)
+    weights = np.zeros(alines, dtype=np.float64)
+
+    starts = list(range(0, alines - patch_w + 1, stride))
+    if not starts or starts[-1] + patch_w < alines:
+        starts.append(max(0, alines - patch_w))
+
+    for j in starts:
+        chunk = np.ascontiguousarray(x_np[:, :, j:j + patch_w])
+        t = torch.from_numpy(chunk).unsqueeze(0).to(device, non_blocking=True)
+        pred = model(t)[0].cpu().numpy()  # [2, pixels, patch_w]
+        accum[:, :, j:j + patch_w] += pred
+        weights[j:j + patch_w] += 1.0
+
+    return (accum / np.maximum(weights[np.newaxis, np.newaxis, :], 1.0)).astype(np.float32)
+
+
+@torch.no_grad()
 def predict_spectrum_raw_to_tiffs(
     *,
     folder_spec,
@@ -102,6 +125,7 @@ def predict_spectrum_raw_to_tiffs(
     model_name: str,
     base: int,
     device: str,
+    patch_w: int = 1,
     tiff_dtype: str = "uint16",
     also_save_float32: bool = False,
     max_frames: int | None = None,
@@ -186,23 +210,25 @@ def predict_spectrum_raw_to_tiffs(
         ], axis=0).astype(np.float32)  # [4, pixels, alines]
 
         alines = x_np.shape[2]
-        # Reshape to [alines, 4, pixels] for batched A-line inference
-        x_alines = torch.from_numpy(
-            np.ascontiguousarray(x_np.transpose(2, 0, 1))
-        ).to(device, non_blocking=True)  # [alines, 4, pixels]
 
         t0 = time.time()
-        pred_chunks = []
-        for j in range(0, alines, _CHUNK):
-            pred_chunks.append(model(x_alines[j:j + _CHUNK]))
-        pred_alines = torch.cat(pred_chunks, dim=0).cpu().numpy()  # [alines, 2, pixels]
+        if patch_w > 1:
+            pred_np2d = _infer_full_frame_2d(model, x_np, patch_w, device)  # [2, pixels, alines]
+            pred_spec = (pred_np2d[0] + 1j * pred_np2d[1]) * norm_factor
+        else:
+            # Reshape to [alines, 4, pixels] for batched A-line inference
+            x_alines = torch.from_numpy(
+                np.ascontiguousarray(x_np.transpose(2, 0, 1))
+            ).to(device, non_blocking=True)  # [alines, 4, pixels]
+            pred_chunks = []
+            for j in range(0, alines, _CHUNK):
+                pred_chunks.append(model(x_alines[j:j + _CHUNK]))
+            pred_alines = torch.cat(pred_chunks, dim=0).cpu().numpy()  # [alines, 2, pixels]
+            pred_spec = (pred_alines[:, 0, :] + 1j * pred_alines[:, 1, :]).T * norm_factor
         if device.startswith("cuda"):
             torch.cuda.synchronize()
         elapsed = time.time() - t0
         times.append(elapsed)
-
-        # Reconstruct predicted B-scan
-        pred_spec = (pred_alines[:, 0, :] + 1j * pred_alines[:, 1, :]).T * norm_factor
         pred_bscan, pred_mu, pred_sd = _spectrum_to_bscan(pred_spec, crop_depth, use_log, log_eps, apply_fftshift)
 
         # Reconstruct ground-truth B-scan
@@ -310,6 +336,7 @@ def predict_spectrum_from_config(cfg, folder_spec, ckpt_path: str, outdir: str, 
         model_name=cfg.model_name,
         base=cfg.base,
         device=cfg.device,
+        patch_w=cfg.patch_w,
         tiff_dtype=cfg.tiff_dtype,
         also_save_float32=cfg.also_save_float32,
         snr_sig_y0=cfg.snr_sig_y0,

@@ -18,7 +18,7 @@ def main():
     cfg = TrainConfig(
         runs_root=r"runs",
         experiment_name="Spectrum",
-        model_name="spectrum_unet_1d",
+        model_name="spectrum_unet_2d",
         spectrum_mode=True,
 
         folder_specs=[
@@ -41,15 +41,15 @@ def main():
         deterministic=True,
         epochs=30,
         base=32,
-        batch_size=256,
+        batch_size=8,
         lr=3e-4,
         weight_decay=8e-5,
         num_workers=4,
         augment=True,
 
-        # For spectrum training: A-lines sampled per frame per epoch
-        patch_h=128,
-        patch_w=1,
+        # For spectrum training: 2D patches (patch_w A-lines wide, full spectral depth)
+        patch_h=2048,
+        patch_w=16,
         patches_per_frame=256,
         patch_mode="strip",
 

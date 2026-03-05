@@ -22,9 +22,16 @@ def spectrum_image_loss(
 ) -> torch.Tensor:
     """Image-domain loss via differentiable IFFT.
 
-    pred, target: [B, 2, L] (real, imag channels)
+    pred, target: [B, 2, L] or [B, 2, L, W] (real, imag channels)
+    For 2D input, A-lines are merged into the batch dimension before IFFT.
     Returns scalar loss comparing log-magnitude A-lines after IFFT.
     """
+    if pred.dim() == 4:
+        # [B, 2, L, W] → [B*W, 2, L]
+        B, C, L, W = pred.shape
+        pred = pred.permute(0, 3, 1, 2).reshape(B * W, C, L).contiguous()
+        target = target.permute(0, 3, 1, 2).reshape(B * W, C, L).contiguous()
+
     pred_c = torch.complex(pred[:, 0].float(), pred[:, 1].float())     # [B, L]
     tgt_c = torch.complex(target[:, 0].float(), target[:, 1].float())
 

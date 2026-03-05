@@ -60,6 +60,7 @@ class SpectrumDataset(Dataset):
         cache_frames_per_worker: int = 100,
         full_frame: bool = False,
         max_frames: int | None = None,
+        patch_w: int = 1,
     ):
         self.folder_specs = folder_specs
         self.split = split
@@ -69,6 +70,7 @@ class SpectrumDataset(Dataset):
         self.cache_frames_per_worker = cache_frames_per_worker
         self.full_frame = full_frame
         self.max_frames = max_frames
+        self.patch_w = patch_w
 
         self._procs = None
         self._paths = None
@@ -187,20 +189,22 @@ class SpectrumDataset(Dataset):
         else:
             fidx, frame_idx, _pr = entry
             out = self._fetch_frame(fidx, frame_idx)
-            # Random A-line
             alines = out["spec_full"].shape[1]
-            j = self._rng.randint(0, alines)
-            spec_w1_j = out["spec_w1"][:, j]  # [pixels] complex
-            spec_w2_j = out["spec_w2"][:, j]
-            spec_full_j = out["spec_full"][:, j]
 
-            x = np.stack([
-                spec_w1_j.real, spec_w1_j.imag,
-                spec_w2_j.real, spec_w2_j.imag,
-            ], axis=0).astype(np.float32)  # [4, pixels]
-            y = np.stack([
-                spec_full_j.real, spec_full_j.imag,
-            ], axis=0).astype(np.float32)  # [2, pixels]
+            if self.patch_w > 1:
+                # Sample a random contiguous block of patch_w A-lines
+                max_start = max(0, alines - self.patch_w)
+                j = self._rng.randint(0, max_start + 1)
+                sl = slice(j, j + self.patch_w)
+                x = self._spec_to_channels(out["spec_w1"][:, sl], out["spec_w2"][:, sl])  # [4, pixels, patch_w]
+                y = self._spec_to_target(out["spec_full"][:, sl])  # [2, pixels, patch_w]
+            else:
+                # Single random A-line
+                j = self._rng.randint(0, alines)
+                x = self._spec_to_channels(out["spec_w1"][:, j:j+1], out["spec_w2"][:, j:j+1])  # [4, pixels, 1]
+                y = self._spec_to_target(out["spec_full"][:, j:j+1])  # [2, pixels, 1]
+                x = x[:, :, 0]  # [4, pixels]
+                y = y[:, :, 0]  # [2, pixels]
 
         x = np.ascontiguousarray(x)
         y = np.ascontiguousarray(y)
@@ -226,6 +230,7 @@ class SpectrumDataModule:
             patches_per_frame=c.patches_per_frame,
             seed=c.seed,
             cache_frames_per_worker=c.cache_frames_per_worker,
+            patch_w=c.patch_w,
         )
         self._val = SpectrumDataset(
             folder_specs=c.folder_specs,
@@ -234,6 +239,7 @@ class SpectrumDataModule:
             patches_per_frame=max(1, c.patches_per_frame // 2),
             seed=c.seed,
             cache_frames_per_worker=c.cache_frames_per_worker,
+            patch_w=c.patch_w,
         )
         self._val_full = SpectrumDataset(
             folder_specs=c.folder_specs,
