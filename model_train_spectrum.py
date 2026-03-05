@@ -50,7 +50,7 @@ def main():
         # For spectrum training: 2D patches (patch_w A-lines wide, full spectral depth)
         patch_h=2048,
         patch_w=16,
-        patches_per_frame=256,
+        patches_per_frame=16,
         patch_mode="strip",
 
         # Hybrid loss weights
