@@ -71,7 +71,6 @@ class SpectrumDataset(Dataset):
         self.full_frame = full_frame
         self.max_frames = max_frames
         self.patch_w = patch_w
-        self.augment = (split == "train") and not full_frame
 
         self._procs = None
         self._paths = None
@@ -197,30 +196,17 @@ class SpectrumDataset(Dataset):
             alines = out["spec_full"].shape[1]
 
             if self.patch_w > 1:
+                # Sample a random contiguous block of patch_w A-lines
                 max_start = max(0, alines - self.patch_w)
                 j = self._rng.randint(0, max_start + 1)
                 sl = slice(j, j + self.patch_w)
+                x = self._spec_to_channels(out["spec_w1"][:, sl], out["spec_w2"][:, sl], out["w1_mask"], out["w2_mask"])  # [6, pixels, patch_w]
+                y = self._spec_to_target(out["spec_full"][:, sl])  # [2, pixels, patch_w]
             else:
+                # Single random A-line
                 j = self._rng.randint(0, alines)
-                sl = slice(j, j + 1)
-
-            spec_w1 = out["spec_w1"][:, sl]
-            spec_w2 = out["spec_w2"][:, sl]
-            spec_full = out["spec_full"][:, sl]
-
-            if self.augment:
-                # Global phase rotation: physically equivalent to a uniform
-                # reference-arm path-length shift; signal and both windows
-                # receive the same rotation so the N2N relationship is preserved.
-                phase = np.exp(1j * self._rng.uniform(-np.pi, np.pi))
-                spec_w1 = spec_w1 * phase
-                spec_w2 = spec_w2 * phase
-                spec_full = spec_full * phase
-
-            x = self._spec_to_channels(spec_w1, spec_w2, out["w1_mask"], out["w2_mask"])
-            y = self._spec_to_target(spec_full)
-
-            if self.patch_w == 1:
+                x = self._spec_to_channels(out["spec_w1"][:, j:j+1], out["spec_w2"][:, j:j+1], out["w1_mask"], out["w2_mask"])  # [6, pixels, 1]
+                y = self._spec_to_target(out["spec_full"][:, j:j+1])  # [2, pixels, 1]
                 x = x[:, :, 0]  # [6, pixels]
                 y = y[:, :, 0]  # [2, pixels]
 

@@ -81,9 +81,6 @@ class TrainConfig:
     early_stop_min_delta: float = 0.0
     early_stop_warmup_checks: int = 0
 
-    # LR schedule: 0 = CosineAnnealingLR; >0 = CosineAnnealingWarmRestarts with this cycle length in epochs
-    lr_restart_epochs: int = 0
-
     # Spectrum training
     spectrum_mode: bool = False
 
