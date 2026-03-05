@@ -11,7 +11,9 @@ import os
 import time
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.backends.backend_agg
 import scipy.fft as sfft
 from dataclasses import asdict
 from typing import Dict, Any
@@ -189,7 +191,8 @@ def _save_val_png(pred_img, *, snr_pred, snr_gt, cnr_pred, cnr_gt, out_path):
     vmin, vmax = float(p1), float(p99)
     if vmax <= vmin:
         vmin, vmax = float(pred_img.min()), float(pred_img.max())
-    fig = plt.figure(figsize=(6, 5))
+    fig = matplotlib.figure.Figure(figsize=(6, 5))
+    matplotlib.backends.backend_agg.FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
     ax.imshow(pred_img, cmap="gray", vmin=vmin, vmax=vmax)
     ax.set_axis_off()
@@ -201,7 +204,6 @@ def _save_val_png(pred_img, *, snr_pred, snr_gt, cnr_pred, cnr_gt, out_path):
     )
     fig.tight_layout()
     fig.savefig(out_path, dpi=160, bbox_inches="tight")
-    plt.close(fig)
 
 
 def run_spectrum_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:

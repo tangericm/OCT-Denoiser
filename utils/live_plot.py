@@ -36,16 +36,17 @@ class LiveLossPlot:
         self._snr_line = None
 
         try:
-            import matplotlib
-            import matplotlib.pyplot as plt
-            self._plt = plt
-
             os.makedirs(self.out_dir, exist_ok=True)
 
             if self.show_window:
+                import matplotlib.pyplot as plt
+                self._plt = plt
                 self._fig, self._ax = plt.subplots()
             else:
+                import matplotlib.figure
+                import matplotlib.backends.backend_agg as _agg
                 self._fig = matplotlib.figure.Figure()
+                _agg.FigureCanvasAgg(self._fig)   # attach Agg canvas — no Tk
                 self._ax = self._fig.add_subplot(111)
             self._ax.set_title(self.title)
             self._ax.set_xlabel("Epoch")
