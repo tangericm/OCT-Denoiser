@@ -1,9 +1,4 @@
-"""Hybrid spectrum + image-domain loss for spectrum training.
-
-Combines a direct spectrum-domain Charbonnier loss with an image-domain
-loss computed via differentiable IFFT, enabling the network to optimize
-both spectral fidelity and reconstructed image quality.
-"""
+"""Image-domain loss for spectrum training."""
 from __future__ import annotations
 
 import torch
@@ -23,23 +18,18 @@ def spectrum_image_loss(
     """Image-domain loss via differentiable IFFT.
 
     pred, target: [B, 2, L] or [B, 2, L, W] (real, imag channels)
-    For 2D input, A-lines are merged into the batch dimension before IFFT.
-    Returns scalar loss comparing log-magnitude A-lines after IFFT.
+    Returns scalar loss comparing log-magnitude depth profiles after IFFT.
     """
     if pred.dim() == 4:
-        # [B, 2, L, W] → [B*W, 2, L]
         B, C, L, W = pred.shape
         pred = pred.permute(0, 3, 1, 2).reshape(B * W, C, L).contiguous()
         target = target.permute(0, 3, 1, 2).reshape(B * W, C, L).contiguous()
 
-    pred_c = torch.complex(pred[:, 0].float(), pred[:, 1].float())     # [B, L]
+    pred_c = torch.complex(pred[:, 0].float(), pred[:, 1].float())
     tgt_c = torch.complex(target[:, 0].float(), target[:, 1].float())
 
-    pred_depth = torch.fft.ifft(pred_c, dim=-1)
-    tgt_depth = torch.fft.ifft(tgt_c, dim=-1)
-
-    pred_mag = pred_depth.abs()    # [B, L]
-    tgt_mag = tgt_depth.abs()
+    pred_mag = torch.fft.ifft(pred_c, dim=-1).abs()
+    tgt_mag = torch.fft.ifft(tgt_c, dim=-1).abs()
 
     if apply_fftshift:
         pred_mag = torch.fft.fftshift(pred_mag, dim=-1)
@@ -48,7 +38,6 @@ def spectrum_image_loss(
     z0, z1 = crop_depth
     pred_crop = torch.log10(pred_mag[:, z0:z1] + log_eps)
     tgt_crop = torch.log10(tgt_mag[:, z0:z1] + log_eps)
-
     return charbonnier_1d(pred_crop, tgt_crop)
 
 
@@ -59,10 +48,6 @@ def compute_spectrum_loss(
     crop_depth: tuple[int, int],
     log_eps: float,
     apply_fftshift: bool,
-    w_spectrum: float = 1.0,
-    w_image: float = 0.5,
 ) -> torch.Tensor:
-    """Combined spectrum + image-domain hybrid loss."""
-    spec_loss = charbonnier_1d(pred, target)
-    img_loss = spectrum_image_loss(pred, target, crop_depth, log_eps, apply_fftshift)
-    return w_spectrum * spec_loss + w_image * img_loss
+    """Pure image-domain spectrum training loss."""
+    return spectrum_image_loss(pred, target, crop_depth, log_eps, apply_fftshift)

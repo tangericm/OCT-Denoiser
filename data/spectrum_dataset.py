@@ -44,10 +44,10 @@ class SpectrumDataset(Dataset):
     Dataset returning complex spectra as real/imag channels.
 
     When full_frame=False:
-      Returns (x, y, meta) with x: [4, pixels], y: [2, pixels]
+      Returns (x, y, meta) with x: [6, pixels], y: [2, pixels]
       Each sample is a single A-line spectrum.
     When full_frame=True:
-      Returns (x, y, meta) with x: [4, pixels, alines], y: [2, pixels, alines]
+      Returns (x, y, meta) with x: [6, pixels, alines], y: [2, pixels, alines]
     """
 
     def __init__(
@@ -163,11 +163,15 @@ class SpectrumDataset(Dataset):
         return self._estimated_len
 
     @staticmethod
-    def _spec_to_channels(spec_w1, spec_w2):
-        """Convert two complex spectra to [4, ...] real/imag channels."""
+    def _spec_to_channels(spec_w1, spec_w2, w1_mask, w2_mask):
+        """Convert spectra + masks to [6, ...] channels."""
+        mask_shape = (spec_w1.shape[0],) + (1,) * (spec_w1.ndim - 1)
+        w1 = np.broadcast_to(np.asarray(w1_mask, dtype=np.float32).reshape(mask_shape), spec_w1.shape)
+        w2 = np.broadcast_to(np.asarray(w2_mask, dtype=np.float32).reshape(mask_shape), spec_w2.shape)
         return np.stack([
             spec_w1.real, spec_w1.imag,
             spec_w2.real, spec_w2.imag,
+            w1, w2,
         ], axis=0).astype(np.float32)
 
     @staticmethod
@@ -184,7 +188,7 @@ class SpectrumDataset(Dataset):
         if self.full_frame:
             fidx, frame_idx = entry
             out = self._fetch_frame(fidx, frame_idx)
-            x = self._spec_to_channels(out["spec_w1"], out["spec_w2"])  # [4, pixels, alines]
+            x = self._spec_to_channels(out["spec_w1"], out["spec_w2"], out["w1_mask"], out["w2_mask"])  # [6, pixels, alines]
             y = self._spec_to_target(out["spec_full"])  # [2, pixels, alines]
         else:
             fidx, frame_idx, _pr = entry
@@ -196,14 +200,14 @@ class SpectrumDataset(Dataset):
                 max_start = max(0, alines - self.patch_w)
                 j = self._rng.randint(0, max_start + 1)
                 sl = slice(j, j + self.patch_w)
-                x = self._spec_to_channels(out["spec_w1"][:, sl], out["spec_w2"][:, sl])  # [4, pixels, patch_w]
+                x = self._spec_to_channels(out["spec_w1"][:, sl], out["spec_w2"][:, sl], out["w1_mask"], out["w2_mask"])  # [6, pixels, patch_w]
                 y = self._spec_to_target(out["spec_full"][:, sl])  # [2, pixels, patch_w]
             else:
                 # Single random A-line
                 j = self._rng.randint(0, alines)
-                x = self._spec_to_channels(out["spec_w1"][:, j:j+1], out["spec_w2"][:, j:j+1])  # [4, pixels, 1]
+                x = self._spec_to_channels(out["spec_w1"][:, j:j+1], out["spec_w2"][:, j:j+1], out["w1_mask"], out["w2_mask"])  # [6, pixels, 1]
                 y = self._spec_to_target(out["spec_full"][:, j:j+1])  # [2, pixels, 1]
-                x = x[:, :, 0]  # [4, pixels]
+                x = x[:, :, 0]  # [6, pixels]
                 y = y[:, :, 0]  # [2, pixels]
 
         x = np.ascontiguousarray(x)
