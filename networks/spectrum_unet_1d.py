@@ -73,7 +73,7 @@ class SpectrumUNet1D(nn.Module):
         base: int = 64,
         deconv_h: torch.Tensor | None = None,
         deconv_lambda: float = 1.0e-3,
-        learnable_deconv_correction: bool = False,
+        learnable_deconv_correction: bool = True,
     ):
         super().__init__()
         if base % 2 != 0:
@@ -150,7 +150,7 @@ def build_spectrum_unet_1d(
     base: int = 64,
     deconv_h: torch.Tensor | None = None,
     deconv_lambda: float = 1.0e-3,
-    learnable_deconv_correction: bool = False,
+    learnable_deconv_correction: bool = True,
     **_kw,
 ) -> nn.Module:
     return SpectrumUNet1D(
