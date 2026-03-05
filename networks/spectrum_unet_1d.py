@@ -12,7 +12,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .axial_deconv import AxialDeconvolution
 from .registry import register_model
 
 
@@ -71,10 +70,6 @@ class SpectrumUNet1D(nn.Module):
         in_channels: int = 6,
         out_channels: int = 2,
         base: int = 64,
-        deconv_h: torch.Tensor | None = None,
-        deconv_lambda: float = 1.0e-3,
-        learnable_deconv_correction: bool = False,
-        deconv_use_bscan_average_baseline: bool = True,
     ):
         super().__init__()
         if base % 2 != 0:
@@ -102,12 +97,6 @@ class SpectrumUNet1D(nn.Module):
         self.up1 = UpBlock1d(base * 4, base * 2, base * 2)
         self.up0 = UpBlock1d(base * 2, base, base)
         self.head = nn.Conv1d(base, out_channels, 1)
-        self.axial_deconv = AxialDeconvolution(
-            h_kernel=deconv_h,
-            lam=deconv_lambda,
-            learnable_correction=learnable_deconv_correction,
-            use_bscan_average_baseline=deconv_use_bscan_average_baseline,
-        )
 
     @staticmethod
     def _to_complex_pairs(x: torch.Tensor) -> torch.Tensor:
@@ -142,26 +131,17 @@ class SpectrumUNet1D(nn.Module):
         x = self.up0(x, s0 + depth_spec_re_im)
         correction = self.head(x)
         corrected = trivial + correction
-        deconvolved = self.axial_deconv(corrected)
-        return deconvolved[..., :L]
+        return corrected[..., :L]
 
 
 @register_model("spectrum_unet_1d")
 def build_spectrum_unet_1d(
     *,
     base: int = 64,
-    deconv_h: torch.Tensor | None = None,
-    deconv_lambda: float = 1.0e-3,
-    learnable_deconv_correction: bool = False,
-    deconv_use_bscan_average_baseline: bool = True,
     **_kw,
 ) -> nn.Module:
     return SpectrumUNet1D(
         in_channels=6,
         out_channels=2,
         base=base,
-        deconv_h=deconv_h,
-        deconv_lambda=deconv_lambda,
-        learnable_deconv_correction=learnable_deconv_correction,
-        deconv_use_bscan_average_baseline=deconv_use_bscan_average_baseline,
     )
