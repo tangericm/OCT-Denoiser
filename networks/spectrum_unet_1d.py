@@ -73,7 +73,8 @@ class SpectrumUNet1D(nn.Module):
         base: int = 64,
         deconv_h: torch.Tensor | None = None,
         deconv_lambda: float = 1.0e-3,
-        learnable_deconv_correction: bool = True,
+        learnable_deconv_correction: bool = False,
+        deconv_use_bscan_average_baseline: bool = True,
     ):
         super().__init__()
         if base % 2 != 0:
@@ -151,12 +152,8 @@ def build_spectrum_unet_1d(
     base: int = 64,
     deconv_h: torch.Tensor | None = None,
     deconv_lambda: float = 1.0e-3,
-<<<<<<< HEAD
-    learnable_deconv_correction: bool = True,
-=======
     learnable_deconv_correction: bool = False,
     deconv_use_bscan_average_baseline: bool = True,
->>>>>>> 08c362dc4b2bcd881342d58830f723d7c429cb12
     **_kw,
 ) -> nn.Module:
     return SpectrumUNet1D(
