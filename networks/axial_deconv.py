@@ -22,24 +22,43 @@ class AxialDeconvolution(nn.Module):
             raise ValueError("lam must be > 0 for stable inverse filtering")
 
         if h_kernel is None:
-            h_kernel = torch.ones(1, dtype=torch.complex64)
+            h_kernel = torch.empty(0, dtype=torch.complex64)
         h_kernel = h_kernel.to(torch.complex64).reshape(-1)
         self.register_buffer("h_kernel", h_kernel)
         self.register_buffer("lambda_reg", torch.tensor(lam, dtype=torch.float32))
 
         self.learnable_correction = learnable_correction
         self.correction_scale = correction_scale
+        self.use_bscan_average_baseline = use_bscan_average_baseline
         if learnable_correction:
-            self.h_correction = nn.Parameter(torch.zeros(2, h_kernel.numel(), dtype=torch.float32))
+            correction_len = max(1, h_kernel.numel())
+            self.h_correction = nn.Parameter(torch.zeros(2, correction_len, dtype=torch.float32))
         else:
             self.register_parameter("h_correction", None)
 
-    def _effective_h(self, length: int, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        h = self.h_kernel.to(device=device, dtype=dtype)
-        if h.numel() == 1:
-            h = h.expand(length)
-        elif h.numel() != length:
-            raise ValueError(f"h_kernel length ({h.numel()}) must match input length ({length})")
+    @staticmethod
+    def _normalized_bscan_average(x_complex: torch.Tensor) -> torch.Tensor:
+        # x_complex: [N, L] where N is flattened A-line count (batch * lateral)
+        baseline = x_complex.mean(dim=0)
+        scale = baseline.abs().amax().clamp_min(torch.finfo(baseline.real.dtype).eps)
+        return baseline / scale
+
+    def _effective_h(self, x_complex: torch.Tensor) -> torch.Tensor:
+        length = x_complex.shape[-1]
+        device = x_complex.device
+        dtype = x_complex.dtype
+
+        if self.h_kernel.numel() == 0:
+            if self.use_bscan_average_baseline:
+                h = self._normalized_bscan_average(x_complex).detach().to(dtype=dtype)
+            else:
+                h = torch.ones(length, device=device, dtype=dtype)
+        else:
+            h = self.h_kernel.to(device=device, dtype=dtype)
+            if h.numel() == 1:
+                h = h.expand(length)
+            elif h.numel() != length:
+                raise ValueError(f"h_kernel length ({h.numel()}) must match input length ({length})")
 
         if self.h_correction is not None:
             corr = self.h_correction.to(device=device)
@@ -62,7 +81,7 @@ class AxialDeconvolution(nn.Module):
             x = x.permute(0, 3, 1, 2).reshape(b * w, c, l)
 
         x_complex = torch.complex(x[:, 0], x[:, 1])
-        h = self._effective_h(x_complex.shape[-1], device=x.device, dtype=x_complex.dtype)
+        h = self._effective_h(x_complex)
         denom = h.abs().square() + self.lambda_reg.to(device=x.device, dtype=x_complex.real.dtype)
         inv_filter = torch.conj(h) / denom
         deconv = x_complex * inv_filter.unsqueeze(0)
