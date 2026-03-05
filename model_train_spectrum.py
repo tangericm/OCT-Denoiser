@@ -52,8 +52,8 @@ def main():
         patch_mode="strip",
 
         # Combined image-domain + small spectral complex loss
-        w_charb=0.8,
-        w_grad=0.5,
+        w_charb=0.010307111599432855,
+        w_grad=0.010163544565911599,
         w_spec_mag=0.05,
         w_spec_phase=0.02,
 
