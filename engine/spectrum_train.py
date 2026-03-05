@@ -141,12 +141,11 @@ def _evaluate_full_frames(model, loader, device, cfg):
                 pred_chunks.append(model(x_alines[i:i + 512]))
             pred_alines = torch.cat(pred_chunks, dim=0)  # [alines, 2, pixels]
 
-            # Frame loss on random subset
+            # Frame loss on all A-lines
             lp = _loss_params_from_meta(meta)
-            sample_idx = torch.randperm(alines, device=device)[:min(256, alines)]
             y_alines = y_2d.permute(2, 0, 1)
             frame_loss = compute_spectrum_loss(
-                pred_alines[sample_idx], y_alines[sample_idx],
+                pred_alines, y_alines,
                 **lp,
                 w_charb=cfg.w_charb,
                 w_grad=cfg.w_grad,
@@ -367,8 +366,9 @@ def run_spectrum_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 val_pred_stack.append(val_full["sample_pred"])
                 val_pred_stack_epochs.append(epoch)
 
-            if val_loss < best_val:
-                best_val = val_loss
+            full_val_loss = val_full["val_loss"]
+            if full_val_loss < best_val:
+                best_val = full_val_loss
                 torch.save({
                     "epoch": epoch,
                     "model": model.state_dict(),
@@ -378,7 +378,7 @@ def run_spectrum_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 }, best_ckpt_path)
                 print(f"[OK] Saved best checkpoint: {best_ckpt_path}")
 
-            stop_now = early_stop.update(float(val_loss), epoch)
+            stop_now = early_stop.update(float(full_val_loss), epoch)
             if stop_now:
                 print(
                     f"[EARLY STOP] No val improvement for {early_stop.patience} validation checks. "

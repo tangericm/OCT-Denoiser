@@ -31,6 +31,8 @@ def main():
                 window_sigma=0.05,
                 gap=0.60,
                 gap_offset=0.015,
+                n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
+                sub_window_spread=0.5,    # sub-window center spread in sigma units
             ),
         ],
         cache_frames_per_worker=1000,
@@ -39,8 +41,8 @@ def main():
         amp=True,
         deterministic=True,
         epochs=300,
-        base=32,
-        batch_size=12,
+        base=64,
+        batch_size=32,
         lr=3e-4,
         weight_decay=8e-5,
         num_workers=4,
@@ -54,8 +56,8 @@ def main():
         # Combined image-domain + small spectral complex loss
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
-        w_spec_mag=0.05,
-        w_spec_phase=0.02,
+        w_spec_mag=0,
+        w_spec_phase=0,
 
         snr_sig_y0=111,
         snr_sig_y1=600,
