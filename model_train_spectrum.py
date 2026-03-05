@@ -41,7 +41,7 @@ def main():
         amp=True,
         deterministic=True,
         epochs=300,
-        base=64,
+        base=32,
         batch_size=32,
         lr=3e-4,
         weight_decay=8e-5,
@@ -50,7 +50,7 @@ def main():
         # For spectrum training: 2D patches (patch_w A-lines wide, full spectral depth)
         patch_h=2048,
         patch_w=1,
-        patches_per_frame=32,
+        patches_per_frame=64,
         patch_mode="strip",
 
         # Combined image-domain + small spectral complex loss
