@@ -1,7 +1,6 @@
 """Entry point for spectrum-domain denoising training.
 
-Trains a 1D UNet on complex OCT spectra (pre-FFT) with a hybrid loss
-that optimizes both spectral fidelity and reconstructed image quality.
+Trains a 1D UNet on complex OCT spectra (pre-FFT) with a pure image-domain loss on log-IFFT magnitude.
 
 Usage:
     python model_train_spectrum.py
@@ -18,7 +17,7 @@ def main():
     cfg = TrainConfig(
         runs_root=r"runs",
         experiment_name="Spectrum",
-        model_name="spectrum_unet_2d",
+        model_name="spectrum_unet_1d",
         spectrum_mode=True,
 
         folder_specs=[
@@ -49,13 +48,11 @@ def main():
 
         # For spectrum training: 2D patches (patch_w A-lines wide, full spectral depth)
         patch_h=2048,
-        patch_w=16,
+        patch_w=1,
         patches_per_frame=16,
         patch_mode="strip",
 
-        # Hybrid loss weights
-        w_spectrum=0.01,
-        w_image=0.8,
+        # Pure image-domain loss
         w_charb=0.8,
         w_grad=0.5,
 

@@ -1,10 +1,10 @@
-"""1D UNet for complex spectrum denoising.
+"""Dual-domain 1D residual network for complex spectrum denoising.
 
-Input:  [B, 4, L]  (real/imag for w1, real/imag for w2)
+Input:  [B, 6, L]  (w1_re, w1_im, w2_re, w2_im, w1_mask, w2_mask)
 Output: [B, 2, L]  (real/imag denoised full-bandwidth spectrum)
 
-Designed for OCT spectral-domain denoising where each A-line spectrum
-is processed independently as a 1D signal.
+The model keeps a spectrum-domain encoder/decoder and injects a full-resolution
+image-domain refinement branch via fixed IFFT/FFT operations.
 """
 from __future__ import annotations
 
@@ -63,10 +63,13 @@ class UpBlock1d(nn.Module):
 
 
 class SpectrumUNet1D(nn.Module):
-    """1D UNet for complex OCT spectrum denoising."""
+    """Dual-domain residual 1D UNet for complex OCT spectrum denoising."""
 
-    def __init__(self, in_channels: int = 4, out_channels: int = 2, base: int = 64):
+    def __init__(self, in_channels: int = 6, out_channels: int = 2, base: int = 64):
         super().__init__()
+        if base % 2 != 0:
+            raise ValueError("base must be even so channels can be paired as complex features")
+
         self.stem = nn.Sequential(
             nn.Conv1d(in_channels, base, 15, padding=7, bias=False),
             nn.BatchNorm1d(base),
@@ -75,37 +78,56 @@ class SpectrumUNet1D(nn.Module):
         self.enc1 = nn.Sequential(ResBlock1d(base), ResBlock1d(base))
         self.down1 = DownBlock1d(base, base * 2)
         self.down2 = DownBlock1d(base * 2, base * 4)
-        self.down3 = DownBlock1d(base * 4, base * 8)
 
-        self.bottleneck = nn.Sequential(ResBlock1d(base * 8), ResBlock1d(base * 8))
+        self.bottleneck = nn.Sequential(ResBlock1d(base * 4), ResBlock1d(base * 4))
 
-        self.up2 = UpBlock1d(base * 8, base * 4, base * 4)
+        self.image_refine = nn.Sequential(
+            nn.Conv1d(base // 2, base // 2, 5, padding=2, bias=False),
+            nn.BatchNorm1d(base // 2),
+            nn.SiLU(inplace=True),
+            ResBlock1d(base // 2),
+            ResBlock1d(base // 2),
+        )
+
         self.up1 = UpBlock1d(base * 4, base * 2, base * 2)
         self.up0 = UpBlock1d(base * 2, base, base)
         self.head = nn.Conv1d(base, out_channels, 1)
 
+    @staticmethod
+    def _to_complex_pairs(x: torch.Tensor) -> torch.Tensor:
+        return torch.complex(x[:, 0::2].float(), x[:, 1::2].float())
+
+    @staticmethod
+    def _to_re_im_channels(x: torch.Tensor) -> torch.Tensor:
+        return torch.stack([x.real, x.imag], dim=2).flatten(1, 2)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        trivial = torch.stack([x[:, 0] + x[:, 2], x[:, 1] + x[:, 3]], dim=1)
+
         L = x.shape[-1]
-        # Pad to multiple of 8 for clean downsampling
-        pad_total = (8 - L % 8) % 8
+        # Pad to multiple of 4 for clean downsampling
+        pad_total = (4 - L % 4) % 4
         if pad_total > 0:
             x = F.pad(x, (0, pad_total), mode="reflect")
+            trivial = F.pad(trivial, (0, pad_total), mode="reflect")
 
         x0 = self.stem(x)
         s0 = self.enc1(x0)
         s1 = self.down1(s0)
         s2 = self.down2(s1)
-        s3 = self.down3(s2)
 
-        b = self.bottleneck(s3)
+        depth_feats = torch.fft.ifft(self._to_complex_pairs(s0), dim=-1).abs()
+        depth_refined = self.image_refine(depth_feats)
+        depth_spec = torch.fft.fft(depth_refined.to(torch.complex64), dim=-1)
+        depth_spec_re_im = self._to_re_im_channels(depth_spec)
 
-        x = self.up2(b, s2)
-        x = self.up1(x, s1)
-        x = self.up0(x, s0)
-        out = self.head(x)
-        return out[..., :L]
+        b = self.bottleneck(s2)
+        x = self.up1(b, s1)
+        x = self.up0(x, s0 + depth_spec_re_im)
+        correction = self.head(x)
+        return (trivial + correction)[..., :L]
 
 
 @register_model("spectrum_unet_1d")
 def build_spectrum_unet_1d(*, base: int = 64, **_kw) -> nn.Module:
-    return SpectrumUNet1D(in_channels=4, out_channels=2, base=base)
+    return SpectrumUNet1D(in_channels=6, out_channels=2, base=base)

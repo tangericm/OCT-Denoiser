@@ -95,7 +95,7 @@ def _save_roi_plot(
 
 @torch.no_grad()
 def _infer_full_frame_2d(model, x_np: np.ndarray, patch_w: int, device: str) -> np.ndarray:
-    """Sliding-window 2D inference on [4, pixels, alines] → [2, pixels, alines]."""
+    """Sliding-window 2D inference on [6, pixels, alines] → [2, pixels, alines]."""
     alines = x_np.shape[2]
     stride = max(1, patch_w // 2)
 
@@ -203,11 +203,14 @@ def predict_spectrum_raw_to_tiffs(
         out = proc.process_one_spectrum(p, frame_idx=i)
         norm_factor = float(out["norm_factor"])
 
-        # Build [4, pixels, alines] input
+        # Build [6, pixels, alines] input
+        w1_mask = np.broadcast_to(out["w1_mask"][:, None], out["spec_w1"].shape)
+        w2_mask = np.broadcast_to(out["w2_mask"][:, None], out["spec_w2"].shape)
         x_np = np.stack([
             out["spec_w1"].real, out["spec_w1"].imag,
             out["spec_w2"].real, out["spec_w2"].imag,
-        ], axis=0).astype(np.float32)  # [4, pixels, alines]
+            w1_mask, w2_mask,
+        ], axis=0).astype(np.float32)  # [6, pixels, alines]
 
         alines = x_np.shape[2]
 
@@ -216,10 +219,10 @@ def predict_spectrum_raw_to_tiffs(
             pred_np2d = _infer_full_frame_2d(model, x_np, patch_w, device)  # [2, pixels, alines]
             pred_spec = (pred_np2d[0] + 1j * pred_np2d[1]) * norm_factor
         else:
-            # Reshape to [alines, 4, pixels] for batched A-line inference
+            # Reshape to [alines, 6, pixels] for batched A-line inference
             x_alines = torch.from_numpy(
                 np.ascontiguousarray(x_np.transpose(2, 0, 1))
-            ).to(device, non_blocking=True)  # [alines, 4, pixels]
+            ).to(device, non_blocking=True)  # [alines, 6, pixels]
             pred_chunks = []
             for j in range(0, alines, _CHUNK):
                 pred_chunks.append(model(x_alines[j:j + _CHUNK]))

@@ -81,8 +81,6 @@ class TrainConfig:
 
     # Spectrum training
     spectrum_mode: bool = False
-    w_spectrum: float = 1.0
-    w_image: float = 0.5
 
     # Inference outputs
     tiff_dtype: str = "uint16"

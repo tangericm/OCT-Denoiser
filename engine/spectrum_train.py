@@ -70,7 +70,6 @@ def _evaluate_patches(model, loader, device, cfg):
         lp = _loss_params_from_meta(meta)
         loss = compute_spectrum_loss(
             pred, y,
-            w_spectrum=cfg.w_spectrum, w_image=cfg.w_image,
             **lp,
         )
         loss_acc += float(loss.item()) * x.size(0)
@@ -80,7 +79,7 @@ def _evaluate_patches(model, loader, device, cfg):
 
 @torch.no_grad()
 def _infer_full_frame_2d(model, x_np: np.ndarray, patch_w: int, device: str) -> np.ndarray:
-    """Sliding-window 2D inference on [4, pixels, alines] → [2, pixels, alines]."""
+    """Sliding-window 2D inference on [6, pixels, alines] → [2, pixels, alines]."""
     alines = x_np.shape[2]
     stride = max(1, patch_w // 2)
 
@@ -92,7 +91,7 @@ def _infer_full_frame_2d(model, x_np: np.ndarray, patch_w: int, device: str) -> 
         starts.append(max(0, alines - patch_w))
 
     for j in starts:
-        chunk = np.ascontiguousarray(x_np[:, :, j:j + patch_w])  # [4, pixels, patch_w]
+        chunk = np.ascontiguousarray(x_np[:, :, j:j + patch_w])  # [6, pixels, patch_w]
         t = torch.from_numpy(chunk).unsqueeze(0).to(device, non_blocking=True)
         pred = model(t)[0].cpu().numpy()  # [2, pixels, patch_w]
         accum[:, :, j:j + patch_w] += pred
@@ -113,7 +112,7 @@ def _evaluate_full_frames(model, loader, device, cfg):
 
     for batch in loader:
         x, y, meta = _unpack_batch(batch, device)
-        # x: [1, 4, pixels, alines], y: [1, 2, pixels, alines]
+        # x: [1, 6, pixels, alines], y: [1, 2, pixels, alines]
         m = meta[0]
         norm_factor = float(m["norm_factor"])
         crop_depth = tuple(m["crop_depth"])
@@ -121,7 +120,7 @@ def _evaluate_full_frames(model, loader, device, cfg):
         log_eps = float(m["log_eps"])
         apply_fftshift = bool(m["apply_fftshift_depth"])
 
-        x_np = x[0].cpu().numpy()  # [4, pixels, alines]
+        x_np = x[0].cpu().numpy()  # [6, pixels, alines]
         y_2d = y[0]  # [2, pixels, alines] tensor
 
         if patch_w > 1:
@@ -132,7 +131,7 @@ def _evaluate_full_frames(model, loader, device, cfg):
             # 1D model: process each A-line as batch element
             alines = x_np.shape[2]
             x_alines = torch.from_numpy(np.ascontiguousarray(x_np.transpose(2, 0, 1))).to(device)
-            # [alines, 4, pixels]
+            # [alines, 6, pixels]
             pred_chunks = []
             for i in range(0, alines, 512):
                 pred_chunks.append(model(x_alines[i:i + 512]))
@@ -144,7 +143,7 @@ def _evaluate_full_frames(model, loader, device, cfg):
             y_alines = y_2d.permute(2, 0, 1)
             frame_loss = compute_spectrum_loss(
                 pred_alines[sample_idx], y_alines[sample_idx],
-                w_spectrum=cfg.w_spectrum, w_image=cfg.w_image, **lp,
+                **lp,
             )
             loss_acc += float(frame_loss.item())
 
@@ -296,7 +295,6 @@ def run_spectrum_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                 pred = model(x)
                 loss = compute_spectrum_loss(
                     pred, y,
-                    w_spectrum=cfg.w_spectrum, w_image=cfg.w_image,
                     **lp,
                 )
 

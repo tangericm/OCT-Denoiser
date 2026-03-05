@@ -553,6 +553,8 @@ class BscanProcessor:
             "spec_full": spec_full,
             "spec_w1": spec_w1,
             "spec_w2": spec_w2,
+            "w1_mask": self.w1.astype(np.float32, copy=True),
+            "w2_mask": self.w2.astype(np.float32, copy=True),
             "norm_factor": norm_factor,
         }
 
