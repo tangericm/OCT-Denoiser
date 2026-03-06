@@ -50,7 +50,7 @@ def main():
         # For spectrum training: 2D patches (patch_w A-lines wide, full spectral depth)
         patch_h=2048,
         patch_w=1,
-        patches_per_frame=64,
+        patches_per_frame=32,
         patch_mode="strip",
 
         # Combined image-domain + small spectral complex loss
