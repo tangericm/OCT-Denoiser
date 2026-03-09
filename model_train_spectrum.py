@@ -17,7 +17,7 @@ def main():
     cfg = TrainConfig(
         runs_root=r"runs",
         experiment_name="Spectrum",
-        model_name="spectrum_unet_1d",
+        model_name="spectrum_resunet_1d",
         spectrum_mode=True,
 
         folder_specs=[
