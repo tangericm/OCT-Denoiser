@@ -87,35 +87,47 @@ class Pseudo2DStem(nn.Module):
     index as a collapsible 'depth' dimension — exactly as Pseudo3DStem uses
     Conv3d(k=(2,3,3)) to collapse two B-scan slices into one feature map.
 
-    Input:  x [B, 4, L]  — channels: (w1_re, w1_im, w2_re, w2_im)
+    The first 4 input channels (w1_re, w1_im, w2_re, w2_im) go through the
+    pseudo-2D path. Any remaining channels (e.g. w1_mask, w2_mask) are
+    concatenated after the squeeze before the final Conv1d.
 
-    Reshape: [B, 2(re/im), 2(windows), L]
-      → Conv2d(2→8,  k=(2,3), pad=(0,1))  collapses window dim → [B, 8,  1, L]
-      → Conv2d(8→16, k=(1,3), pad=(0,1))  refines along L      → [B, 16, 1, L]
-      → squeeze dim-2                                            → [B, 16, L]
-      → Conv1d(16→out_ch, k=3, pad=1)                           → [B, out_ch, L]
+    Input:  x [B, in_ch, L]  — in_ch >= 4; first 4 are (w1_re, w1_im, w2_re, w2_im)
+
+    Complex path on x[:, :4]:
+      view → [B, 2(re/im), 2(windows), L]
+      Conv2d(2→8,  k=(2,3), pad=(0,1))  collapses window dim → [B, 8,  1, L]
+      Conv2d(8→16, k=(1,3), pad=(0,1))  refines along L      → [B, 16, 1, L]
+      squeeze → [B, 16, L]
+      cat with x[:, 4:]                                       → [B, 16+extra, L]
+      Conv1d(16+extra→out_ch, k=3)                            → [B, out_ch, L]
     """
-    def __init__(self, out_ch: int):
+    def __init__(self, out_ch: int, in_ch: int = 4):
         super().__init__()
+        extra_ch = in_ch - 4  # channels beyond the 4 complex ones
         # k=(2,3): height-2 collapses the two sub-band windows, width-3 smooths L
         self.conv2d_1 = nn.Conv2d(2,  8,  kernel_size=(2, 3), padding=(0, 1), bias=False)
         self.bn2d_1   = nn.BatchNorm2d(8)
         self.act      = nn.SiLU(inplace=True)
         self.conv2d_2 = nn.Conv2d(8,  16, kernel_size=(1, 3), padding=(0, 1), bias=False)
         self.bn2d_2   = nn.BatchNorm2d(16)
-        self.conv1d   = nn.Conv1d(16, out_ch, 3, padding=1, bias=False)
+        self.conv1d   = nn.Conv1d(16 + extra_ch, out_ch, 3, padding=1, bias=False)
         self.bn1d     = nn.BatchNorm1d(out_ch)
+        self.extra_ch = extra_ch
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, 4, L] — (w1_re, w1_im, w2_re, w2_im)
-        # Reshape to [B, C=2(re/im), D=2(windows), L]
-        #   view maps: ch0→[:,0,0,:] ch1→[:,0,1,:] ch2→[:,1,0,:] ch3→[:,1,1,:]
         B, _, L = x.shape
-        x = x.view(B, 2, 2, L)                              # [B, 2, 2, L]
-        x = self.act(self.bn2d_1(self.conv2d_1(x)))         # [B, 8, 1, L]
-        x = self.act(self.bn2d_2(self.conv2d_2(x)))         # [B, 16, 1, L]
-        x = x.squeeze(2)                                     # [B, 16, L]
-        return self.act(self.bn1d(self.conv1d(x)))           # [B, out_ch, L]
+        cplx  = x[:, :4]                                     # [B, 4, L]
+        extra = x[:, 4:] if self.extra_ch > 0 else None      # [B, extra_ch, L] or None
+        # Pseudo-2D fusion of the two complex sub-band spectra
+        # view maps: ch0→[:,0,0,:]=w1_re, ch1→[:,0,1,:]=w1_im,
+        #            ch2→[:,1,0,:]=w2_re, ch3→[:,1,1,:]=w2_im
+        cplx = cplx.view(B, 2, 2, L)                         # [B, 2(re/im), 2(windows), L]
+        cplx = self.act(self.bn2d_1(self.conv2d_1(cplx)))    # [B, 8, 1, L]
+        cplx = self.act(self.bn2d_2(self.conv2d_2(cplx)))    # [B, 16, 1, L]
+        cplx = cplx.squeeze(2)                                # [B, 16, L]
+        if extra is not None:
+            cplx = torch.cat([cplx, extra], dim=1)            # [B, 16+extra_ch, L]
+        return self.act(self.bn1d(self.conv1d(cplx)))         # [B, out_ch, L]
 
 
 # ---------------------------------------------------------------------------
@@ -179,12 +191,14 @@ class SpectrumResUNet1D(nn.Module):
       - Same n_res=2 ResBlocks at each encoder/decoder stage
       - Same additive physics skip (depth_refine) fused at the highest-res skip
     """
-    def __init__(self, base: int = 64):
+    def __init__(self, base: int = 64, in_ch: int = 6):
         super().__init__()
         if base % 2 != 0:
             raise ValueError("base must be even for re/im complex pairing")
+        if in_ch < 4:
+            raise ValueError("in_ch must be >= 4 (w1_re, w1_im, w2_re, w2_im)")
 
-        self.stem  = Pseudo2DStem(out_ch=base)
+        self.stem  = Pseudo2DStem(out_ch=base, in_ch=in_ch)
         self.enc1  = nn.Sequential(ResBlock1d(base), ResBlock1d(base))
 
         self.down1 = Down1d(base,     base * 2, n_res=2)
@@ -226,5 +240,5 @@ class SpectrumResUNet1D(nn.Module):
 
 
 @register_model("spectrum_resunet_1d")
-def build_spectrum_resunet_1d(*, base: int = 64, **_kw) -> nn.Module:
-    return SpectrumResUNet1D(base=base)
+def build_spectrum_resunet_1d(*, base: int = 64, in_ch: int = 6, **_kw) -> nn.Module:
+    return SpectrumResUNet1D(base=base, in_ch=in_ch)
