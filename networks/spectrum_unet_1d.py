@@ -108,14 +108,11 @@ class SpectrumUNet1D(nn.Module):
         return torch.stack([x.real, x.imag], dim=2).flatten(1, 2)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        trivial = torch.stack([x[:, 0] + x[:, 2], x[:, 1] + x[:, 3]], dim=1)
-
         L = x.shape[-1]
         # Pad to multiple of 4 for clean downsampling
         pad_total = (4 - L % 4) % 4
         if pad_total > 0:
             x = F.pad(x, (0, pad_total), mode="reflect")
-            trivial = F.pad(trivial, (0, pad_total), mode="reflect")
 
         x0 = self.stem(x)
         s0 = self.enc1(x0)
@@ -130,9 +127,7 @@ class SpectrumUNet1D(nn.Module):
         b = self.bottleneck(s2)
         x = self.up1(b, s1)
         x = self.up0(x, s0 + depth_spec_re_im)
-        correction = self.head(x)
-        corrected = trivial + correction
-        return corrected[..., :L]
+        return self.head(x)[..., :L]
 
 
 @register_model("spectrum_unet_1d")
