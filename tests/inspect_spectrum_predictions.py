@@ -4,11 +4,10 @@ Inspect predicted spectra by running live inference from a checkpoint.
 Loads a model checkpoint, processes a single raw B-scan frame through
 BscanProcessor.process_one_spectrum(), runs the model, and produces
 side-by-side comparisons of:
-  - Spectral magnitude  |S(k)|
-  - Spectral phase      arg(S(k))
+  - Spectral magnitude  S(k)
   - Depth profile       |IFFT(S(k))|  (log10, full depth before crop)
   - Full B-scan         log-magnitude image
-  - Spectral magnitude / phase error maps
+  - Spectral magnitude error map
 
 for four spectra: input W1, input W2, ground-truth (spec_full), prediction.
 
@@ -55,7 +54,7 @@ ALINE_IDX: int | None = None
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Output directory for saved figures (None → auto: <run_dir>/inspect/)
-FIG_OUT_DIR: str| None = None
+FIG_OUT_DIR: str | None = None
 
 # Log scale for depth-profile plot?
 DEPTH_LOG = True
@@ -79,7 +78,7 @@ def _folder_spec_from_ckpt(cfg_dict: dict, idx: int) -> FolderSpec:
 
 
 def _spec_to_bscan_log(spec: np.ndarray, use_log: bool, log_eps: float, apply_fftshift: bool) -> np.ndarray:
-    """Complex spectrum [pixels, alines] → log-magnitude B-scan [pixels, alines] (full depth)."""
+    """Real spectrum [pixels, alines] → log-magnitude B-scan [pixels, alines] (full depth)."""
     depth = sfft.ifft(spec, axis=0, workers=-1)
     mag = np.abs(depth).astype(np.float32)
     if apply_fftshift:
@@ -127,15 +126,10 @@ def main() -> None:
     pixels = folder_spec.pixels
     alines = out["spec_full"].shape[1]
 
-    # Build network input [6, pixels, alines]  (normalised, as during training)
-    w1_mask_2d = np.broadcast_to(out["w1_mask"][:, None], out["spec_w1"].shape)
-    w2_mask_2d = np.broadcast_to(out["w2_mask"][:, None], out["spec_w2"].shape)
+    # Build network input [2, pixels, alines]  (normalised, as during training)
     x_np = np.stack([
-        out["spec_w1"].real, out["spec_w1"].imag,
-        out["spec_w2"].real, out["spec_w2"].imag,
-        w1_mask_2d.astype(np.float32),
-        w2_mask_2d.astype(np.float32),
-    ], axis=0).astype(np.float32)  # [6, pixels, alines]
+        out["spec_w1"], out["spec_w2"],
+    ], axis=0).astype(np.float32)  # [2, pixels, alines]
 
     # ---- Load model & run inference --------------------------------------
     model = create_model(model_name, base=base).to(DEVICE)
@@ -144,24 +138,23 @@ def main() -> None:
     print(f"[INFO] Model loaded ({sum(p.numel() for p in model.parameters()):,} params)  device={DEVICE}")
 
     with torch.no_grad():
-        # Reshape to [alines, 6, pixels] for A-line batch inference
+        # Reshape to [alines, 2, pixels] for A-line batch inference
         x_alines = torch.from_numpy(
             np.ascontiguousarray(x_np.transpose(2, 0, 1))
-        ).to(DEVICE)  # [alines, 6, pixels]
+        ).to(DEVICE)  # [alines, 2, pixels]
 
         pred_chunks = []
         for j in range(0, alines, _CHUNK):
             pred_chunks.append(model(x_alines[j:j + _CHUNK]).cpu())
-        pred_alines = torch.cat(pred_chunks, dim=0).numpy()  # [alines, 2, pixels]
+        pred_alines = torch.cat(pred_chunks, dim=0).numpy()  # [alines, 1, pixels]
 
-    # Reconstruct complex spectrum in physical units
-    pred_spec = (pred_alines[:, 0, :] + 1j * pred_alines[:, 1, :]).T * norm_factor  # [pixels, alines]
-    pred_spec = pred_spec.astype(np.complex64)
+    # Reconstruct real spectrum in physical units
+    pred_spec = pred_alines[:, 0, :].T.astype(np.float32) * norm_factor  # [pixels, alines]
 
-    # Scale inputs / GT to physical units (undo per-frame z-score normalisation)
-    spec_w1   = (out["spec_w1"]   * norm_factor).astype(np.complex64)
-    spec_w2   = (out["spec_w2"]   * norm_factor).astype(np.complex64)
-    spec_full = (out["spec_full"] * norm_factor).astype(np.complex64)
+    # Scale inputs / GT to physical units (undo per-frame normalisation)
+    spec_w1   = out["spec_w1"].astype(np.float32)   * norm_factor
+    spec_w2   = out["spec_w2"].astype(np.float32)   * norm_factor
+    spec_full = out["spec_full"].astype(np.float32) * norm_factor
 
     use_log        = folder_spec.use_log
     log_eps        = float(folder_spec.log_eps)
@@ -177,9 +170,9 @@ def main() -> None:
     fig.suptitle(f"Spectral Magnitude — frame {FRAME_IDX}, A-line {aline}", fontsize=13)
 
     # Row 1: GT full + Predicted + both windows
-    ax1.plot(k_axis, spec_full[:, aline].real, label="GT full",  color="steelblue", linewidth=1.2)
-    ax1.plot(k_axis, pred_spec[:, aline].real, label="Predicted",color="crimson",   linewidth=1.2, linestyle="--")
-    ax1.set_ylabel("Re(S(k))"); ax1.grid(True, alpha=0.3)
+    ax1.plot(k_axis, spec_full[:, aline], label="GT full",  color="steelblue", linewidth=1.2)
+    ax1.plot(k_axis, pred_spec[:, aline], label="Predicted",color="crimson",   linewidth=1.2, linestyle="--")
+    ax1.set_ylabel("S(k)"); ax1.grid(True, alpha=0.3)
     ax_w = ax1.twinx()
     ax_w.plot(k_axis, out["w1_mask"] - 0.5, color="tomato",         linewidth=0.8, linestyle=":", alpha=0.6, label="W1 window")
     ax_w.plot(k_axis, out["w2_mask"] - 0.5, color="mediumseagreen", linewidth=0.8, linestyle=":", alpha=0.6, label="W2 window")
@@ -189,41 +182,14 @@ def main() -> None:
     ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=8)
 
     # Row 2: W1 and W2 band inputs
-    ax2.plot(k_axis, spec_w1[:, aline].real, label="W1 input", color="tomato",         alpha=0.8, linewidth=0.9)
-    ax2.plot(k_axis, spec_w2[:, aline].real, label="W2 input", color="mediumseagreen", alpha=0.8, linewidth=0.9)
-    ax2.set_ylabel("Re(S(k))"); ax2.grid(True, alpha=0.3)
+    ax2.plot(k_axis, spec_w1[:, aline], label="W1 input", color="tomato",         alpha=0.8, linewidth=0.9)
+    ax2.plot(k_axis, spec_w2[:, aline], label="W2 input", color="mediumseagreen", alpha=0.8, linewidth=0.9)
+    ax2.set_ylabel("S(k)"); ax2.grid(True, alpha=0.3)
     ax2.legend(loc="upper left", fontsize=8)
 
     ax2.set_xlabel("Pixel")
     fig.tight_layout()
     _savefig(fig, f"spec_magnitude_frame{FRAME_IDX}_aline{aline}.png", out_dir)
-    plt.close(fig)
-
-    # ---- Spectral phase — GT/Pred (row 1) and W1/W2 inputs (row 2) -------
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
-    fig.suptitle(f"Spectral Phase — frame {FRAME_IDX}, A-line {aline}", fontsize=13)
-
-    # Row 1: GT full + Predicted + both windows
-    ax1.plot(k_axis, np.angle(spec_full[:, aline]), label="GT full",  color="steelblue", linewidth=1.2)
-    ax1.plot(k_axis, np.angle(pred_spec[:, aline]), label="Predicted",color="crimson",   linewidth=1.2, linestyle="--")
-    ax1.set_ylabel("Phase (rad)"); ax1.grid(True, alpha=0.3)
-    ax_w = ax1.twinx()
-    ax_w.plot(k_axis, out["w1_mask"] - 0.5, color="tomato",         linewidth=0.8, linestyle=":", alpha=0.6, label="W1 window")
-    ax_w.plot(k_axis, out["w2_mask"] - 0.5, color="mediumseagreen", linewidth=0.8, linestyle=":", alpha=0.6, label="W2 window")
-    ax_w.set_ylabel("Window weight"); ax_w.set_ylim(-1.25, 1.25); ax_w.set_yticks([-0.5, 0, 0.5])
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax_w.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=8)
-
-    # Row 2: W1 and W2 band inputs
-    ax2.plot(k_axis, np.angle(spec_w1[:, aline]), label="W1 input", color="tomato",         alpha=0.8, linewidth=0.9)
-    ax2.plot(k_axis, np.angle(spec_w2[:, aline]), label="W2 input", color="mediumseagreen", alpha=0.8, linewidth=0.9)
-    ax2.set_ylabel("Phase (rad)"); ax2.grid(True, alpha=0.3)
-    ax2.legend(loc="upper left", fontsize=8)
-
-    ax2.set_xlabel("Pixel")
-    fig.tight_layout()
-    _savefig(fig, f"spec_phase_frame{FRAME_IDX}_aline{aline}.png", out_dir)
     plt.close(fig)
 
     # ---- Depth profile |IFFT(S)| (one A-line) ----------------------------
@@ -282,58 +248,34 @@ def main() -> None:
     plt.close(fig)
 
     # ---- Spectral magnitude error map ------------------------------------
-    mag_err = np.abs(pred_spec) - np.abs(spec_full)
+    mag_err = pred_spec - spec_full
     fig, axes = plt.subplots(1, 3, figsize=(18, 4))
 
-    im = axes[0].imshow(np.abs(spec_full), aspect="auto", cmap="inferno")
-    axes[0].set_title("|GT full|"); axes[0].set_axis_off()
+    im = axes[0].imshow(spec_full, aspect="auto", cmap="inferno")
+    axes[0].set_title("GT full"); axes[0].set_axis_off()
     fig.colorbar(im, ax=axes[0], fraction=0.03)
 
-    im = axes[1].imshow(np.abs(pred_spec), aspect="auto", cmap="inferno")
-    axes[1].set_title("|Predicted|"); axes[1].set_axis_off()
+    im = axes[1].imshow(pred_spec, aspect="auto", cmap="inferno")
+    axes[1].set_title("Predicted"); axes[1].set_axis_off()
     fig.colorbar(im, ax=axes[1], fraction=0.03)
 
     vabs = float(np.percentile(np.abs(mag_err), 99))
     im = axes[2].imshow(mag_err, aspect="auto", cmap="seismic", vmin=-vabs, vmax=vabs)
-    axes[2].set_title("|Pred| − |GT|"); axes[2].set_axis_off()
+    axes[2].set_title("Pred − GT"); axes[2].set_axis_off()
     fig.colorbar(im, ax=axes[2], fraction=0.03)
 
-    fig.suptitle(f"Spectral Magnitude Error — frame {FRAME_IDX}", fontsize=13)
+    fig.suptitle(f"Spectral Error — frame {FRAME_IDX}", fontsize=13)
     fig.tight_layout()
-    _savefig(fig, f"spec_mag_error_frame{FRAME_IDX}.png", out_dir)
-    plt.close(fig)
-
-    # ---- Spectral phase error map ----------------------------------------
-    threshold        = float(np.percentile(np.abs(spec_full), 80))
-    mask             = np.abs(spec_full) > threshold
-    phase_err        = np.angle(pred_spec * np.conj(spec_full))   # wrapped [-π, π]
-    phase_err_masked = np.where(mask, phase_err, np.nan)
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 4))
-    im = axes[0].imshow(phase_err, aspect="auto", cmap="seismic", vmin=-np.pi, vmax=np.pi)
-    axes[0].set_title("Phase error (all k)"); axes[0].set_axis_off()
-    fig.colorbar(im, ax=axes[0], fraction=0.03, label="rad")
-
-    im = axes[1].imshow(phase_err_masked, aspect="auto", cmap="seismic", vmin=-np.pi, vmax=np.pi)
-    axes[1].set_title(f"Phase error (|GT| > p80 = {threshold:.2e})")
-    axes[1].set_axis_off()
-    fig.colorbar(im, ax=axes[1], fraction=0.03, label="rad")
-
-    fig.suptitle(f"Spectral Phase Error (pred vs GT) — frame {FRAME_IDX}", fontsize=13)
-    fig.tight_layout()
-    _savefig(fig, f"spec_phase_error_frame{FRAME_IDX}.png", out_dir)
+    _savefig(fig, f"spec_error_frame{FRAME_IDX}.png", out_dir)
     plt.close(fig)
 
     # ---- Summary stats ---------------------------------------------------
-    mask_flat = mask.ravel()
-    rms_phase = float(np.sqrt(np.nanmean(phase_err_masked ** 2)))
     print(f"\n=== Spectral comparison summary — frame {FRAME_IDX}, A-line {aline} ===")
     print(f"  pixels={pixels}  alines={alines}  norm_factor={norm_factor:.4e}")
-    print(f"  Predicted  |S| mean={np.abs(pred_spec).mean():.4e}  std={np.abs(pred_spec).std():.4e}")
-    print(f"  GT full    |S| mean={np.abs(spec_full).mean():.4e}  std={np.abs(spec_full).std():.4e}")
-    print(f"  Mag MAE (all k):       {np.abs(mag_err).mean():.4e}")
-    print(f"  Mag MAE (|GT| > p80):  {np.abs(mag_err.ravel()[mask_flat]).mean():.4e}")
-    print(f"  Phase RMSE (|GT|>p80): {rms_phase:.4f} rad  ({np.degrees(rms_phase):.2f} deg)")
+    print(f"  Predicted  S mean={pred_spec.mean():.4e}  std={pred_spec.std():.4e}")
+    print(f"  GT full    S mean={spec_full.mean():.4e}  std={spec_full.std():.4e}")
+    print(f"  MAE (all k):    {np.abs(mag_err).mean():.4e}")
+    print(f"  RMSE (all k):   {np.sqrt((mag_err**2).mean()):.4e}")
 
 
 if __name__ == "__main__":
