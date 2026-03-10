@@ -18,7 +18,6 @@ def main():
         runs_root=r"runs",
         experiment_name="Spectrum",
         model_name="spectrum_resunet_1d",
-        spectrum_mode=True,
 
         folder_specs=[
             # FolderSpec(
@@ -78,6 +77,8 @@ def main():
         val_every=5,
         save_every=5,
         early_stop_patience=20,
+        also_save_float32=True,
+        save_raw_spectra=True,
     )
 
     seed_all(cfg.seed, deterministic=cfg.deterministic)

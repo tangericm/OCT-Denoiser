@@ -6,6 +6,7 @@ Mirrors predict_raw_to_tiffs from engine/infer.py but operates pre-FFT:
 from __future__ import annotations
 
 import csv
+import json
 import os
 import time
 
@@ -132,6 +133,7 @@ def predict_spectrum_raw_to_tiffs(
     snr_sig_y0: int | None = None,
     snr_sig_y1: int | None = None,
     snr_sig_stat: str | None = None,
+    save_raw_spectra: bool = False,
 ) -> None:
     """Spectrum-domain inference: raw → TIFF stacks + SNR CSV."""
     from preprocess import BscanProcessor
@@ -189,6 +191,10 @@ def predict_spectrum_raw_to_tiffs(
     w1    = np.zeros((F, H, W), dtype=np.float32)
     w2    = np.zeros((F, H, W), dtype=np.float32)
 
+    pixels_full = folder_spec.pixels
+    alines_full = out0["spec_full"].shape[1]
+    raw_spectra: list[np.ndarray] | None = [] if save_raw_spectra else None
+
     snr_pred_list: list[float] = []
     snr_gt_list:   list[float] = []
     cnr_pred_list: list[float] = []
@@ -232,6 +238,9 @@ def predict_spectrum_raw_to_tiffs(
             torch.cuda.synchronize()
         elapsed = time.time() - t0
         times.append(elapsed)
+
+        if raw_spectra is not None:
+            raw_spectra.append(pred_spec.astype(np.complex64))
 
         pred_bscan, pred_mu, pred_sd = _spectrum_to_bscan(pred_spec, crop_depth, use_log, log_eps, apply_fftshift)
 
@@ -328,6 +337,25 @@ def predict_spectrum_raw_to_tiffs(
             preds, dtype="float32", scale_per_slice=True,
         )
 
+    if raw_spectra is not None:
+        raw_array = np.stack(raw_spectra, axis=0)  # [F, pixels, alines], complex64
+        raw_path  = os.path.join(outdir, f"pred_spectra_{param_suffix}.raw")
+        raw_array.tofile(raw_path)
+        meta = {
+            "shape":   list(raw_array.shape),
+            "dtype":   "complex64",
+            "axes":    ["frames", "pixels", "alines"],
+            "units":   "physical (norm_factor applied per frame)",
+            "pixels":  pixels_full,
+            "alines":  alines_full,
+            "frames":  F,
+        }
+        meta_path = raw_path.replace(".raw", "_meta.json")
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+        print(f"[OK] Saved raw spectra: {raw_path}  ({raw_array.nbytes / 1e6:.1f} MB)")
+        print(f"[OK] Saved spectrum metadata: {meta_path}")
+
     print(f"[OK] Saved TIFFs to {outdir}")
 
 
@@ -343,6 +371,7 @@ def predict_spectrum_from_config(cfg, folder_spec, ckpt_path: str, outdir: str, 
         patch_w=cfg.patch_w,
         tiff_dtype=cfg.tiff_dtype,
         also_save_float32=cfg.also_save_float32,
+        save_raw_spectra=cfg.save_raw_spectra,
         snr_sig_y0=cfg.snr_sig_y0,
         snr_sig_y1=cfg.snr_sig_y1,
         snr_sig_stat=cfg.snr_sig_stat,

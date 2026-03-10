@@ -81,10 +81,8 @@ class TrainConfig:
     early_stop_min_delta: float = 0.0
     early_stop_warmup_checks: int = 0
 
-    # Spectrum training
-    spectrum_mode: bool = False
-
     # Inference outputs
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False
+    save_raw_spectra: bool = False
 

@@ -165,42 +165,63 @@ def main() -> None:
 
     use_log        = folder_spec.use_log
     log_eps        = float(folder_spec.log_eps)
-    apply_fftshift = folder_spec.apply_fftshift_depth
+    apply_fftshift = True  # always center DC for visualization
 
     aline  = alines // 2 if ALINE_IDX is None else int(ALINE_IDX)
     k_axis = np.arange(pixels)
     z_axis = np.arange(pixels)
     print(f"[INFO] Inspecting A-line {aline} (of {alines})")
 
-    # ---- Spectral magnitude (one A-line) ---------------------------------
-    fig, ax = plt.subplots(figsize=(12, 4))
-    ax.set_title(f"Spectral Magnitude — frame {FRAME_IDX}, A-line {aline}")
-    ax.plot(k_axis, spec_w1[:, aline].real,   label="W1 input",  color="tomato",      alpha=0.8, linewidth=0.9)
-    ax.plot(k_axis, spec_w2[:, aline].real,   label="W2 input",  color="mediumseagreen", alpha=0.8, linewidth=0.9)
-    ax.plot(k_axis, spec_full[:, aline].real, label="GT full",   color="steelblue",   linewidth=1.2)
-    ax.plot(k_axis, pred_spec[:, aline].real, label="Predicted", color="crimson",      linewidth=1.2, linestyle="--")
-    ax.set_xlabel("Pixel"); ax.set_ylabel("Re(S(k))")
-    ax_w = ax.twinx()
+    # ---- Spectral magnitude — GT/Pred (row 1) and W1/W2 inputs (row 2) ---
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
+    fig.suptitle(f"Spectral Magnitude — frame {FRAME_IDX}, A-line {aline}", fontsize=13)
+
+    # Row 1: GT full + Predicted + both windows
+    ax1.plot(k_axis, spec_full[:, aline].real, label="GT full",  color="steelblue", linewidth=1.2)
+    ax1.plot(k_axis, pred_spec[:, aline].real, label="Predicted",color="crimson",   linewidth=1.2, linestyle="--")
+    ax1.set_ylabel("Re(S(k))"); ax1.grid(True, alpha=0.3)
+    ax_w = ax1.twinx()
     ax_w.plot(k_axis, out["w1_mask"] - 0.5, color="tomato",         linewidth=0.8, linestyle=":", alpha=0.6, label="W1 window")
     ax_w.plot(k_axis, out["w2_mask"] - 0.5, color="mediumseagreen", linewidth=0.8, linestyle=":", alpha=0.6, label="W2 window")
     ax_w.set_ylabel("Window weight"); ax_w.set_ylim(-1.25, 1.25); ax_w.set_yticks([-0.5, 0, 0.5])
-    lines1, labels1 = ax.get_legend_handles_labels()
+    lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax_w.get_legend_handles_labels()
-    ax.legend(lines1 + lines2, labels1 + labels2, loc="upper left")
-    ax.grid(True, alpha=0.3)
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=8)
+
+    # Row 2: W1 and W2 band inputs
+    ax2.plot(k_axis, spec_w1[:, aline].real, label="W1 input", color="tomato",         alpha=0.8, linewidth=0.9)
+    ax2.plot(k_axis, spec_w2[:, aline].real, label="W2 input", color="mediumseagreen", alpha=0.8, linewidth=0.9)
+    ax2.set_ylabel("Re(S(k))"); ax2.grid(True, alpha=0.3)
+    ax2.legend(loc="upper left", fontsize=8)
+
+    ax2.set_xlabel("Pixel")
     fig.tight_layout()
     _savefig(fig, f"spec_magnitude_frame{FRAME_IDX}_aline{aline}.png", out_dir)
     plt.close(fig)
 
-    # ---- Spectral phase (one A-line) -------------------------------------
-    fig, ax = plt.subplots(figsize=(12, 4))
-    ax.set_title(f"Spectral Phase — frame {FRAME_IDX}, A-line {aline}")
-    ax.plot(k_axis, np.angle(spec_w1[:, aline]),   label="W1 input",  color="tomato",         alpha=0.8, linewidth=0.9)
-    ax.plot(k_axis, np.angle(spec_w2[:, aline]),   label="W2 input",  color="mediumseagreen", alpha=0.8, linewidth=0.9)
-    ax.plot(k_axis, np.angle(spec_full[:, aline]), label="GT full",   color="steelblue",      linewidth=1.2)
-    ax.plot(k_axis, np.angle(pred_spec[:, aline]), label="Predicted", color="crimson",         linewidth=1.2, linestyle="--")
-    ax.set_xlabel("Pixel"); ax.set_ylabel("Phase (rad)")
-    ax.legend(); ax.grid(True, alpha=0.3)
+    # ---- Spectral phase — GT/Pred (row 1) and W1/W2 inputs (row 2) -------
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
+    fig.suptitle(f"Spectral Phase — frame {FRAME_IDX}, A-line {aline}", fontsize=13)
+
+    # Row 1: GT full + Predicted + both windows
+    ax1.plot(k_axis, np.angle(spec_full[:, aline]), label="GT full",  color="steelblue", linewidth=1.2)
+    ax1.plot(k_axis, np.angle(pred_spec[:, aline]), label="Predicted",color="crimson",   linewidth=1.2, linestyle="--")
+    ax1.set_ylabel("Phase (rad)"); ax1.grid(True, alpha=0.3)
+    ax_w = ax1.twinx()
+    ax_w.plot(k_axis, out["w1_mask"] - 0.5, color="tomato",         linewidth=0.8, linestyle=":", alpha=0.6, label="W1 window")
+    ax_w.plot(k_axis, out["w2_mask"] - 0.5, color="mediumseagreen", linewidth=0.8, linestyle=":", alpha=0.6, label="W2 window")
+    ax_w.set_ylabel("Window weight"); ax_w.set_ylim(-1.25, 1.25); ax_w.set_yticks([-0.5, 0, 0.5])
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax_w.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=8)
+
+    # Row 2: W1 and W2 band inputs
+    ax2.plot(k_axis, np.angle(spec_w1[:, aline]), label="W1 input", color="tomato",         alpha=0.8, linewidth=0.9)
+    ax2.plot(k_axis, np.angle(spec_w2[:, aline]), label="W2 input", color="mediumseagreen", alpha=0.8, linewidth=0.9)
+    ax2.set_ylabel("Phase (rad)"); ax2.grid(True, alpha=0.3)
+    ax2.legend(loc="upper left", fontsize=8)
+
+    ax2.set_xlabel("Pixel")
     fig.tight_layout()
     _savefig(fig, f"spec_phase_frame{FRAME_IDX}_aline{aline}.png", out_dir)
     plt.close(fig)
@@ -212,8 +233,10 @@ def main() -> None:
             d = sfft.fftshift(d)
         return np.abs(d).astype(np.float32)
 
-    mag_w1, mag_w2     = _depth(spec_w1[:, aline]),   _depth(spec_w2[:, aline])
-    mag_full, mag_pred = _depth(spec_full[:, aline]), _depth(pred_spec[:, aline])
+    mag_w1   = _depth(spec_w1[:, aline])
+    mag_w2   = _depth(spec_w2[:, aline])
+    mag_full = _depth(spec_full[:, aline])
+    mag_pred = _depth(pred_spec[:, aline])
 
     if DEPTH_LOG:
         plot_fn = lambda m: np.log10(m + log_eps)
@@ -222,14 +245,19 @@ def main() -> None:
         plot_fn = lambda m: m
         ylabel = "|IFFT(S)|"
 
-    fig, ax = plt.subplots(figsize=(12, 4))
-    ax.set_title(f"Depth Profile — frame {FRAME_IDX}, A-line {aline}")
-    ax.plot(z_axis, plot_fn(mag_w1),   label="W1 input",  alpha=0.8, linewidth=0.9)
-    ax.plot(z_axis, plot_fn(mag_w2),   label="W2 input",  alpha=0.8, linewidth=0.9)
-    ax.plot(z_axis, plot_fn(mag_full), label="GT full",   color="steelblue", linewidth=1.2)
-    ax.plot(z_axis, plot_fn(mag_pred), label="Predicted", color="crimson",   linewidth=1.2, linestyle="--")
-    ax.set_xlabel("Depth pixel"); ax.set_ylabel(ylabel)
-    ax.legend(); ax.grid(True, alpha=0.3)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+    fig.suptitle(f"Depth Profile — frame {FRAME_IDX}, A-line {aline}", fontsize=13)
+
+    # Row 1: GT full + Predicted
+    ax1.plot(z_axis, plot_fn(mag_full), label="GT full",  color="steelblue", linewidth=1.2)
+    ax1.plot(z_axis, plot_fn(mag_pred), label="Predicted",color="crimson",   linewidth=1.2, linestyle="--")
+    ax1.set_ylabel(ylabel); ax1.legend(); ax1.grid(True, alpha=0.3)
+
+    # Row 2: W1 and W2 inputs
+    ax2.plot(z_axis, plot_fn(mag_w1), label="W1 input", color="tomato",         alpha=0.8, linewidth=0.9)
+    ax2.plot(z_axis, plot_fn(mag_w2), label="W2 input", color="mediumseagreen", alpha=0.8, linewidth=0.9)
+    ax2.set_xlabel("Depth pixel"); ax2.set_ylabel(ylabel); ax2.legend(); ax2.grid(True, alpha=0.3)
+
     fig.tight_layout()
     _savefig(fig, f"depth_profile_frame{FRAME_IDX}_aline{aline}.png", out_dir)
     plt.close(fig)
@@ -240,13 +268,12 @@ def main() -> None:
     bscan_full = _spec_to_bscan_log(spec_full, use_log, log_eps, apply_fftshift)
     bscan_pred = _spec_to_bscan_log(pred_spec, use_log, log_eps, apply_fftshift)
 
-    vmax = float(bscan_full.max())
-    vmin = vmax - DB_CLIP / 20.0
-
     fig, axes = plt.subplots(1, 4, figsize=(22, 5))
     for ax, img, title in zip(axes,
                                [bscan_w1, bscan_w2, bscan_full, bscan_pred],
                                ["W1 input", "W2 input", "GT full", "Predicted"]):
+        vmax = float(np.percentile(img, 99.9))
+        vmin = vmax - DB_CLIP / 20.0
         ax.imshow(img, cmap="gray", vmin=vmin, vmax=vmax, aspect="auto")
         ax.set_title(title); ax.set_axis_off()
     fig.suptitle(f"B-scan (full depth, no crop) — frame {FRAME_IDX}", fontsize=13)
