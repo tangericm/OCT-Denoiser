@@ -20,30 +20,28 @@ def main():
         model_name="spectrum_resunet_1d",
 
         folder_specs=[
-            # FolderSpec(
-            #     root_folder=r"images\Maestro3",
-            #     data_folder="6mm_1024Aline",
-            #     pixels=2048,
-            #     alines=1024,
-            #     crop_depth=(0, 1024),
-            #     dispersion=[1.315892282e-06, 5.459678905e-10],
-            #     window_sigma=0.05,
-            #     gap=0.60,
-            #     gap_offset=0.015,
-            #     n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
-            #     sub_window_spread=0.5,    # sub-window center spread in sigma units
-            # ),
             FolderSpec(
                 root_folder=r"images\Maestro3",
-                data_folder="mirror_6mm_1024Aline",
+                data_folder="6mm_1024Aline",
                 pixels=2048,
                 alines=1024,
                 crop_depth=(0, 1024),
                 window_sigma=0.05,
                 gap=0.60,
                 gap_offset=0.015,
-                n_sub_windows=0,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
+                n_sub_windows=0,
             ),
+            # FolderSpec(
+            #     root_folder=r"images\Maestro3",
+            #     data_folder="mirror_6mm_1024Aline",
+            #     pixels=2048,
+            #     alines=1024,
+            #     crop_depth=(0, 1024),
+            #     window_sigma=0.05,
+            #     gap=0.60,
+            #     gap_offset=0.015,
+            #     n_sub_windows=0,
+            # ),
         ],
         cache_frames_per_worker=1000,
 

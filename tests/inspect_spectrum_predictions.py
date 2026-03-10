@@ -35,7 +35,7 @@ from preprocess import BscanProcessor
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
-CKPT_PATH = r"runs\Spectrum\20260310_113633\checkpoints\best.pt"
+CKPT_PATH = r"runs\Spectrum\20260310_122225\checkpoints\best.pt"
 
 # Which entry in cfg.folder_specs to use (0-based)
 FOLDER_SPEC_IDX = 0
