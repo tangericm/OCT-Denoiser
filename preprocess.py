@@ -583,6 +583,7 @@ class BscanProcessor:
             raw[0, :] = raw[3, :]
             raw[1, :] = raw[3, :]
             raw[2, :] = raw[3, :]
+            raw[:, 0] = raw[:, 1]
             raw = raw - raw.mean(axis=1, keepdims=True)
 
         # 3) Resample to k-linear (cubic spline, vectorized across A-lines)

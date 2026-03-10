@@ -6,6 +6,7 @@ Mirrors predict_raw_to_tiffs from engine/infer.py but operates pre-FFT:
 from __future__ import annotations
 
 import csv
+import json
 import os
 import time
 
@@ -128,6 +129,7 @@ def predict_spectrum_raw_to_tiffs(
     patch_w: int = 1,
     tiff_dtype: str = "uint16",
     also_save_float32: bool = False,
+    save_raw_spectra: bool = False,
     max_frames: int | None = None,
     snr_sig_y0: int | None = None,
     snr_sig_y1: int | None = None,
@@ -189,6 +191,10 @@ def predict_spectrum_raw_to_tiffs(
     w1    = np.zeros((F, H, W), dtype=np.float32)
     w2    = np.zeros((F, H, W), dtype=np.float32)
 
+    # Accumulated predicted spectra for optional .raw export
+    pred_specs_raw: list[np.ndarray] = []   # each: [pixels, alines] complex64
+    raw_meta_norm_factors: list[float] = []
+
     snr_pred_list: list[float] = []
     snr_gt_list:   list[float] = []
     cnr_pred_list: list[float] = []
@@ -232,6 +238,11 @@ def predict_spectrum_raw_to_tiffs(
             torch.cuda.synchronize()
         elapsed = time.time() - t0
         times.append(elapsed)
+
+        if save_raw_spectra:
+            pred_specs_raw.append(pred_spec.astype(np.complex64))
+            raw_meta_norm_factors.append(norm_factor)
+
         pred_bscan, pred_mu, pred_sd = _spectrum_to_bscan(pred_spec, crop_depth, use_log, log_eps, apply_fftshift)
 
         # Reconstruct ground-truth B-scan
@@ -311,6 +322,43 @@ def predict_spectrum_raw_to_tiffs(
     print(f"[OK] Mean CNR pred={mean_cnr_pred:.4f}  gt={mean_cnr_gt:.4f}  "
           f"dCNR={mean_cnr_pred - mean_cnr_gt:.4f}")
 
+    if save_raw_spectra and pred_specs_raw:
+        raw_path = os.path.join(outdir, f"pred_spec_{param_suffix}.raw")
+        spec_stack = np.stack(pred_specs_raw, axis=0)  # [F, pixels, alines] complex64
+        spec_stack.tofile(raw_path)
+
+        pixels_dim = folder_spec.pixels
+        alines_dim = spec_stack.shape[2]
+        meta_path = os.path.join(outdir, f"pred_spec_{param_suffix}_meta.json")
+        with open(meta_path, "w") as _f:
+            json.dump({
+                "F": int(spec_stack.shape[0]),
+                "pixels": pixels_dim,
+                "alines": alines_dim,
+                "dtype": "complex64",
+                "order": "C",
+                "shape": list(spec_stack.shape),
+                "norm_factors": raw_meta_norm_factors,
+                "frame_paths": [str(p) for p in paths],
+                "param_suffix": param_suffix,
+                "folder_spec": {
+                    "root_folder": folder_spec.root_folder,
+                    "data_folder": folder_spec.data_folder,
+                    "pixels": folder_spec.pixels,
+                    "alines": folder_spec.alines,
+                    "crop_depth": list(folder_spec.crop_depth),
+                    "use_log": folder_spec.use_log,
+                    "log_eps": float(folder_spec.log_eps),
+                    "apply_fftshift_depth": folder_spec.apply_fftshift_depth,
+                    "window_sigma": folder_spec.window_sigma,
+                    "gap": folder_spec.gap,
+                    "gap_offset": folder_spec.gap_offset,
+                    "dispersion": folder_spec.dispersion,
+                },
+            }, _f, indent=2)
+        print(f"[OK] Saved predicted spectra: {raw_path}  shape={list(spec_stack.shape)}")
+        print(f"[OK] Saved spectrum metadata: {meta_path}")
+
     pred_path = os.path.join(outdir, f"pred_{param_suffix}.tiff")
     gt_path   = os.path.join(outdir, f"gt_{param_suffix}.tiff")
     w1_path   = os.path.join(outdir, f"w1_{param_suffix}.tiff")
@@ -342,6 +390,7 @@ def predict_spectrum_from_config(cfg, folder_spec, ckpt_path: str, outdir: str, 
         patch_w=cfg.patch_w,
         tiff_dtype=cfg.tiff_dtype,
         also_save_float32=cfg.also_save_float32,
+        save_raw_spectra=getattr(cfg, "save_raw_spectra", False),
         snr_sig_y0=cfg.snr_sig_y0,
         snr_sig_y1=cfg.snr_sig_y1,
         snr_sig_stat=cfg.snr_sig_stat,

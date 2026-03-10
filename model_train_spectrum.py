@@ -21,13 +21,26 @@ def main():
         spectrum_mode=True,
 
         folder_specs=[
+            # FolderSpec(
+            #     root_folder=r"images\Maestro3",
+            #     data_folder="6mm_1024Aline",
+            #     pixels=2048,
+            #     alines=1024,
+            #     crop_depth=(0, 1024),
+            #     dispersion=[1.315892282e-06, 5.459678905e-10],
+            #     window_sigma=0.05,
+            #     gap=0.60,
+            #     gap_offset=0.015,
+            #     n_sub_windows=2,            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
+            #     sub_window_spread=0.5,    # sub-window center spread in sigma units
+            # ),
             FolderSpec(
                 root_folder=r"images\Maestro3",
-                data_folder="6mm_1024Aline",
+                data_folder="mirror_6mm_1024Aline",
                 pixels=2048,
                 alines=1024,
                 crop_depth=(0, 1024),
-                dispersion=[1.315892282e-06, 5.459678905e-10],
+                dispersion=[1.008132545e-06, 1.093683272e-09],
                 window_sigma=0.05,
                 gap=0.60,
                 gap_offset=0.015,
@@ -59,12 +72,13 @@ def main():
         w_spec_mag=0,
         w_spec_phase=0,
 
-        snr_sig_y0=111,
+        snr_sig_y0=70,
         snr_sig_y1=600,
         snr_sig_stat="p99.99",
         val_every=5,
         save_every=5,
         early_stop_patience=20,
+        save_raw_spectra=True,
     )
 
     seed_all(cfg.seed, deterministic=cfg.deterministic)
