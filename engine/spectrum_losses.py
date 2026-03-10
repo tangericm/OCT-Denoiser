@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import torch
 
-
-def charbonnier_1d(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
-    return torch.mean(torch.sqrt((pred - target) ** 2 + eps ** 2))
+from engine.losses import charbonnier_loss as charbonnier_1d
 
 
 def gradient_l1_1d(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:

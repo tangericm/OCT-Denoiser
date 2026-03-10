@@ -10,8 +10,9 @@ import matplotlib.patches as patches
 
 from networks import create_model
 from engine.metrics import roi_snr_cnr, roi_bounds, bg_bounds, to_physical_intensity
+from utils.helpers import nanmean
 from utils.io_tiff import save_tiff_stack
-from utils.run_manager import ensure_dir
+from utils.run_manager import ensure_dir, make_param_suffix
 from configs.default import TrainConfig
 
 DEFAULT_SNR_SIG_Y0 = TrainConfig.__dataclass_fields__["snr_sig_y0"].default
@@ -143,12 +144,7 @@ def predict_raw_to_tiffs(
     cnr_gt_list: list[float] = []
     times: list[float] = []
 
-    # Format filename with sigma and gap parameters
-    sigma = int(round(folder_spec.window_sigma * 100))  # e.g., 0.08 -> 080
-    gap = int(round(folder_spec.gap * 100))              # e.g., 0.25 -> 250
-    folder_tag = folder_name
-    folder_tag = folder_tag.replace(" ", "_")
-    param_suffix = f"{folder_tag}_s{sigma:03d}_g{gap:03d}"
+    param_suffix = make_param_suffix(folder_spec)
 
 
     # helper: full-frame or tiled inference
@@ -252,15 +248,11 @@ def predict_raw_to_tiffs(
             _save_roi_plot_first(pred_lin, sig_roi_c, bg_roi_c, snr_pred, os.path.join(outdir, f"snr_rois_frame0_pred_{param_suffix}.png"))
             _save_roi_plot_first(gt_lin,   sig_roi_c, bg_roi_c, snr_gt,   os.path.join(outdir, f"snr_rois_frame0_gt_{param_suffix}.png"))
 
-    snr_pred_arr = np.asarray(snr_pred_list, dtype=np.float64)
-    snr_gt_arr = np.asarray(snr_gt_list, dtype=np.float64)
-    cnr_pred_arr = np.asarray(cnr_pred_list, dtype=np.float64)
-    cnr_gt_arr = np.asarray(cnr_gt_list, dtype=np.float64)
-    mean_pred = float(np.nanmean(np.where(np.isfinite(snr_pred_arr), snr_pred_arr, np.nan))) if snr_pred_list else float("nan")
-    mean_gt = float(np.nanmean(np.where(np.isfinite(snr_gt_arr), snr_gt_arr, np.nan))) if snr_gt_list else float("nan")
-    mean_cnr_pred = float(np.nanmean(np.where(np.isfinite(cnr_pred_arr), cnr_pred_arr, np.nan))) if cnr_pred_list else float("nan")
-    mean_cnr_gt = float(np.nanmean(np.where(np.isfinite(cnr_gt_arr), cnr_gt_arr, np.nan))) if cnr_gt_list else float("nan")
-    mean_time = float(np.mean(times)) if times else float("nan")
+    mean_pred     = nanmean(snr_pred_list)
+    mean_gt       = nanmean(snr_gt_list)
+    mean_cnr_pred = nanmean(cnr_pred_list)
+    mean_cnr_gt   = nanmean(cnr_gt_list)
+    mean_time     = float(np.mean(times)) if times else float("nan")
 
     # save SNR CSV
     snr_csv_path = os.path.join(outdir, f"snr_per_frame_{param_suffix}.csv")

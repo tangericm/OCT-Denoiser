@@ -14,16 +14,16 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.backends.backend_agg
-import scipy.fft as sfft
 from dataclasses import asdict
 from typing import Dict, Any
 
 from engine.early_stopping import EarlyStopping
 from engine.spectrum_losses import compute_spectrum_loss
+from engine.spectrum_infer import _spectrum_to_bscan, _infer_full_frame_2d
 from engine.metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
 from data.spectrum_dataset import SpectrumDataModule
 from networks import create_model
-from utils.helpers import save_json
+from utils.helpers import save_json, nanmean
 from utils.io_tiff import save_tiff_stack
 from utils.live_plot import LiveLossPlot
 
@@ -41,22 +41,6 @@ def _loss_params_from_meta(meta):
         "log_eps": float(m["log_eps"]),
         "apply_fftshift": bool(m["apply_fftshift_depth"]),
     }
-
-
-def _spectrum_to_bscan(spec_complex: np.ndarray, crop_depth, use_log, log_eps, apply_fftshift):
-    """Convert complex spectrum [pixels, alines] → B-scan [H, W] with stats."""
-    depth = sfft.ifft(spec_complex, axis=0, workers=-1)
-    mag = np.abs(depth).astype(np.float32)
-    if apply_fftshift:
-        mag = sfft.fftshift(mag, axes=0).astype(np.float32)
-    z0, z1 = crop_depth
-    bscan = mag[z0:z1]
-    if use_log:
-        bscan = np.log10(bscan + log_eps).astype(np.float32)
-    mu = float(bscan.mean())
-    sd = float(bscan.std()) + 1e-6
-    bscan_norm = ((bscan - mu) / sd).astype(np.float32)
-    return bscan_norm, mu, sd
 
 
 @torch.no_grad()
@@ -79,29 +63,6 @@ def _evaluate_patches(model, loader, device, cfg):
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
     return loss_acc / max(n, 1)
-
-
-@torch.no_grad()
-def _infer_full_frame_2d(model, x_np: np.ndarray, patch_w: int, device: str) -> np.ndarray:
-    """Sliding-window 2D inference on [6, pixels, alines] → [2, pixels, alines]."""
-    alines = x_np.shape[2]
-    stride = max(1, patch_w // 2)
-
-    accum = np.zeros((2, x_np.shape[1], alines), dtype=np.float64)
-    weights = np.zeros(alines, dtype=np.float64)
-
-    starts = list(range(0, alines - patch_w + 1, stride))
-    if not starts or starts[-1] + patch_w < alines:
-        starts.append(max(0, alines - patch_w))
-
-    for j in starts:
-        chunk = np.ascontiguousarray(x_np[:, :, j:j + patch_w])  # [6, pixels, patch_w]
-        t = torch.from_numpy(chunk).unsqueeze(0).to(device, non_blocking=True)
-        pred = model(t)[0].cpu().numpy()  # [2, pixels, patch_w]
-        accum[:, :, j:j + patch_w] += pred
-        weights[j:j + patch_w] += 1.0
-
-    return (accum / np.maximum(weights[np.newaxis, np.newaxis, :], 1.0)).astype(np.float32)
 
 
 @torch.no_grad()
@@ -192,19 +153,12 @@ def _evaluate_full_frames(model, loader, device, cfg):
             sample_pred = pred_bscan.copy()
 
     val_loss = loss_acc / max(n, 1)
-
-    def _safe_mean(arr):
-        if len(arr) == 0:
-            return float("nan")
-        a = np.asarray(arr, dtype=np.float64)
-        return float(np.nanmean(np.where(np.isfinite(a), a, np.nan)))
-
     return {
         "val_loss": val_loss,
-        "snr_pred": _safe_mean(snr_pred_list),
-        "snr_gt": _safe_mean(snr_gt_list),
-        "cnr_pred": _safe_mean(cnr_pred_list),
-        "cnr_gt": _safe_mean(cnr_gt_list),
+        "snr_pred": nanmean(snr_pred_list),
+        "snr_gt": nanmean(snr_gt_list),
+        "cnr_pred": nanmean(cnr_pred_list),
+        "cnr_gt": nanmean(cnr_gt_list),
         "sample_pred": sample_pred,
     }
 

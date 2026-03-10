@@ -20,8 +20,9 @@ import torch
 from configs.default import TrainConfig
 from engine.metrics import bg_bounds, roi_bounds, roi_snr_cnr, to_physical_intensity
 from networks import create_model
+from utils.helpers import nanmean
 from utils.io_tiff import save_tiff_stack
-from utils.run_manager import ensure_dir
+from utils.run_manager import ensure_dir, make_param_suffix
 
 DEFAULT_SNR_SIG_Y0 = TrainConfig.__dataclass_fields__["snr_sig_y0"].default
 DEFAULT_SNR_SIG_Y1 = TrainConfig.__dataclass_fields__["snr_sig_y1"].default
@@ -100,8 +101,8 @@ def _infer_full_frame_2d(model, x_np: np.ndarray, patch_w: int, device: str) -> 
     alines = x_np.shape[2]
     stride = max(1, patch_w // 2)
 
-    accum = np.zeros((2, x_np.shape[1], alines), dtype=np.float64)
-    weights = np.zeros(alines, dtype=np.float64)
+    accum = np.zeros((2, x_np.shape[1], alines), dtype=np.float32)
+    weights = np.zeros(alines, dtype=np.float32)
 
     starts = list(range(0, alines - patch_w + 1, stride))
     if not starts or starts[-1] + patch_w < alines:
@@ -201,9 +202,7 @@ def predict_spectrum_raw_to_tiffs(
     cnr_gt_list:   list[float] = []
     times: list[float] = []
 
-    sigma = int(round(folder_spec.window_sigma * 100))
-    gap   = int(round(folder_spec.gap * 100))
-    param_suffix = f"{folder_name}_s{sigma:03d}_g{gap:03d}"
+    param_suffix = make_param_suffix(folder_spec)
 
     for i, p in enumerate(paths):
         out = proc.process_one_spectrum(p, frame_idx=i)
@@ -285,14 +284,10 @@ def predict_spectrum_raw_to_tiffs(
                            os.path.join(outdir, f"snr_rois_frame0_gt_{param_suffix}.png"),
                            "Frame 0 SNR ROIs (gt)")
 
-    def _nanmean(lst):
-        a = np.asarray(lst, dtype=np.float64)
-        return float(np.nanmean(np.where(np.isfinite(a), a, np.nan))) if len(lst) else float("nan")
-
-    mean_snr_pred = _nanmean(snr_pred_list)
-    mean_snr_gt   = _nanmean(snr_gt_list)
-    mean_cnr_pred = _nanmean(cnr_pred_list)
-    mean_cnr_gt   = _nanmean(cnr_gt_list)
+    mean_snr_pred = nanmean(snr_pred_list)
+    mean_snr_gt   = nanmean(snr_gt_list)
+    mean_cnr_pred = nanmean(cnr_pred_list)
+    mean_cnr_gt   = nanmean(cnr_gt_list)
     mean_time     = float(np.mean(times)) if times else float("nan")
 
     snr_csv = os.path.join(outdir, f"snr_per_frame_{param_suffix}.csv")

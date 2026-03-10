@@ -19,6 +19,14 @@ def save_json(path: str, obj: Any, indent: int = 2) -> None:
         json.dump(payload, f, indent=indent)
 
 
+def nanmean(lst) -> float:
+    """Return nanmean of a list of floats; returns nan if empty."""
+    if not lst:
+        return float("nan")
+    a = np.asarray(lst, dtype=np.float64)
+    return float(np.nanmean(np.where(np.isfinite(a), a, np.nan)))
+
+
 def seed_all(seed: int = 42, deterministic: bool = False) -> None:
     random.seed(seed)
     np.random.seed(seed)

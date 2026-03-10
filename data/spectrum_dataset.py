@@ -5,38 +5,16 @@ full frames, suitable for training 1D spectrum denoising networks.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
 import glob
 import os
-from typing import List, Any, Tuple
+from typing import List, Any
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, get_worker_info
 
+from data.dataset import _LRU, _to_torch_float32
 from preprocess import BscanProcessor
-
-
-def _to_torch_float32(arr: np.ndarray) -> torch.Tensor:
-    return torch.from_numpy(np.array(arr, dtype=np.float32, copy=True, order="C"))
-
-
-class _LRU:
-    def __init__(self, max_items: int = 4):
-        self.max_items = max_items
-        self.d: OrderedDict = OrderedDict()
-
-    def get(self, key):
-        if key not in self.d:
-            return None
-        self.d.move_to_end(key)
-        return self.d[key]
-
-    def put(self, key, val):
-        self.d[key] = val
-        self.d.move_to_end(key)
-        if len(self.d) > self.max_items:
-            self.d.popitem(last=False)
 
 
 class SpectrumDataset(Dataset):

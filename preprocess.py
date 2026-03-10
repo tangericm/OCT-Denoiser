@@ -422,10 +422,6 @@ class BscanProcessor:
                 gap_offset=cfg.gap_offset, n_sub=n_sub, spread=sub_spread,
             )
 
-        # Cache reusable grids and buffers
-        self._x = np.linspace(0.0, 1.0, cfg.pixels, dtype=np.float32)           # uniform grid
-        self._xp = self.resampling.astype(np.float32, copy=False)              # CLB grid
-
         # Precompute cubic spline operator for CLB resampling (natural spline on uniform grid)
         self._spline_pre = _precompute_natural_cubic_uniform(cfg.pixels, self.resampling.astype(np.float32, copy=False))
 

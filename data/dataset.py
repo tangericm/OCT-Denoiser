@@ -234,12 +234,9 @@ class RawBscanDataset(Dataset):
             x, y = self._random_crop(inputs, out["target_full"])
             if self.augment:
                 x, y = self._random_flips(x, y)
-            x = np.ascontiguousarray(x)
-            y = np.ascontiguousarray(y)
-
-        # Ensure positive/contiguous strides before torch.from_numpy; slicing/flip ops can produce negative strides.
-        x = np.ascontiguousarray(x)
-        y = np.ascontiguousarray(y)
+            else:
+                x = np.ascontiguousarray(x)
+                y = np.ascontiguousarray(y)
 
         meta_out = out if self.full_frame else None
         return _to_torch_float32(x), _to_torch_float32(y), self._build_meta(fidx, frame_idx, out=meta_out)

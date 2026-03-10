@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 
 from .losses import unpack_batch, compute_total_loss
 from .metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
+from utils.helpers import nanmean
 
 
 @torch.no_grad()
@@ -103,18 +104,11 @@ def evaluate_full_frames(
                 sample_pred = pred_img.copy()
 
     val_loss = loss_acc / max(n, 1)
-
-    def _safe_mean(arr):
-        if len(arr) == 0:
-            return float("nan")
-        a = np.asarray(arr, dtype=np.float64)
-        return float(np.nanmean(np.where(np.isfinite(a), a, np.nan)))
-
     return {
         "val_loss": val_loss,
-        "snr_pred": _safe_mean(snr_pred_list),
-        "snr_gt": _safe_mean(snr_gt_list),
-        "cnr_pred": _safe_mean(cnr_pred_list),
-        "cnr_gt": _safe_mean(cnr_gt_list),
+        "snr_pred": nanmean(snr_pred_list),
+        "snr_gt": nanmean(snr_gt_list),
+        "cnr_pred": nanmean(cnr_pred_list),
+        "cnr_gt": nanmean(cnr_gt_list),
         "sample_pred": sample_pred,
     }
