@@ -425,15 +425,6 @@ class BscanProcessor:
         # Precompute cubic spline operator for CLB resampling (natural spline on uniform grid)
         self._spline_pre = _precompute_natural_cubic_uniform(cfg.pixels, self.resampling.astype(np.float32, copy=False))
 
-        # Precompute dispersion phase term if needed (saves per-frame exp)
-        self._phase_term = None
-        if cfg.dispersion is not None and len(cfg.dispersion) > 0:
-            k = (np.arange(cfg.pixels, dtype=np.float32) - cfg.pixels / 2.0)
-            phase = np.zeros((cfg.pixels,), dtype=np.float32)
-            for p, c in enumerate(cfg.dispersion):
-                phase += c * (k ** (p + 2))
-            self._phase_term = np.exp(1j * phase).astype(np.complex64)  # [pixels]
-
         # Reuse buffers to reduce allocations (per processor instance)
         self._raw_u16 = np.empty((cfg.pixels * cfg.alines,), dtype=np.uint16)
         self._raw_f32 = np.empty((cfg.pixels, cfg.alines), dtype=np.float32)
@@ -467,10 +458,7 @@ class BscanProcessor:
         resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
         # resamp *= self.apod[:, None]
 
-        spec_full = resamp.astype(np.complex64, copy=False)
-        if self._phase_term is not None:
-            spec_full = spec_full.copy()
-            spec_full *= self._phase_term[:, None]
+        spec_full = resamp
 
         aline_idx = spec_full.shape[1] // 2
         spectrum_mag = np.real(spec_full[:, aline_idx])
@@ -531,26 +519,21 @@ class BscanProcessor:
 
         resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
 
-        if self._phase_term is not None:
-            spec_full = resamp.astype(np.complex64, copy=True)
-            spec_full *= self._phase_term[:, None]
-        else:
-            spec_full = resamp.astype(np.complex64, copy=True)
+        spec_full = resamp.astype(np.float32, copy=False)
+        spec_w1 = spec_full * self.w1[:, None]
+        spec_w2 = spec_full * self.w2[:, None]
 
-        spec_w1 = (spec_full * self.w1[:, None]).astype(np.complex64)
-        spec_w2 = (spec_full * self.w2[:, None]).astype(np.complex64)
-
-        norm_factor = float(np.abs(spec_full).std()) + 1e-8
+        norm_factor = float(spec_full.std()) + 1e-8
         spec_full = spec_full / norm_factor
-        spec_w1 = spec_w1 / norm_factor
-        spec_w2 = spec_w2 / norm_factor
+        spec_w1   = spec_w1   / norm_factor
+        spec_w2   = spec_w2   / norm_factor
 
         return {
             "spec_full": spec_full,
-            "spec_w1": spec_w1,
-            "spec_w2": spec_w2,
-            "w1_mask": self.w1.astype(np.float32, copy=True),
-            "w2_mask": self.w2.astype(np.float32, copy=True),
+            "spec_w1":   spec_w1,
+            "spec_w2":   spec_w2,
+            "w1_mask":   self.w1.astype(np.float32, copy=True),
+            "w2_mask":   self.w2.astype(np.float32, copy=True),
             "norm_factor": norm_factor,
         }
 
@@ -588,12 +571,8 @@ class BscanProcessor:
         # 4) Apodization
         # resamp *= self.apod[:, None]
 
-        # 5) Build complex spectrum (with optional dispersion)
-        if self._phase_term is not None:
-            spec_full = resamp.astype(np.complex64, copy=True)
-            spec_full *= self._phase_term[:, None]
-        else:
-            spec_full = resamp.astype(np.complex64, copy=True)
+        # 5) Build spectrum
+        spec_full = resamp.astype(np.complex64, copy=True)
 
         # 6) Recon target + two windowed inputs via batched FFT
         np.multiply(spec_full, self.w1[:, None], out=self._spec1_c64)

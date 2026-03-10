@@ -97,11 +97,11 @@ def _save_roi_plot(
 
 @torch.no_grad()
 def _infer_full_frame_2d(model, x_np: np.ndarray, patch_w: int, device: str) -> np.ndarray:
-    """Sliding-window 2D inference on [6, pixels, alines] → [2, pixels, alines]."""
+    """Sliding-window 2D inference on [2, pixels, alines] → [1, pixels, alines]."""
     alines = x_np.shape[2]
     stride = max(1, patch_w // 2)
 
-    accum = np.zeros((2, x_np.shape[1], alines), dtype=np.float32)
+    accum = np.zeros((1, x_np.shape[1], alines), dtype=np.float32)
     weights = np.zeros(alines, dtype=np.float32)
 
     starts = list(range(0, alines - patch_w + 1, stride))
@@ -111,7 +111,7 @@ def _infer_full_frame_2d(model, x_np: np.ndarray, patch_w: int, device: str) -> 
     for j in starts:
         chunk = np.ascontiguousarray(x_np[:, :, j:j + patch_w])
         t = torch.from_numpy(chunk).unsqueeze(0).to(device, non_blocking=True)
-        pred = model(t)[0].cpu().numpy()  # [2, pixels, patch_w]
+        pred = model(t)[0].cpu().numpy()  # [1, pixels, patch_w]
         accum[:, :, j:j + patch_w] += pred
         weights[j:j + patch_w] += 1.0
 
@@ -178,7 +178,7 @@ def predict_spectrum_raw_to_tiffs(
     log_eps = float(folder_spec.log_eps)
     apply_fftshift = folder_spec.apply_fftshift_depth
     norm_factor0 = float(out0["norm_factor"])
-    pred_spec0 = (out0["spec_w1"] + out0["spec_w2"]) / 2  # rough placeholder
+    pred_spec0 = (out0["spec_w1"].astype(np.float32) + out0["spec_w2"].astype(np.float32)) / 2  # rough placeholder
     bscan0, _, _ = _spectrum_to_bscan(pred_spec0 * norm_factor0, crop_depth, use_log, log_eps, apply_fftshift)
     H, W = bscan0.shape
     print(f"[INFO] Output B-scan shape: {H}x{W}")
@@ -208,48 +208,44 @@ def predict_spectrum_raw_to_tiffs(
         out = proc.process_one_spectrum(p, frame_idx=i)
         norm_factor = float(out["norm_factor"])
 
-        # Build [6, pixels, alines] input
-        w1_mask = np.broadcast_to(out["w1_mask"][:, None], out["spec_w1"].shape)
-        w2_mask = np.broadcast_to(out["w2_mask"][:, None], out["spec_w2"].shape)
+        # Build [2, pixels, alines] input
         x_np = np.stack([
-            out["spec_w1"].real, out["spec_w1"].imag,
-            out["spec_w2"].real, out["spec_w2"].imag,
-            w1_mask, w2_mask,
-        ], axis=0).astype(np.float32)  # [6, pixels, alines]
+            out["spec_w1"], out["spec_w2"],
+        ], axis=0).astype(np.float32)  # [2, pixels, alines]
 
         alines = x_np.shape[2]
 
         t0 = time.time()
         if patch_w > 1:
-            pred_np2d = _infer_full_frame_2d(model, x_np, patch_w, device)  # [2, pixels, alines]
-            pred_spec = (pred_np2d[0] + 1j * pred_np2d[1]) * norm_factor
+            pred_np2d = _infer_full_frame_2d(model, x_np, patch_w, device)  # [1, pixels, alines]
+            pred_spec = pred_np2d[0].astype(np.float32) * norm_factor
         else:
-            # Reshape to [alines, 6, pixels] for batched A-line inference
+            # Reshape to [alines, 2, pixels] for batched A-line inference
             x_alines = torch.from_numpy(
                 np.ascontiguousarray(x_np.transpose(2, 0, 1))
-            ).to(device, non_blocking=True)  # [alines, 6, pixels]
+            ).to(device, non_blocking=True)  # [alines, 2, pixels]
             pred_chunks = []
             for j in range(0, alines, _CHUNK):
                 pred_chunks.append(model(x_alines[j:j + _CHUNK]))
-            pred_alines = torch.cat(pred_chunks, dim=0).cpu().numpy()  # [alines, 2, pixels]
-            pred_spec = (pred_alines[:, 0, :] + 1j * pred_alines[:, 1, :]).T * norm_factor
+            pred_alines = torch.cat(pred_chunks, dim=0).cpu().numpy()  # [alines, 1, pixels]
+            pred_spec = pred_alines[:, 0, :].T.astype(np.float32) * norm_factor
         if device.startswith("cuda"):
             torch.cuda.synchronize()
         elapsed = time.time() - t0
         times.append(elapsed)
 
         if raw_spectra is not None:
-            raw_spectra.append(pred_spec.astype(np.complex64))
+            raw_spectra.append(pred_spec.astype(np.float32))
 
         pred_bscan, pred_mu, pred_sd = _spectrum_to_bscan(pred_spec, crop_depth, use_log, log_eps, apply_fftshift)
 
         # Reconstruct ground-truth B-scan
-        tgt_spec = out["spec_full"] * norm_factor
+        tgt_spec = out["spec_full"].astype(np.float32) * norm_factor
         tgt_bscan, tgt_mu, tgt_sd = _spectrum_to_bscan(tgt_spec, crop_depth, use_log, log_eps, apply_fftshift)
 
         # Window B-scans (for TIFF export)
-        w1_spec = out["spec_w1"] * norm_factor
-        w2_spec = out["spec_w2"] * norm_factor
+        w1_spec = out["spec_w1"].astype(np.float32) * norm_factor
+        w2_spec = out["spec_w2"].astype(np.float32) * norm_factor
         w1_bscan, _, _ = _spectrum_to_bscan(w1_spec, crop_depth, use_log, log_eps, apply_fftshift)
         w2_bscan, _, _ = _spectrum_to_bscan(w2_spec, crop_depth, use_log, log_eps, apply_fftshift)
 
@@ -331,14 +327,18 @@ def predict_spectrum_raw_to_tiffs(
             os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"),
             preds, dtype="float32", scale_per_slice=True,
         )
+        save_tiff_stack(
+            os.path.join(outdir, f"gt_{param_suffix}_float32.tiff"),
+            gts, dtype="float32", scale_per_slice=True,
+        )
 
     if raw_spectra is not None:
-        raw_array = np.stack(raw_spectra, axis=0)  # [F, pixels, alines], complex64
+        raw_array = np.stack(raw_spectra, axis=0)  # [F, pixels, alines], float32
         raw_path  = os.path.join(outdir, f"pred_spectra_{param_suffix}.raw")
         raw_array.tofile(raw_path)
         meta = {
             "shape":   list(raw_array.shape),
-            "dtype":   "complex64",
+            "dtype":   "float32",
             "axes":    ["frames", "pixels", "alines"],
             "units":   "physical (norm_factor applied per frame)",
             "pixels":  pixels_full,

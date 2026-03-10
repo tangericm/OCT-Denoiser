@@ -1,7 +1,7 @@
 """Training loop for spectrum-domain denoising.
 
 Mirrors the structure of engine/train.py but uses:
-- SpectrumDataModule (complex spectra as real/imag channels)
+- SpectrumDataModule (real windowed spectra as input channels)
 - Hybrid spectrum + image loss (via differentiable IFFT)
 - Full-frame evaluation that reconstructs B-scans for SNR/CNR metrics
 """
@@ -58,7 +58,6 @@ def _evaluate_patches(model, loader, device, cfg):
             w_charb=cfg.w_charb,
             w_grad=cfg.w_grad,
             w_spec_mag=cfg.w_spec_mag,
-            w_spec_phase=cfg.w_spec_phase,
         )
         loss_acc += float(loss.item()) * x.size(0)
         n += x.size(0)
@@ -77,7 +76,7 @@ def _evaluate_full_frames(model, loader, device, cfg):
 
     for batch in loader:
         x, y, meta = _unpack_batch(batch, device)
-        # x: [1, 6, pixels, alines], y: [1, 2, pixels, alines]
+        # x: [1, 2, pixels, alines], y: [1, 1, pixels, alines]
         m = meta[0]
         norm_factor = float(m["norm_factor"])
         crop_depth = tuple(m["crop_depth"])
@@ -85,22 +84,22 @@ def _evaluate_full_frames(model, loader, device, cfg):
         log_eps = float(m["log_eps"])
         apply_fftshift = bool(m["apply_fftshift_depth"])
 
-        x_np = x[0].cpu().numpy()  # [6, pixels, alines]
-        y_2d = y[0]  # [2, pixels, alines] tensor
+        x_np = x[0].cpu().numpy()  # [2, pixels, alines]
+        y_2d = y[0]  # [1, pixels, alines] tensor
 
         if patch_w > 1:
             # 2D model: sliding-window inference
-            pred_np = _infer_full_frame_2d(model, x_np, patch_w, device)  # [2, pixels, alines]
-            pred_spec = (pred_np[0] + 1j * pred_np[1]) * norm_factor
+            pred_np = _infer_full_frame_2d(model, x_np, patch_w, device)  # [1, pixels, alines]
+            pred_spec = pred_np[0].astype(np.float32) * norm_factor
         else:
             # 1D model: process each A-line as batch element
             alines = x_np.shape[2]
             x_alines = torch.from_numpy(np.ascontiguousarray(x_np.transpose(2, 0, 1))).to(device)
-            # [alines, 6, pixels]
+            # [alines, 2, pixels]
             pred_chunks = []
             for i in range(0, alines, 512):
                 pred_chunks.append(model(x_alines[i:i + 512]))
-            pred_alines = torch.cat(pred_chunks, dim=0)  # [alines, 2, pixels]
+            pred_alines = torch.cat(pred_chunks, dim=0)  # [alines, 1, pixels]
 
             # Frame loss on all A-lines
             lp = _loss_params_from_meta(meta)
@@ -111,17 +110,16 @@ def _evaluate_full_frames(model, loader, device, cfg):
                 w_charb=cfg.w_charb,
                 w_grad=cfg.w_grad,
                 w_spec_mag=cfg.w_spec_mag,
-                w_spec_phase=cfg.w_spec_phase,
             )
             loss_acc += float(frame_loss.item())
 
-            arr = pred_alines.cpu().numpy()  # [alines, 2, pixels]
-            pred_spec = (arr[:, 0, :] + 1j * arr[:, 1, :]).T * norm_factor
+            arr = pred_alines.cpu().numpy()  # [alines, 1, pixels]
+            pred_spec = arr[:, 0, :].T.astype(np.float32) * norm_factor  # [pixels, alines]
 
         n += 1
 
-        y_np = y_2d.cpu().numpy()  # [2, pixels, alines]
-        tgt_spec = (y_np[0] + 1j * y_np[1]) * norm_factor  # [pixels, alines]
+        y_np = y_2d.cpu().numpy()  # [1, pixels, alines]
+        tgt_spec = y_np[0].astype(np.float32) * norm_factor  # [pixels, alines]
 
         pred_bscan, pred_mu, pred_sd = _spectrum_to_bscan(
             pred_spec, crop_depth, use_log, log_eps, apply_fftshift
@@ -260,7 +258,6 @@ def run_spectrum_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                     w_charb=cfg.w_charb,
                     w_grad=cfg.w_grad,
                     w_spec_mag=cfg.w_spec_mag,
-                    w_spec_phase=cfg.w_spec_phase,
                 )
 
             scaler.scale(loss).backward()

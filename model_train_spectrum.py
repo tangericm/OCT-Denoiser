@@ -39,7 +39,6 @@ def main():
                 pixels=2048,
                 alines=1024,
                 crop_depth=(0, 1024),
-                dispersion=[1.008132545e-06, 1.093683272e-09],
                 window_sigma=0.05,
                 gap=0.60,
                 gap_offset=0.015,
@@ -68,7 +67,6 @@ def main():
         w_charb=0.010307111599432855,
         w_grad=0.010163544565911599,
         w_spec_mag=0,
-        w_spec_phase=0,
 
         snr_sig_y0=70,
         snr_sig_y1=600,

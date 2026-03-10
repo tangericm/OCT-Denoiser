@@ -15,7 +15,6 @@ class FolderSpec:
     use_log: bool = True
     log_eps: float = 1e-6
     apply_fftshift_depth: bool = False
-    dispersion: Optional[List[float]] = None
     window_sigma: float = 0.08
     gap: float = 0.15
     gap_offset: float = 0.0
@@ -65,7 +64,6 @@ class TrainConfig:
     w_charb: float = 0.8
     w_grad: float = 0.5
     w_spec_mag: float = 0.05
-    w_spec_phase: float = 0.02
 
     # ROI (y ranges) for SNR/CNR
     snr_sig_y0: int = 111

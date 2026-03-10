@@ -1,7 +1,7 @@
 """Dataset for spectrum-domain training.
 
-Returns complex spectra (as real/imag channels) for individual A-lines or
-full frames, suitable for training 1D spectrum denoising networks.
+Returns real spectra as channels for individual A-lines or full frames,
+suitable for training 1D spectrum denoising networks.
 """
 from __future__ import annotations
 
@@ -19,13 +19,13 @@ from preprocess import BscanProcessor
 
 class SpectrumDataset(Dataset):
     """
-    Dataset returning complex spectra as real/imag channels.
+    Dataset returning real spectra as channels.
 
     When full_frame=False:
-      Returns (x, y, meta) with x: [6, pixels], y: [2, pixels]
+      Returns (x, y, meta) with x: [2, pixels], y: [1, pixels]
       Each sample is a single A-line spectrum.
     When full_frame=True:
-      Returns (x, y, meta) with x: [6, pixels, alines], y: [2, pixels, alines]
+      Returns (x, y, meta) with x: [2, pixels, alines], y: [1, pixels, alines]
     """
 
     def __init__(
@@ -141,23 +141,14 @@ class SpectrumDataset(Dataset):
         return self._estimated_len
 
     @staticmethod
-    def _spec_to_channels(spec_w1, spec_w2, w1_mask, w2_mask):
-        """Convert spectra + masks to [6, ...] channels."""
-        mask_shape = (spec_w1.shape[0],) + (1,) * (spec_w1.ndim - 1)
-        w1 = np.broadcast_to(np.asarray(w1_mask, dtype=np.float32).reshape(mask_shape), spec_w1.shape)
-        w2 = np.broadcast_to(np.asarray(w2_mask, dtype=np.float32).reshape(mask_shape), spec_w2.shape)
-        return np.stack([
-            spec_w1.real, spec_w1.imag,
-            spec_w2.real, spec_w2.imag,
-            w1, w2,
-        ], axis=0).astype(np.float32)
+    def _spec_to_channels(spec_w1, spec_w2):
+        """Stack two real windowed spectra to [2, ...] channels."""
+        return np.stack([spec_w1, spec_w2], axis=0).astype(np.float32)
 
     @staticmethod
     def _spec_to_target(spec_full):
-        """Convert complex spectrum to [2, ...] real/imag channels."""
-        return np.stack([
-            spec_full.real, spec_full.imag,
-        ], axis=0).astype(np.float32)
+        """Wrap real spectrum to [1, ...] channel."""
+        return spec_full[np.newaxis, ...].astype(np.float32)
 
     def __getitem__(self, idx: int):
         self._init_worker_state()
@@ -166,8 +157,8 @@ class SpectrumDataset(Dataset):
         if self.full_frame:
             fidx, frame_idx = entry
             out = self._fetch_frame(fidx, frame_idx)
-            x = self._spec_to_channels(out["spec_w1"], out["spec_w2"], out["w1_mask"], out["w2_mask"])  # [6, pixels, alines]
-            y = self._spec_to_target(out["spec_full"])  # [2, pixels, alines]
+            x = self._spec_to_channels(out["spec_w1"], out["spec_w2"])  # [2, pixels, alines]
+            y = self._spec_to_target(out["spec_full"])                  # [1, pixels, alines]
         else:
             fidx, frame_idx, _pr = entry
             out = self._fetch_frame(fidx, frame_idx)
@@ -178,15 +169,13 @@ class SpectrumDataset(Dataset):
                 max_start = max(0, alines - self.patch_w)
                 j = self._rng.randint(0, max_start + 1)
                 sl = slice(j, j + self.patch_w)
-                x = self._spec_to_channels(out["spec_w1"][:, sl], out["spec_w2"][:, sl], out["w1_mask"], out["w2_mask"])  # [6, pixels, patch_w]
-                y = self._spec_to_target(out["spec_full"][:, sl])  # [2, pixels, patch_w]
+                x = self._spec_to_channels(out["spec_w1"][:, sl], out["spec_w2"][:, sl])  # [2, pixels, patch_w]
+                y = self._spec_to_target(out["spec_full"][:, sl])                          # [1, pixels, patch_w]
             else:
                 # Single random A-line
                 j = self._rng.randint(0, alines)
-                x = self._spec_to_channels(out["spec_w1"][:, j:j+1], out["spec_w2"][:, j:j+1], out["w1_mask"], out["w2_mask"])  # [6, pixels, 1]
-                y = self._spec_to_target(out["spec_full"][:, j:j+1])  # [2, pixels, 1]
-                x = x[:, :, 0]  # [6, pixels]
-                y = y[:, :, 0]  # [2, pixels]
+                x = self._spec_to_channels(out["spec_w1"][:, j], out["spec_w2"][:, j])  # [2, pixels]
+                y = self._spec_to_target(out["spec_full"][:, j])                         # [1, pixels]
 
         x = np.ascontiguousarray(x)
         y = np.ascontiguousarray(y)

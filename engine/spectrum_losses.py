@@ -1,4 +1,4 @@
-"""Image and spectrum-domain losses for spectrum training."""
+"""Image and spectrum-domain losses for spectrum training (real spectra)."""
 from __future__ import annotations
 
 import torch
@@ -29,37 +29,30 @@ def spectrum_image_terms(
     log_eps: float,
     apply_fftshift: bool,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Image-domain loss for real spectra [B, 1, L] or [B, 1, L, W]."""
     pred, target = _flatten_optional_width(pred, target)
 
-    pred_c = torch.complex(pred[:, 0].float(), pred[:, 1].float())
-    tgt_c = torch.complex(target[:, 0].float(), target[:, 1].float())
-
-    pred_mag = torch.fft.ifft(pred_c, dim=-1).abs()
-    tgt_mag = torch.fft.ifft(tgt_c, dim=-1).abs()
+    # pred, target: [B, 1, L] — real spectra; cast to complex for ifft
+    pred_mag = torch.fft.ifft(pred[:, 0].to(torch.complex64), dim=-1).abs()
+    tgt_mag  = torch.fft.ifft(target[:, 0].to(torch.complex64), dim=-1).abs()
 
     if apply_fftshift:
         pred_mag = torch.fft.fftshift(pred_mag, dim=-1)
-        tgt_mag = torch.fft.fftshift(tgt_mag, dim=-1)
+        tgt_mag  = torch.fft.fftshift(tgt_mag,  dim=-1)
 
     z0, z1 = crop_depth
     pred_crop = torch.log10(pred_mag[:, z0:z1] + log_eps)
-    tgt_crop = torch.log10(tgt_mag[:, z0:z1] + log_eps)
+    tgt_crop  = torch.log10(tgt_mag[:, z0:z1]  + log_eps)
 
     charb = charbonnier_1d(pred_crop, tgt_crop)
-    grad = gradient_l1_1d(pred_crop, tgt_crop)
+    grad  = gradient_l1_1d(pred_crop, tgt_crop)
     return charb, grad
 
 
-def spectral_complex_terms(pred: torch.Tensor, target: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def spectral_mag_term(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """L1 loss on spectral magnitude for real spectra [B, 1, L]."""
     pred, target = _flatten_optional_width(pred, target)
-
-    pred_c = torch.complex(pred[:, 0].float(), pred[:, 1].float())
-    tgt_c = torch.complex(target[:, 0].float(), target[:, 1].float())
-
-    mag_loss = (pred_c.abs() - tgt_c.abs()).abs().mean()
-    phase_delta = torch.angle(pred_c) - torch.angle(tgt_c)
-    phase_loss = (1.0 - torch.cos(phase_delta)).mean()
-    return mag_loss, phase_loss
+    return (pred[:, 0].abs() - target[:, 0].abs()).abs().mean()
 
 
 def compute_spectrum_loss(
@@ -72,14 +65,8 @@ def compute_spectrum_loss(
     w_charb: float,
     w_grad: float,
     w_spec_mag: float,
-    w_spec_phase: float,
 ) -> torch.Tensor:
-    """Combined image-domain and spectral-domain complex loss."""
+    """Combined image-domain and spectral-magnitude loss for real spectra."""
     charb, grad = spectrum_image_terms(pred, target, crop_depth, log_eps, apply_fftshift)
-    spec_mag, spec_phase = spectral_complex_terms(pred, target)
-    return (
-        w_charb * charb
-        + w_grad * grad
-        + w_spec_mag * spec_mag
-        + w_spec_phase * spec_phase
-    )
+    spec_mag = spectral_mag_term(pred, target)
+    return w_charb * charb + w_grad * grad + w_spec_mag * spec_mag
