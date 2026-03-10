@@ -87,5 +87,4 @@ class TrainConfig:
     # Inference outputs
     tiff_dtype: str = "uint16"
     also_save_float32: bool = False
-    save_raw_spectra: bool = False
 
