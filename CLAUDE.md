@@ -24,8 +24,8 @@ python -m compileall .                  # syntax check (no data required)
 OCT-Denoiser/
 ├── model_train.py           # training entrypoint
 ├── model_predict.py         # standalone inference
-├── preprocess.py            # BscanProcessor: DC subtract → k-linear resample → window → dispersion → FFT → log compress
-├── tune.py                  # Optuna search
+├── preprocess.py            # BscanProcessor: DC subtract → k-linear resample → window → FFT → log compress
+├── tune.py                  # Optuna search for window_sigma and gap
 ├── configs/default.py       # TrainConfig, FolderSpec dataclasses
 ├── data/dataset.py          # RawBscanDataset (lazy init, per-worker LRU cache)
 ├── data/datamodule.py       # DataLoader factory
@@ -38,7 +38,6 @@ OCT-Denoiser/
 ├── networks/registry.py     # @register_model decorator + create_model()
 ├── networks/resunet_pseudo3d.py              # base ResUNet
 ├── networks/resunet_pseudo3d_multilevel.py   # + multi-level spectral stem
-├── networks/resunet_multilevel_1d.py         # A-line optimized variant
 └── utils/                   # run dirs, seeding, TIFF I/O, live plot
 ```
 
@@ -52,8 +51,8 @@ Raw .raw (uint16)
   → BscanProcessor.process_one()
     DC subtract → k-linear resample (natural cubic spline, precomputed gttrs)
     → spectral windowing (w1, w2, optional sub-windows)
-    → dispersion compensation → batched IFFT → log compress → z-score normalize
-  → X: [B, C, H, W]  (C = 2 + n_sub_channels)
+    → batched IFFT → log compress → z-score normalize
+  → X: [B, 2 + 2*n_sub_windows, H, W]  (float32, z-score normalized per frame)
   → Y: [B, 1, H, W]  (full-bandwidth target)
   → Loss: w_charb * Charbonnier + w_grad * gradient_L1
   → best.pt checkpoint → TIFF export
@@ -92,7 +91,7 @@ def build_my_model(*, base: int = 64) -> nn.Module:
 
 Register → import in `networks/__init__.py` → set `model_name` in `TrainConfig`.
 
-**Available models:** `resunet_pseudo3d` · `resunet_pseudo3d_multilevel` · `resunet_multilevel_1d`
+**Available models:** `resunet_pseudo3d` · `resunet_pseudo3d_multilevel`
 
 For multi-level models, pass `n_sub_channels = 2 * n_sub_windows` to `create_model()`.
 
@@ -129,7 +128,7 @@ For multi-level models, pass `n_sub_channels = 2 * n_sub_windows` to `create_mod
 3. Add weight parameter to `TrainConfig`
 
 ### Add a new dataset
-1. Create a `FolderSpec` with correct dims, crop, dispersion coefficients
+1. Create a `FolderSpec` with correct dims, crop, window parameters
 2. Append to `folder_specs` in `model_train.py`
 
 ---

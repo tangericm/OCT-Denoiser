@@ -4,106 +4,106 @@ from typing import Optional, Tuple, List
 
 @dataclass
 class FolderSpec:
-    root_folder: str          # e.g. r"images\Maestro3"
-    data_folder: str          # e.g. "6mm_1024Aline"
-    pixels: int               # 2048
-    alines: int               # 1024 or 2048
-    clb_path: Optional[str] = None
-    crop_depth: Tuple[int, int] = (1024, 2048)
+    """Per-dataset specification used by BscanProcessor and the data pipeline."""
+    root_folder: str                        # e.g. r"images\Maestro3"
+    data_folder: str                        # e.g. "6mm_1024Aline"
+    pixels: int                             # spectral samples per A-line (e.g. 2048)
+    alines: int                             # A-lines per B-scan (e.g. 1024 or 2048)
+    clb_path: Optional[str] = None          # override CLB path; auto-discovered if None
+    crop_depth: Tuple[int, int] = (1024, 2048)  # [z0, z1) pixel crop after IFFT
     do_dc_subtract: bool = True
-    window_type: str = "hann"
+    window_type: str = "hann"               # "hann" | "ones" | "gaussian"
     use_log: bool = True
     log_eps: float = 1e-6
     apply_fftshift_depth: bool = False
-    window_sigma: float = 0.08
-    gap: float = 0.15
-    gap_offset: float = 0.0
-    n_sub_windows: int = 0            # 0=disabled; e.g. 8 sub-windows per parent (16 total)
-    sub_window_spread: float = 2.0    # sub-window center spread in sigma units
+    window_sigma: float = 0.08              # Gaussian width for spectral windows
+    gap: float = 0.15                       # center separation of the two windows
+    gap_offset: float = 0.0                 # shared offset for both window centers
+    n_sub_windows: int = 0                  # sub-windows per parent; 0 = disabled
+    sub_window_spread: float = 2.0          # sub-window center spread in sigma units
 
 
 
 @dataclass
 class TrainConfig:
+    """Training configuration. All hyperparameters live here."""
+
+    # ------------------------------------------------------------------
     # Paths
+    # ------------------------------------------------------------------
     runs_root: str = "runs"
     experiment_name: str = "experiment"
 
     folder_specs: Optional[List[FolderSpec]] = None
-    cache_frames_per_worker: int = 1000
+    cache_frames_per_worker: int = 1000     # LRU cache size per DataLoader worker
 
+    # ------------------------------------------------------------------
     # Device
+    # ------------------------------------------------------------------
     device: str = "cuda"
-    amp: bool = True
+    amp: bool = True                        # automatic mixed precision (requires CUDA)
 
-    # Repro / speed
+    # ------------------------------------------------------------------
+    # Reproducibility
+    # ------------------------------------------------------------------
     seed: int = 42
     deterministic: bool = True
 
-    # Data
-    train_frac: float = 0.85
-    patch_h: int = 128
-    patch_w: int = 128
+    # ------------------------------------------------------------------
+    # Data loading
+    # ------------------------------------------------------------------
+    train_frac: float = 0.85               # fraction of frames used for training
+    patch_h: int = 128                     # patch height ("strip" mode: full depth)
+    patch_w: int = 128                     # patch width  ("strip" mode: 1 A-line)
     patches_per_frame: int = 16
-    patch_mode: str = "patch"
+    patch_mode: str = "patch"              # "patch" = random crop; "strip" = full-depth A-line
     augment: bool = True
     batch_size: int = 32
     num_workers: int = 8
 
-    # Model selection
-    model_name: str = "resunet_pseudo3d"
-    base: int = 64
+    # ------------------------------------------------------------------
+    # Model
+    # ------------------------------------------------------------------
+    model_name: str = "resunet_pseudo3d"   # "resunet_pseudo3d" | "resunet_pseudo3d_multilevel"
+    base: int = 64                         # base channel width
 
-    # Optim
+    # ------------------------------------------------------------------
+    # Optimiser
+    # ------------------------------------------------------------------
     epochs: int = 300
     lr: float = 3e-4
     weight_decay: float = 5e-5
     grad_clip: float = 1.0
 
+    # ------------------------------------------------------------------
     # Loss weights
-    w_charb: float = 0.8
-    w_grad: float = 0.5
-    w_spec_mag: float = 0.05
+    # ------------------------------------------------------------------
+    w_charb: float = 0.8                   # Charbonnier loss weight
+    w_grad: float = 0.5                    # gradient L1 loss weight
 
-    # ROI (y ranges) for SNR/CNR
+    # ------------------------------------------------------------------
+    # Metrics — ROI (y pixel rows) for SNR/CNR evaluation
+    # ------------------------------------------------------------------
     snr_sig_y0: int = 111
     snr_sig_y1: int = 600
-    snr_sig_stat: str = "max"  # signal statistic for SNR: "max" or "p<percentile>" (e.g. "p95")
+    snr_sig_stat: str = "max"              # "max" or "p<percentile>" e.g. "p99.99"
 
-    # Logging/checkpoint cadence
-    val_every: int = 5
-    save_every: int = 5
+    # ------------------------------------------------------------------
+    # Validation / checkpoint cadence
+    # ------------------------------------------------------------------
+    val_every: int = 5                     # validate every N epochs
+    save_every: int = 5                    # save periodic checkpoint every N epochs
 
+    # ------------------------------------------------------------------
     # Early stopping
-    early_stop_patience: int = 5
+    # ------------------------------------------------------------------
+    early_stop_patience: int = 5           # validation checks without improvement
     early_stop_min_delta: float = 0.0
     early_stop_warmup_checks: int = 0
 
-    # Inference outputs
-    tiff_dtype: str = "uint16"
+    # ------------------------------------------------------------------
+    # Inference output
+    # ------------------------------------------------------------------
+    tiff_dtype: str = "uint16"             # "uint8" | "uint16" | "float32"
     also_save_float32: bool = False
     save_raw_spectra: bool = False
-
-    # -----------------------------------------------------------------------
-    # Physics-guided OCT model (physics_oct_net)
-    # -----------------------------------------------------------------------
-    # Architecture
-    num_blocks: int = 3               # encoder/decoder depth (down/up stages)
-    predict_logvar: bool = False      # add heteroscedastic log-variance head
-    dispersion_mode: str = "polynomial"   # "polynomial" | "dense"
-    dispersion_poly_order: int = 4    # Chebyshev poly order for dispersion head
-
-    # Self-supervised masking
-    use_masked_self_supervision: bool = True
-    mask_ratio: float = 0.15          # fraction of k-pixels masked per A-line
-    mask_span: int = 3                # width of each contiguous mask span
-    mask_mode: str = "zero"           # "zero" | "noise" | "mean"
-
-    # Physics loss weights
-    # w_charb is reused as the masked-measurement Charbonnier weight
-    w_bg_smooth: float = 0.01         # TV regularisation on predicted background
-    w_gain_smooth: float = 0.01       # TV regularisation on predicted gain
-    w_disp_smooth: float = 0.001      # TV regularisation on dispersion (dense mode only)
-    w_depth: float = 0.01             # soft depth-domain consistency weight
-    w_var: float = 0.0                # heteroscedastic NLL weight (needs predict_logvar)
-

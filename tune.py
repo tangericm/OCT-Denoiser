@@ -66,7 +66,6 @@ def main():
                 pixels=2048,
                 alines=1024,
                 crop_depth=(0, 1024),
-                dispersion=[1.315892282e-06, 5.459678905e-10],
                 window_sigma=0.08,
                 gap=0.25,
             ),
