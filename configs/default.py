@@ -84,3 +84,26 @@ class TrainConfig:
     also_save_float32: bool = False
     save_raw_spectra: bool = False
 
+    # -----------------------------------------------------------------------
+    # Physics-guided OCT model (physics_oct_net)
+    # -----------------------------------------------------------------------
+    # Architecture
+    num_blocks: int = 3               # encoder/decoder depth (down/up stages)
+    predict_logvar: bool = False      # add heteroscedastic log-variance head
+    dispersion_mode: str = "polynomial"   # "polynomial" | "dense"
+    dispersion_poly_order: int = 4    # Chebyshev poly order for dispersion head
+
+    # Self-supervised masking
+    use_masked_self_supervision: bool = True
+    mask_ratio: float = 0.15          # fraction of k-pixels masked per A-line
+    mask_span: int = 3                # width of each contiguous mask span
+    mask_mode: str = "zero"           # "zero" | "noise" | "mean"
+
+    # Physics loss weights
+    # w_charb is reused as the masked-measurement Charbonnier weight
+    w_bg_smooth: float = 0.01         # TV regularisation on predicted background
+    w_gain_smooth: float = 0.01       # TV regularisation on predicted gain
+    w_disp_smooth: float = 0.001      # TV regularisation on dispersion (dense mode only)
+    w_depth: float = 0.01             # soft depth-domain consistency weight
+    w_var: float = 0.0                # heteroscedastic NLL weight (needs predict_logvar)
+
