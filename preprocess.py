@@ -32,13 +32,6 @@ def read_clb_resampling(clb_path: str, pixels: int) -> np.ndarray:
 # -----------------------------
 # Signal processing
 # -----------------------------
-def hann_window(pixels: int) -> np.ndarray:
-    w = np.hanning(pixels).astype(np.float32)
-    # Your MATLAB scales Hann to [0,1]; mimic that.
-    w = w - w.min()
-    w = w / (w.max() + 1e-12)
-    return w
-
 def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
     """
     Precompute everything that depends only on:
@@ -227,7 +220,8 @@ def recon_bscan_batch(spec_batch: np.ndarray,
                       use_log: bool,
                       log_eps: float,
                       apply_fftshift_depth: bool,
-                      return_stats: bool = False) -> Any:
+                      return_stats: bool = False,
+                      fft_workers: int = -1) -> Any:
     """
     Batch-reconstruct multiple spectra in a single FFT call.
 
@@ -240,8 +234,11 @@ def recon_bscan_batch(spec_batch: np.ndarray,
     Uses a single batched IFFT along axis=1 (spectral axis) for all K
     spectra simultaneously, reducing FFT overhead.
     """
-    # Batched IFFT: axis=1 is the spectral axis for [K, pixels, alines]
-    depth_c = sfft.ifft(spec_batch, axis=1, workers=-1)
+    # Batched IFFT: axis=1 is the spectral axis for [K, pixels, alines].
+    # fft_workers caps FFT threads: pass 1 inside a DataLoader worker to avoid
+    # CPU oversubscription (num_workers processes each spawning an all-core FFT);
+    # -1 (all cores) is best for standalone/single-process reconstruction.
+    depth_c = sfft.ifft(spec_batch, axis=1, workers=fft_workers)
     mag = np.abs(depth_c).astype(np.float32)  # [K, pixels, alines]
 
     if apply_fftshift_depth:
@@ -253,9 +250,10 @@ def recon_bscan_batch(spec_batch: np.ndarray,
     results = []
     stats = []
     for k in range(bscans_crop.shape[0]):
-        bscan = bscans_crop[k]  # [H, W]
+        bscan_linear = bscans_crop[k]  # [H, W] cropped linear magnitude (pre-log)
+        bscan = bscan_linear
         if use_log:
-            bscan = np.log10(bscan + log_eps).astype(np.float32)
+            bscan = np.log10(bscan_linear + log_eps).astype(np.float32)
         mu = float(bscan.mean())
         sd = float(bscan.std()) + 1e-6
         bscan_norm = ((bscan - mu) / sd).astype(np.float32)
@@ -265,6 +263,7 @@ def recon_bscan_batch(spec_batch: np.ndarray,
                 "img_norm": bscan_norm,
                 "mu": mu,
                 "sd": sd,
+                "img_linear": bscan_linear.astype(np.float32, copy=False),
             })
     if return_stats:
         return results, stats
@@ -397,17 +396,6 @@ class BscanProcessor:
         # Load resampling LUT once
         self.resampling = read_clb_resampling(self.clb_path, cfg.pixels)
 
-        # Precompute apodization window
-        if cfg.window_type == "hann":
-            self.apod = hann_window(cfg.pixels)
-        elif cfg.window_type == "ones":
-            self.apod = np.ones((cfg.pixels,), dtype=np.float32)
-        elif cfg.window_type == "gaussian":
-            self.apod = gaussian_window_1d(cfg.pixels, 0.5, cfg.window_sigma)
-        else:
-            raise ValueError(f"Unknown window_type={cfg.window_type}")
-
-
         # Precompute two spectral windows
         self.w1, self.w2 = make_two_window_masks(cfg.pixels, cfg.gap, cfg.window_sigma, cfg.gap_offset)
 
@@ -426,10 +414,6 @@ class BscanProcessor:
         self._spline_pre = _precompute_natural_cubic_uniform(cfg.pixels, self.resampling.astype(np.float32, copy=False))
 
         # Reuse buffers to reduce allocations (per processor instance)
-        self._raw_u16 = np.empty((cfg.pixels * cfg.alines,), dtype=np.uint16)
-        self._raw_f32 = np.empty((cfg.pixels, cfg.alines), dtype=np.float32)
-        self._resamp_f32 = np.empty((cfg.pixels, cfg.alines), dtype=np.float32)
-        self._spec_full_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
         self._spec1_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
         self._spec2_c64 = np.empty((cfg.pixels, cfg.alines), dtype=np.complex64)
         # Pre-allocated batch buffer for batched FFT [full, w1, w2, + sub-windows]
@@ -456,7 +440,6 @@ class BscanProcessor:
             raw = raw - raw.mean(axis=1, keepdims=True)
 
         resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
-        # resamp *= self.apod[:, None]
 
         spec_full = resamp
 
@@ -489,61 +472,17 @@ class BscanProcessor:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
-        
-    def process_one_spectrum(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, Any]:
-        """
-        Process a single raw B-scan file and return complex spectra before FFT.
 
-        Returns dict with keys:
-          spec_full, spec_w1, spec_w2: [pixels, alines] complex64 (normalized)
-          norm_factor: float (magnitude std used for normalization)
-        """
-        cfg = self.cfg
-        pixels = cfg.pixels
-        alines = cfg.alines
-
-        data = np.fromfile(bscan_path, dtype=np.uint16)
-        expected = pixels * alines
-        if data.size != expected:
-            raise ValueError(
-                f"{os.path.basename(bscan_path)} has {data.size} elements; expected {expected}."
-            )
-
-        raw = data.reshape((pixels, alines), order="F").astype(np.float32, copy=False)
-
-        if cfg.do_dc_subtract:
-            raw[0, :] = raw[3, :]
-            raw[1, :] = raw[3, :]
-            raw[2, :] = raw[3, :]
-            raw = raw - raw.mean(axis=1, keepdims=True)
-
-        resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
-
-        spec_full = resamp.astype(np.float32, copy=False)
-        spec_w1 = spec_full * self.w1[:, None]
-        spec_w2 = spec_full * self.w2[:, None]
-
-        norm_factor = float(spec_full.std()) + 1e-8
-        spec_full = spec_full / norm_factor
-        spec_w1   = spec_w1   / norm_factor
-        spec_w2   = spec_w2   / norm_factor
-
-        return {
-            "spec_full": spec_full,
-            "spec_w1":   spec_w1,
-            "spec_w2":   spec_w2,
-            "w1_mask":   self.w1.astype(np.float32, copy=True),
-            "w2_mask":   self.w2.astype(np.float32, copy=True),
-            "norm_factor": norm_factor,
-        }
-
-    def process_one(self, bscan_path: str, frame_idx: int = 0) -> Dict[str, Any]:
+    def process_one(self, bscan_path: str, frame_idx: int = 0, need_linear_full: bool = False,
+                    fft_workers: int = -1) -> Dict[str, Any]:
         """
         Process a single raw B-scan file into denoising inputs and target.
 
         Returns dict with keys:
           target_full, input_w1, input_w2: [H,W] float32
           target_mu, target_sd, input_w1_mu, input_w1_sd, input_w2_mu, input_w2_sd: float
+        When need_linear_full=True, also returns target_full_linear: [H,W] float32
+          (cropped full-band linear magnitude, pre-log) for temporal averaging.
         """
         cfg = self.cfg
         pixels = cfg.pixels
@@ -568,10 +507,7 @@ class BscanProcessor:
         # 3) Resample to k-linear (cubic spline, vectorized across A-lines)
         resamp = resample_klinear_cubic_operator(raw, self._spline_pre)
 
-        # 4) Apodization
-        # resamp *= self.apod[:, None]
-
-        # 5) Build spectrum
+        # 4) Build spectrum
         spec_full = resamp.astype(np.complex64, copy=True)
 
         # 6) Recon target + two windowed inputs via batched FFT
@@ -597,6 +533,7 @@ class BscanProcessor:
             cfg.log_eps,
             cfg.apply_fftshift_depth,
             return_stats=True,
+            fft_workers=fft_workers,
         )
         target_full = batch_imgs[0]
         input_w1 = batch_imgs[1]
@@ -620,45 +557,7 @@ class BscanProcessor:
         if self.sub_w1s:
             result["input_sub_windows"] = batch_imgs[3:]
 
+        if need_linear_full:
+            result["target_full_linear"] = target_stats["img_linear"]
+
         return result
-
-
-    def process_all(self,
-                    out_npz: Optional[str] = None) -> Dict[str, np.ndarray]:
-        """
-        Process all frames; optionally save dataset npz and debug PNGs.
-        Returns dict with:
-          X: [F,2,H,W], Y: [F,1,H,W]
-        """
-        cfg = self.cfg
-        F = len(self.bscan_paths)
-
-        # Determine H,W by running first frame
-        first = self.process_one(self.bscan_paths[0], frame_idx=0)
-        H, W = first["target_full"].shape
-
-        X = np.zeros((F, 2, H, W), dtype=np.float32)
-        Y = np.zeros((F, 1, H, W), dtype=np.float32)
-
-        for i, p in enumerate(self.bscan_paths):
-            if (i + 1) % 10 == 0 or i == 0:
-                print(f"Processing frame {i + 1}/{F}")
-            out = self.process_one(p, frame_idx=i)
-            X[i, 0] = out["input_w1"]
-            X[i, 1] = out["input_w2"]
-            Y[i, 0] = out["target_full"]
-
-        if out_npz is not None:
-            from utils.io_tiff import save_tiff_stack
-
-            os.makedirs(os.path.dirname(out_npz), exist_ok=True)
-            np.savez_compressed(out_npz, X=X, Y=Y)
-            print(f"[OK] Saved dataset: {out_npz}  X={X.shape} Y={Y.shape}")
-
-            base_dir = os.path.dirname(out_npz)
-            for label, stack in [("window1", X[:, 0]), ("window2", X[:, 1]), ("target", Y[:, 0])]:
-                path = os.path.join(base_dir, f"{cfg.data_folder}_{label}.tiff")
-                save_tiff_stack(path, stack, dtype="uint8")
-                print(f"[OK] Saved {label} stack: {path} (shape: {stack.shape})")
-
-        return {"X": X, "Y": Y}

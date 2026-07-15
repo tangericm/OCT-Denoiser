@@ -85,12 +85,22 @@ def predict_raw_to_tiffs(
     snr_sig_y1: int | None = None,
     snr_sig_stat: str | None = None,
 
+    # Input/target construction (must match training)
+    input_mode: str = "bandgap",     # "bandgap" = [w1,w2(+subs)]; "fullband" = single full-band image
+    target_mode: str = "fullband",   # "fullband" = same-frame full band; "average" = temporal-average reference
+    avg_leave_one_out: bool = True,
+
 ) -> None:
     """
     Raw-folder inference:
       - preprocess each frame on the fly using folder_spec + CLB
       - run model
       - save TIFF stacks + optional SNR CSV + ROI plots (frame 0)
+
+    input_mode / target_mode must match how the checkpoint was trained. For
+    target_mode="average" the clean reference is the folder's temporal mean of
+    the linear full-band magnitude, and predictions are back-transformed with the
+    (leave-one-out) averaged-target statistics.
     """
     from preprocess import BscanProcessor
 
@@ -111,11 +121,13 @@ def predict_raw_to_tiffs(
     print(f"[INFO] Loading checkpoint from: {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location="cpu")
     print(f"[INFO] Creating model: {model_name}")
-    model_kwargs = {"base": base}
     n_sub = getattr(folder_spec, "n_sub_windows", 0)
-    n_sub_channels = 2 * n_sub
-    if n_sub_channels > 0:
-        model_kwargs["n_sub_channels"] = n_sub_channels
+    model_kwargs = {"base": base}
+    if model_name == "resunet_pseudo3d_multilevel":
+        model_kwargs["n_sub_channels"] = 2 * n_sub
+    else:
+        # Channel count must match input_mode (mirrors engine/train.py).
+        model_kwargs["in_ch"] = 1 if input_mode == "fullband" else (2 + (2 * n_sub if n_sub > 0 else 0))
     model = create_model(model_name, **model_kwargs).to(device)
     model.load_state_dict(ckpt["model"], strict=True)
     model.eval()
@@ -127,16 +139,31 @@ def predict_raw_to_tiffs(
         paths = paths[: int(max_frames)]
     F = len(paths)
 
+    is_bandgap = (input_mode != "fullband")
+    is_average = (target_mode == "average")
+    need_lin = is_average
+
+    # Clean temporal-average reference (linear magnitude) for average-target configs.
+    sum_mag = clean_lin = None
+    N_frames = 0
+    if is_average:
+        from data.avg_targets import build_folder_sum
+        print(f"[INFO] Building temporal-average reference for {folder_spec.data_folder} ...")
+        sum_mag, N_frames = build_folder_sum(folder_spec)
+        clean_lin = (sum_mag / N_frames).astype(np.float64)
+
     # Pre-run first frame to get H,W
     print(f"[INFO] Total frames to process: {F}")
-    out0 = proc.process_one(paths[0], frame_idx=0)
+    out0 = proc.process_one(paths[0], frame_idx=0, need_linear_full=need_lin)
     H, W = out0["target_full"].shape
     print(f"[INFO] Frame 0 processed; image shape: {H}x{W}")
 
     preds = np.zeros((F, H, W), dtype=np.float32)
     gts   = np.zeros((F, H, W), dtype=np.float32)
-    w1    = np.zeros((F, H, W), dtype=np.float32)
-    w2    = np.zeros((F, H, W), dtype=np.float32)
+    w1 = w2 = None
+    if is_bandgap:
+        w1 = np.zeros((F, H, W), dtype=np.float32)
+        w2 = np.zeros((F, H, W), dtype=np.float32)
 
     snr_pred_list: list[float] = []
     snr_gt_list: list[float] = []
@@ -193,11 +220,36 @@ def predict_raw_to_tiffs(
     bg_roi_c = bg_bounds(H, W, x0=sx0, x1=sx1)
 
     def _gather_input(out: dict) -> np.ndarray:
-        """Stack all input channels: Level 1 (w1, w2) + optional Level 2 sub-windows."""
+        """Model input per input_mode: bandgap [w1,w2(+subs)] or single full-band image."""
+        if not is_bandgap:
+            return out["target_full"][None, ...].astype(np.float32)  # [1,H,W]
         channels = [out["input_w1"], out["input_w2"]]
         if "input_sub_windows" in out:
             channels.extend(out["input_sub_windows"])
         return np.stack(channels, axis=0).astype(np.float32)
+
+    def _target_and_stats(out: dict):
+        """Return (gt_norm [H,W], gt_lin [H,W], back-transform mu, sd) for the frame.
+
+        fullband target: same-frame full band, normalized with the frame's own stats.
+        average target:  leave-one-out temporal mean, normalized with the averaged stats;
+                         the clean reference is the full temporal mean.
+        """
+        log_eps = float(proc.cfg.log_eps)
+        if not is_average:
+            gt_norm = out["target_full"].astype(np.float32)
+            mu, sd = float(out["target_mu"]), float(out["target_sd"])
+            gt_lin = to_physical_intensity(gt_norm, {"target_mu": mu, "target_sd": sd, "log_eps": log_eps})
+            return gt_norm, gt_lin, mu, sd
+        mag_i = out["target_full_linear"].astype(np.float64)
+        if avg_leave_one_out and N_frames > 1:
+            avg_i = (sum_mag - mag_i) / (N_frames - 1)
+        else:
+            avg_i = clean_lin
+        t = np.log10(avg_i + log_eps) if proc.cfg.use_log else avg_i
+        mu, sd = float(t.mean()), float(t.std()) + 1e-6
+        gt_norm = ((np.log10(clean_lin + log_eps) - mu) / sd).astype(np.float32)
+        return gt_norm, clean_lin.astype(np.float32), mu, sd
 
     # Warmup
     print(f"[INFO] Running warmup inference...")
@@ -207,11 +259,9 @@ def predict_raw_to_tiffs(
     print(f"[INFO] Warmup complete, starting predictions...")
 
     for i, p in enumerate(paths):
-        out = proc.process_one(p, frame_idx=i)
+        out = proc.process_one(p, frame_idx=i, need_linear_full=need_lin)
         x_chw = _gather_input(out)
-        gt = out["target_full"].astype(np.float32)
-        target_mu = float(out["target_mu"])
-        target_sd = float(out["target_sd"])
+        gt, gt_lin, target_mu, target_sd = _target_and_stats(out)
 
         t0 = time.time()
         pred = _infer_1(x_chw)
@@ -223,13 +273,14 @@ def predict_raw_to_tiffs(
 
         preds[i] = pred
         gts[i] = gt
-        w1[i] = out["input_w1"].astype(np.float32)
-        w2[i] = out["input_w2"].astype(np.float32)
+        if is_bandgap:
+            w1[i] = out["input_w1"].astype(np.float32)
+            w2[i] = out["input_w2"].astype(np.float32)
 
-        # Recover per-frame physical-domain intensities and compute SNR/CNR there.
+        # Recover physical-domain intensities and compute SNR/CNR there. Predictions
+        # are back-transformed with the same stats the network was trained to output.
         sample_meta = {"target_mu": target_mu, "target_sd": target_sd, "log_eps": proc.cfg.log_eps}
         pred_lin = to_physical_intensity(pred, sample_meta)
-        gt_lin = to_physical_intensity(gt, sample_meta)
 
         snr_pred, cnr_pred = roi_snr_cnr(pred_lin, sig_roi_c, bg_roi_c, sig_stat=snr_sig_stat)
         snr_gt, cnr_gt = roi_snr_cnr(gt_lin, sig_roi_c, bg_roi_c, sig_stat="max")
@@ -290,13 +341,13 @@ def predict_raw_to_tiffs(
 
     pred_path     = os.path.join(outdir, f"pred_{param_suffix}.tiff")
     gt_path       = os.path.join(outdir, f"gt_{param_suffix}.tiff")
-    w1_path       = os.path.join(outdir, f"w1_{param_suffix}.tiff")
-    w2_path       = os.path.join(outdir, f"w2_{param_suffix}.tiff")
 
     save_tiff_stack(pred_path, preds, dtype=tiff_dtype, scale_per_slice=True)
     save_tiff_stack(gt_path,   gts,   dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(w1_path,   w1,    dtype=tiff_dtype, scale_per_slice=True)
-    save_tiff_stack(w2_path,   w2,    dtype=tiff_dtype, scale_per_slice=True)
+    # Windowed sub-band inputs only exist in bandgap mode.
+    if is_bandgap:
+        save_tiff_stack(os.path.join(outdir, f"w1_{param_suffix}.tiff"), w1, dtype=tiff_dtype, scale_per_slice=True)
+        save_tiff_stack(os.path.join(outdir, f"w2_{param_suffix}.tiff"), w2, dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
         save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds, dtype="float32", scale_per_slice=True)
@@ -317,5 +368,8 @@ def predict_from_config(cfg, folder_spec, ckpt_path: str, outdir: str, **overrid
         snr_sig_y0=cfg.snr_sig_y0,
         snr_sig_y1=cfg.snr_sig_y1,
         snr_sig_stat=cfg.snr_sig_stat,
+        input_mode=getattr(cfg, "input_mode", "bandgap"),
+        target_mode=getattr(cfg, "target_mode", "fullband"),
+        avg_leave_one_out=getattr(cfg, "avg_leave_one_out", True),
         **overrides,
     )

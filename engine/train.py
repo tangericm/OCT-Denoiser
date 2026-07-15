@@ -92,6 +92,12 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     # Save config at run root
     save_json(os.path.join(paths["run"], "config.json"), asdict(cfg))
 
+    # Precompute temporal-average targets ONCE in the main process (workers load the cache).
+    if getattr(cfg, "target_mode", "fullband") == "average":
+        from data.avg_targets import ensure_folder_averages, resolve_avg_cache_dir
+
+        ensure_folder_averages(cfg.folder_specs, resolve_avg_cache_dir(cfg))
+
     # Data
     dm = RawBscanDataModule(cfg)
     dm.setup()
@@ -110,10 +116,15 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
 
     # Model
     model_kwargs = {"base": cfg.base}
-    if cfg.folder_specs:
-        n_sub = getattr(cfg.folder_specs[0], "n_sub_windows", 0)
-        if n_sub > 0:
-            model_kwargs["n_sub_channels"] = 2 * n_sub
+    n_sub = getattr(cfg.folder_specs[0], "n_sub_windows", 0) if cfg.folder_specs else 0
+    if cfg.model_name == "resunet_pseudo3d_multilevel":
+        model_kwargs["n_sub_channels"] = 2 * n_sub
+    else:
+        # Channel count per input_mode: full-band single image (1ch) vs bandgap (2 + subs).
+        if getattr(cfg, "input_mode", "bandgap") == "fullband":
+            model_kwargs["in_ch"] = 1
+        else:
+            model_kwargs["in_ch"] = 2 + (2 * n_sub if n_sub > 0 else 0)
     model = create_model(cfg.model_name, **model_kwargs).to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)

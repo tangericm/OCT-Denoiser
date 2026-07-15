@@ -66,6 +66,10 @@ class RawBscanDataset(Dataset):
         cache_frames_per_worker: int = 200,
         full_frame: bool = False,
         max_frames: int | None = None,
+        input_mode: str = "bandgap",
+        target_mode: str = "fullband",
+        avg_leave_one_out: bool = True,
+        avg_cache_dir: str | None = None,
     ):
         self.folder_specs = folder_specs
         self.split = split
@@ -79,6 +83,10 @@ class RawBscanDataset(Dataset):
         self.cache_frames_per_worker = cache_frames_per_worker
         self.full_frame = full_frame
         self.max_frames = max_frames
+        self.input_mode = input_mode
+        self.target_mode = target_mode
+        self.avg_leave_one_out = avg_leave_one_out
+        self.avg_cache_dir = avg_cache_dir
 
         self._procs = None
         self._paths = None
@@ -86,6 +94,8 @@ class RawBscanDataset(Dataset):
         self._cache = None
         self._rng = None
         self._estimated_len = 1
+        self._avg_sum = None
+        self._avg_N = None
 
     def _build_index(self):
         if self._index is not None:
@@ -147,14 +157,59 @@ class RawBscanDataset(Dataset):
         self._rng = np.random.RandomState(aug_seed)
         self._cache = _LRU(max_items=self.cache_frames_per_worker)
 
+        # Load per-folder linear-magnitude sums for temporal-average targets.
+        if self.target_mode == "average":
+            from data.avg_targets import load_folder_sum
+
+            if not self.avg_cache_dir:
+                raise ValueError("target_mode='average' requires avg_cache_dir to be set.")
+            self._avg_sum = []
+            self._avg_N = []
+            for fs in self.folder_specs:
+                s, n = load_folder_sum(self.avg_cache_dir, fs)
+                self._avg_sum.append(s)
+                self._avg_N.append(n)
+
     def _fetch_frame(self, fidx: int, frame_idx: int):
         cache_key = (fidx, frame_idx)
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
-        out = self._procs[fidx].process_one(self._paths[fidx][frame_idx], frame_idx=frame_idx)
+        need_linear = (self.target_mode == "average")
+        # Cap FFT threads to 1 inside a DataLoader worker so N workers don't each
+        # spawn an all-core FFT (oversubscription). In-process (no worker) uses all cores.
+        fft_workers = 1 if get_worker_info() is not None else -1
+        out = self._procs[fidx].process_one(
+            self._paths[fidx][frame_idx], frame_idx=frame_idx,
+            need_linear_full=need_linear, fft_workers=fft_workers,
+        )
         self._cache.put(cache_key, out)
         return out
+
+    def _make_inputs(self, out: dict) -> list:
+        """Input channels per input_mode: bandgap [w1,w2(+subs)] or single full-band image."""
+        if self.input_mode == "fullband":
+            return [out["target_full"]]
+        return self._gather_inputs(out)
+
+    def _make_target(self, out: dict, fidx: int) -> tuple:
+        """Return (target [H,W] float32, target_mu, target_sd) per target_mode."""
+        if self.target_mode != "average":
+            return out["target_full"], float(out["target_mu"]), float(out["target_sd"])
+
+        cfg = self._procs[fidx].cfg
+        mag_i = out["target_full_linear"].astype(np.float64, copy=False)
+        sum_mag = self._avg_sum[fidx]
+        n = self._avg_N[fidx]
+        if self.avg_leave_one_out and n > 1:
+            avg = (sum_mag - mag_i) / (n - 1)
+        else:
+            avg = sum_mag / max(n, 1)
+        t = np.log10(avg + cfg.log_eps) if cfg.use_log else avg
+        tmu = float(t.mean())
+        tsd = float(t.std()) + 1e-6
+        tgt = ((t - tmu) / tsd).astype(np.float32)
+        return tgt, tmu, tsd
 
     def _random_crop(
         self,
@@ -185,7 +240,14 @@ class RawBscanDataset(Dataset):
             y = y[:, ::-1, :]
         return x.copy(order="C"), y.copy(order="C")
 
-    def _build_meta(self, fidx: int, frame_idx: int, out: dict | None = None) -> dict:
+    def _build_meta(
+        self,
+        fidx: int,
+        frame_idx: int,
+        out: dict | None = None,
+        target_mu: float | None = None,
+        target_sd: float | None = None,
+    ) -> dict:
         fs = self.folder_specs[fidx]
         meta = {
             "folder_idx": fidx,
@@ -197,10 +259,13 @@ class RawBscanDataset(Dataset):
             "alines": fs.alines,
         }
         if out is not None:
-            if "target_mu" in out:
-                meta["target_mu"] = float(out["target_mu"])
-            if "target_sd" in out:
-                meta["target_sd"] = float(out["target_sd"])
+            # target_mu/sd reflect the actual target used (averaged target overrides).
+            mu = target_mu if target_mu is not None else out.get("target_mu")
+            sd = target_sd if target_sd is not None else out.get("target_sd")
+            if mu is not None:
+                meta["target_mu"] = float(mu)
+            if sd is not None:
+                meta["target_sd"] = float(sd)
             if hasattr(self._procs[fidx], "cfg") and hasattr(self._procs[fidx].cfg, "log_eps"):
                 meta["log_eps"] = float(self._procs[fidx].cfg.log_eps)
         return meta
@@ -224,14 +289,16 @@ class RawBscanDataset(Dataset):
         if self.full_frame:
             fidx, frame_idx = entry
             out = self._fetch_frame(fidx, frame_idx)
-            inputs = self._gather_inputs(out)
+            inputs = self._make_inputs(out)
+            tgt, tmu, tsd = self._make_target(out, fidx)
             x = np.stack(inputs, axis=0).astype(np.float32)
-            y = out["target_full"][None, ...].astype(np.float32)
+            y = tgt[None, ...].astype(np.float32)
         else:
             fidx, frame_idx, _pr = entry
             out = self._fetch_frame(fidx, frame_idx)
-            inputs = self._gather_inputs(out)
-            x, y = self._random_crop(inputs, out["target_full"])
+            inputs = self._make_inputs(out)
+            tgt, tmu, tsd = self._make_target(out, fidx)
+            x, y = self._random_crop(inputs, tgt)
             if self.augment:
                 x, y = self._random_flips(x, y)
             else:
@@ -239,4 +306,8 @@ class RawBscanDataset(Dataset):
                 y = np.ascontiguousarray(y)
 
         meta_out = out if self.full_frame else None
-        return _to_torch_float32(x), _to_torch_float32(y), self._build_meta(fidx, frame_idx, out=meta_out)
+        return (
+            _to_torch_float32(x),
+            _to_torch_float32(y),
+            self._build_meta(fidx, frame_idx, out=meta_out, target_mu=tmu, target_sd=tsd),
+        )

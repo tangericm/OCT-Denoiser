@@ -77,11 +77,31 @@ class Pseudo3DStem(nn.Module):
         x = self.act(self.bn2d(self.conv2d(x)))       # [B,out_ch,H,W]
         return x
 
+class Stem2D(nn.Module):
+    """Plain 2D conv stem for single-channel (full-band) input.
+
+    Used when in_ch != 2 so the same encoder/decoder can be fed a 1-channel
+    image, isolating the architecture from the pseudo-3D dual-window stem.
+    """
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_ch)
+        self.act = nn.SiLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_ch)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.act(self.bn1(self.conv1(x)))
+        x = self.act(self.bn2(self.conv2(x)))
+        return x
+
+
 class ResUNetPseudo3D(nn.Module):
-    def __init__(self, base: int = 64):
+    def __init__(self, base: int = 64, in_ch: int = 2):
         super().__init__()
 
-        self.stem = Pseudo3DStem(out_ch=base)
+        self.stem = Pseudo3DStem(out_ch=base) if in_ch == 2 else Stem2D(in_ch, base)
         self.enc1 = nn.Sequential(ResBlock2D(base), ResBlock2D(base))
         self.down1 = Down(base, base * 2, n_res=2)
         self.down2 = Down(base * 2, base * 4, n_res=2)
@@ -108,5 +128,5 @@ class ResUNetPseudo3D(nn.Module):
 
 
 @register_model("resunet_pseudo3d")
-def build_resunet_pseudo3d(*, base: int = 64) -> nn.Module:
-    return ResUNetPseudo3D(base=base)
+def build_resunet_pseudo3d(*, base: int = 64, in_ch: int = 2) -> nn.Module:
+    return ResUNetPseudo3D(base=base, in_ch=in_ch)
