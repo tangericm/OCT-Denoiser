@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from data.dataset import RawBscanDataset
+from data.avg_targets import resolve_avg_cache_dir
 
 
 class RawBscanDataModule:
@@ -17,6 +18,12 @@ class RawBscanDataModule:
 
     def setup(self):
         c = self.cfg
+        mode_kwargs = dict(
+            input_mode=getattr(c, "input_mode", "bandgap"),
+            target_mode=getattr(c, "target_mode", "fullband"),
+            avg_leave_one_out=getattr(c, "avg_leave_one_out", True),
+            avg_cache_dir=resolve_avg_cache_dir(c),
+        )
         self._train = RawBscanDataset(
             folder_specs=c.folder_specs,
             split="train",
@@ -28,6 +35,7 @@ class RawBscanDataModule:
             seed=c.seed,
             augment=c.augment,
             cache_frames_per_worker=c.cache_frames_per_worker,
+            **mode_kwargs,
         )
         self._val = RawBscanDataset(
             folder_specs=c.folder_specs,
@@ -39,6 +47,7 @@ class RawBscanDataModule:
             patch_mode=c.patch_mode,
             seed=c.seed,
             cache_frames_per_worker=c.cache_frames_per_worker,
+            **mode_kwargs,
         )
         self._val_full = RawBscanDataset(
             folder_specs=c.folder_specs,
@@ -47,6 +56,7 @@ class RawBscanDataModule:
             seed=c.seed,
             cache_frames_per_worker=c.cache_frames_per_worker,
             full_frame=True,
+            **mode_kwargs,
         )
 
     def train_loader(self):

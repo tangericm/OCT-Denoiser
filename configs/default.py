@@ -12,7 +12,6 @@ class FolderSpec:
     clb_path: Optional[str] = None          # override CLB path; auto-discovered if None
     crop_depth: Tuple[int, int] = (1024, 2048)  # [z0, z1) pixel crop after IFFT
     do_dc_subtract: bool = True
-    window_type: str = "hann"               # "hann" | "ones" | "gaussian"
     use_log: bool = True
     log_eps: float = 1e-6
     apply_fftshift_depth: bool = False
@@ -62,9 +61,17 @@ class TrainConfig:
     num_workers: int = 8
 
     # ------------------------------------------------------------------
+    # Input / target construction (baseline study)
+    # ------------------------------------------------------------------
+    input_mode: str = "bandgap"            # "bandgap" = [w1,w2] sub-bands; "fullband" = single full-band image (1ch)
+    target_mode: str = "fullband"          # "fullband" = same-frame full band; "average" = temporal average target
+    avg_leave_one_out: bool = True         # average excludes the input frame (no input/target leak)
+    avg_cache_dir: str = "avg_cache"       # per-folder linear-magnitude sum cache (relative to runs_root)
+
+    # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
-    model_name: str = "resunet_pseudo3d"   # "resunet_pseudo3d" | "resunet_pseudo3d_multilevel"
+    model_name: str = "resunet_pseudo3d"   # "resunet_pseudo3d" | "resunet_pseudo3d_multilevel" | "dncnn" | "unet2d"
     base: int = 64                         # base channel width
 
     # ------------------------------------------------------------------
@@ -106,4 +113,3 @@ class TrainConfig:
     # ------------------------------------------------------------------
     tiff_dtype: str = "uint16"             # "uint8" | "uint16" | "float32"
     also_save_float32: bool = False
-    save_raw_spectra: bool = False
