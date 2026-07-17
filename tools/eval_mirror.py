@@ -86,12 +86,45 @@ def _model_kwargs_for_cfg(cfg, n_sub: int) -> dict:
     return kw
 
 
+def _save_gt_clean(test_fs, save_dir: str) -> None:
+    """Save the shared clean reference (temporal-average, GT display domain) once."""
+    from preprocess import BscanProcessor
+    from utils.io_tiff import save_tiff_stack
+    proc = BscanProcessor(test_fs)
+    sum_mag, N = build_folder_sum(test_fs)
+    clean_lin = (sum_mag / N).astype(np.float64)
+    gt_log = np.log10(clean_lin + float(proc.cfg.log_eps))
+    lo, hi = np.percentile(gt_log, [1, 99])
+    gt_disp = np.clip((gt_log - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
+    os.makedirs(save_dir, exist_ok=True)
+    save_tiff_stack(os.path.join(save_dir, "gt_clean.tiff"),
+                    gt_disp.astype(np.float32)[None, ...], dtype="float32")
+
+
+def _write_perframe_csv(path: str, per_frame: dict) -> None:
+    """Write one row per held-out frame: frame index + each metric."""
+    cols = ["frame", "psnr", "ssim", "bg_sigma", "snr", "cnr", "psf_fwhm"]
+    n = len(per_frame["psnr"])
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="") as f:
+        wtr = csv.DictWriter(f, fieldnames=cols)
+        wtr.writeheader()
+        for i in range(n):
+            wtr.writerow({"frame": i, **{k: per_frame[k][i] for k in cols if k != "frame"}})
+
+
 @torch.no_grad()
 def evaluate_config(cfg: dict, ckpt_path: str, test_fs, device: str,
                     peak_row: int, sig_y0: int, sig_y1: int,
-                    avg_leave_one_out: bool = True) -> dict:
-    """Run one config's checkpoint over the held-out folder; return mean metrics."""
+                    avg_leave_one_out: bool = True,
+                    save_dir: str | None = None, tag: str | None = None) -> dict:
+    """Run one config's checkpoint over the held-out folder; return mean metrics.
+
+    If save_dir is given, also writes prediction TIFFs, a [noisy|pred|GT]
+    comparison stack, and a per-frame metrics CSV for visual assessment.
+    """
     from preprocess import BscanProcessor
+    from utils.io_tiff import save_tiff_stack
 
     proc = BscanProcessor(test_fs)
     paths = proc.bscan_paths
@@ -122,6 +155,9 @@ def evaluate_config(cfg: dict, ckpt_path: str, test_fs, device: str,
         model.eval()
 
     acc = {k: [] for k in ("psnr", "ssim", "bg_sigma", "snr", "cnr", "psf_fwhm")}
+    save = save_dir is not None and model is not None
+    pred_pages: list = []       # predicted display frames
+    compare_pages: list = []    # [noisy | pred | GT] triptych frames
 
     for i, p in enumerate(paths):
         out = proc.process_one(p, frame_idx=i, need_linear_full=True)
@@ -167,13 +203,38 @@ def evaluate_config(cfg: dict, ckpt_path: str, test_fs, device: str,
         acc["snr"].append(s); acc["cnr"].append(c)
         acc["psf_fwhm"].append(_axial_fwhm(pred_lin, peak_row))
 
+        if save:
+            noisy_disp = gt_norm(np.log10(mag_i + log_eps))
+            pred_pages.append(pred_disp.astype(np.float32))
+            compare_pages.append(np.concatenate(
+                [noisy_disp, pred_disp, gt_disp], axis=1).astype(np.float32))
+
+    if save:
+        stem = tag or cfg.get("model_name", "config")
+        os.makedirs(save_dir, exist_ok=True)
+        # Prediction stack (uint16). Data already in the common GT [0,1] display
+        # domain; p_lo/p_hi=0/100 makes this an exact [0,1]->[0,65535] map (no
+        # per-frame contrast stretch), so frames stay comparable.
+        save_tiff_stack(os.path.join(save_dir, f"{stem}_pred.tiff"),
+                        np.stack(pred_pages, axis=0), dtype="uint16",
+                        scale_per_slice=False, p_lo=0.0, p_hi=100.0)
+        # [noisy | pred | GT] side-by-side, same fixed [0,1] mapping.
+        save_tiff_stack(os.path.join(save_dir, f"{stem}_compare.tiff"),
+                        np.stack(compare_pages, axis=0), dtype="uint16",
+                        scale_per_slice=False, p_lo=0.0, p_hi=100.0)
+        _write_perframe_csv(os.path.join(save_dir, f"{stem}_perframe.csv"), acc)
+
     return {k: float(np.nanmean(v)) for k, v in acc.items()}
 
 
 def evaluate_all(configs: list, ckpts: dict, test_fs, device: str,
                  peak_row: int, sig_y0: int, sig_y1: int, out_csv: str,
-                 avg_leave_one_out: bool = True) -> list:
-    """Score every config + a noisy-input floor; write and return a summary table."""
+                 avg_leave_one_out: bool = True, save_dir: str | None = None) -> list:
+    """Score every config + a noisy-input floor; write and return a summary table.
+
+    If save_dir is given, each config also gets prediction/comparison TIFFs and a
+    per-frame metrics CSV, plus a single shared gt_clean.tiff reference.
+    """
     rows = []
     # Noisy input floor (no model)
     print("[eval] noisy-input floor ...")
@@ -187,8 +248,12 @@ def evaluate_all(configs: list, ckpts: dict, test_fs, device: str,
             print(f"[eval] SKIP {tag} (missing checkpoint {ck})")
             continue
         print(f"[eval] {tag}: {cfg['model_name']} input={cfg['input_mode']} target={cfg['target_mode']}")
-        m = evaluate_config(cfg, ck, test_fs, device, peak_row, sig_y0, sig_y1, avg_leave_one_out)
+        m = evaluate_config(cfg, ck, test_fs, device, peak_row, sig_y0, sig_y1, avg_leave_one_out,
+                            save_dir=save_dir, tag=tag)
         rows.append({"tag": tag, **m})
+
+    if save_dir is not None:
+        _save_gt_clean(test_fs, save_dir)
 
     cols = ["tag", "psnr", "ssim", "bg_sigma", "snr", "cnr", "psf_fwhm"]
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
