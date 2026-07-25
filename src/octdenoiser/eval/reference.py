@@ -11,15 +11,21 @@ reference does. See eval/selfval.py.
 
 Why registration is mandatory
 -----------------------------
-Motion is real and it is not monotonic in time. Measured linear-magnitude
-correlation against frame 0: 0.975 at frame 1, 0.972 at frame 2, then 0.700 at
-frame 4, recovering to 0.863 at frame 8. Frame 4 is a motion event, not drift.
-Averaging without registration would blur the reference by exactly the
-structure the reference is supposed to resolve.
+Motion is real and not monotonic in time. Through the full preprocessing path,
+frame-to-frame correlation across the four Maestro2 stacks runs 0.50 to 0.79,
+with individual frames dropping much lower -- motion events, not drift.
+Averaging without registration would blur the reference by exactly the structure
+it is supposed to resolve.
 
-That 0.975 baseline also carries the finding that motivates the whole method:
-repeats of the same tissue barely decorrelate speckle. Averaging suppresses
-detector noise well, and speckle only to the extent motion decorrelates it.
+(An earlier figure of 0.975 circulated for this quantity. It came from a crude
+reconstruction without k-linearisation whose DC artefact near row 0 is nearly
+identical between frames and dominated the correlation. It was wrong.)
+
+Registration ROI is per stack, not global. The Maestro2 acquisitions are not all
+retina: `...widefield_anterior_YM` is an anterior-segment scan whose energy spans
+rows 79-973, whereas the 6 mm retina stacks concentrate in rows 146-359. Applying
+a retina ROI to the anterior stack made correlation WORSE (0.64 -> 0.18), because
+the window held mostly noise and phase correlation returned garbage shifts.
 
 Motion model
 ------------

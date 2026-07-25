@@ -1,44 +1,64 @@
 """Complementary spectral masks for self-supervised OCT denoising.
 
+STATUS: measured and NOT recommended as the supervision scheme. See below.
+
 The idea
 --------
 The existing bandgap method splits the spectrum into two Gaussian sub-bands and
-regresses them onto the FULL-band reconstruction. That breaks the Noise2Noise
-conditions three ways:
+regresses them onto the FULL-band reconstruction. Measured defects:
 
 1. The target contains the input (full band contains both sub-bands), so target
-   noise is correlated with input noise. This is bias, not variance, and it is
-   the dominant defect.
-2. A sub-band has narrower k-support and therefore a broader axial PSF, so the
-   network is asked to denoise AND extrapolate bandwidth at once.
-3. Gaussian windows overlap in the tails, so the two views are never disjoint.
+   noise is correlated with input noise. Confirmed: speckle correlation between
+   a sub-band input and its full-band target is +0.138, against +0.003 for a
+   complementary view -- roughly 40x worse. This is bias, not variance, and it
+   is the dominant defect.
+2. A sub-band has narrower k-support and therefore a broader axial PSF.
+   Measured at 2.43x the full-bandwidth width.
+3. Gaussian windows overlap in the tails -- VOID at the tuned settings.
+   Measured support overlap at sigma=0.05, gap=0.60 is exactly 0.0000, so the
+   two windows are already disjoint and this was never a real defect.
 
-A complementary mask pair over the k-linearised spectrum fixes all three:
+A complementary mask pair over the k-linearised spectrum:
 
     m1 : random ~50% duty spread across the FULL k-range
     m2 = 1 - m1
 
-  * detector noise is independent across k, and disjoint masks therefore give
-    independent noise in the two reconstructions;
-  * speckle correlation scales with k-support overlap, so disjoint supports
-    decorrelate speckle by construction, without relying on motion (measured
-    repeat-frame correlation on this data is 0.975, i.e. repeats do NOT
-    decorrelate speckle);
-  * total support still spans the full k-range, so the PSF main-lobe width is
-    the full-bandwidth width — no resolution mismatch;
-  * the target cannot contain the input.
+MEASURED OUTCOME — the masks lose
+---------------------------------
+Measured on real Maestro2 data with the laterally-smooth component removed, so
+speckle is isolated rather than swamped by shared anatomy:
+
+    construction                 speckle corr   axial PSF   signal mismatch
+    repeat frames                     +0.008        1.00x       ~0
+    contiguous Gaussian sub-bands     +0.003        2.43x       0.269
+    complementary random masks        +0.257        1.01x       0.058
+
+The masks were proposed expecting disjoint k-support to decorrelate speckle
+better than Gaussian windows. It does the opposite, by 75x. Speckle decorrelates
+because two views sample DIFFERENT spectral regions; contiguous sub-bands do
+exactly that, whereas interleaved masks spread across the SAME k-range. That is
+precisely the property which preserves the PSF, so decorrelation and resolution
+are in direct tension and cannot both be had from one frame.
+
+What the masks do win is signal consistency: 0.058 versus 0.269 relative
+mismatch between the two views' mean depth profiles, with a systematic
+depth-dependent slope ~100x smaller. Contiguous sub-bands sit at different k and
+scattering is wavelength-dependent, so their expected signals genuinely differ —
+a Noise2Noise bias term, not noise.
+
+Retained because `make_mask_partition` and the PSF utilities serve the
+held-out-mask validation metric in eval/selfval.py, and because the comparison
+above belongs in the ablation table.
 
 Why random rather than a periodic comb
 --------------------------------------
 Periodic sampling with spacing dk replicates the image at depth spacing 2*pi/dk,
-producing discrete ghost artifacts. Randomising the mask scatters that energy
-into a noise-like pedestal instead. Crucially the pedestal differs between m1
-and m2, so under Noise2Noise it is treated as noise to suppress rather than
-signal to reproduce.
+producing discrete ghost artifacts. Randomising scatters that energy into a
+noise-like pedestal instead.
 
-The cost is that pedestal, which raises the effective noise floor. `smooth` and
-`power` variants trade decorrelation strength for lower sidelobe energy and
-exist as fallbacks if the binary pedestal proves too expensive.
+`smooth` and `power` variants were included as lower-sidelobe fallbacks but
+retain +0.63 and +0.87 reconstruction correlation on synthetic spectra, so they
+are diagnostics only.
 """
 from __future__ import annotations
 

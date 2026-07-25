@@ -19,10 +19,16 @@ and eta_i is that view's speckle-plus-detector noise:
                             \_______________/     \____________/
                               what we want         constant in f
 
-The cross term vanishes because eta_3 is zero-mean and independent of x1, which
-disjoint masks guarantee: detector noise is independent across k, and speckle
-correlation scales with k-support overlap (measured -0.022 for disjoint binary
-masks, versus 0.975 for repeat B-scans of the same tissue).
+The cross term vanishes when eta_3 is zero-mean and independent of x1. Detector
+noise is independent across k, so disjoint masks guarantee that part outright.
+
+Note on the speckle component: measured on real data with structure removed,
+disjoint interleaved masks leave speckle correlated at +0.257, NOT the ~0 an
+early synthetic measurement suggested. The independence assumption is therefore
+only partially satisfied for speckle, which inflates the constant term and
+weakens -- but does not invert -- the ranking guarantee. Contiguous sub-bands
+(+0.003) and repeat frames (+0.008) satisfy it far better, so prefer those view
+constructions when generating validation views. See physics/masks.py.
 
 The second term does not depend on the model, so **ranking models by this score
 matches ranking them by true MSE against a clean reference** — without ever
