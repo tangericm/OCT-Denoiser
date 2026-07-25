@@ -94,11 +94,11 @@ class RawBscanDataset(Dataset):
         self.avg_leave_one_out = avg_leave_one_out
         self.avg_cache_dir = avg_cache_dir
 
-        self._procs = None
-        self._paths = None
-        self._index = None
-        self._cache = None
-        self._rng = None
+        self._procs: list | None = None
+        self._paths: list | None = None
+        self._index: list[tuple] | None = None
+        self._cache: Any = None
+        self._rng: Any = None
         self._swap_views = False
         self._estimated_len = 1
         self._avg_sum = None
