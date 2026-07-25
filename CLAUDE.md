@@ -18,8 +18,9 @@ ruff check . && mypy                    # lint + types
 python -m compileall -q src tests       # syntax check
 ```
 
-Never run bare `python -m compileall .` — it descends into `.git/refs/`, where
-branch names ending in `.py` are parsed as source and always fail.
+Use the explicit `src tests` form: `compileall` descends into `.git/refs/`, so a
+branch whose name ends in `.py` is parsed as source and fails. Three such
+branches existed and have been pruned, but the explicit form cannot break again.
 
 **Stack:** Python ≥3.10 · PyTorch ≥2.4 · CUDA required for practical use
 

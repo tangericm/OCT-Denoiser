@@ -151,8 +151,10 @@ The suite runs entirely on synthesised raw interferograms and a synthetic `.CLB`
 with no instrument data. Fringes are generated against the inverse resampling
 LUT, matching the fact that real spectrometers sample linearly in wavelength.
 
-> Do not run bare `python -m compileall .` — it descends into `.git/refs/`,
-> where branch names ending in `.py` are parsed as source and always fail.
+> `compileall` descends into `.git/refs/`, so a branch whose name ends in `.py`
+> gets parsed as Python source and fails. Three such branches existed and have
+> been pruned; prefer the explicit `src tests` form above so the check cannot
+> break again.
 
 ---
 
