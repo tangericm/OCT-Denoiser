@@ -8,14 +8,14 @@ import matplotlib.pyplot as plt
 from dataclasses import asdict
 from typing import Dict, Any
 
-from engine.early_stopping import EarlyStopping
-from engine.losses import unpack_batch, compute_total_loss
-from engine.eval import evaluate, evaluate_full_frames
-from data.datamodule import RawBscanDataModule
-from networks import create_model
-from utils.helpers import save_json
-from utils.io_tiff import save_tiff_stack
-from utils.live_plot import LiveLossPlot
+from octdenoiser.engine.early_stopping import EarlyStopping
+from octdenoiser.engine.losses import unpack_batch, compute_total_loss
+from octdenoiser.engine.eval import evaluate, evaluate_full_frames
+from octdenoiser.data.datamodule import RawBscanDataModule
+from octdenoiser.networks import create_model
+from octdenoiser.utils.helpers import save_json
+from octdenoiser.utils.io_tiff import save_tiff_stack
+from octdenoiser.utils.live_plot import LiveLossPlot
 
 
 def _save_full_frame_val_png(
@@ -94,7 +94,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
 
     # Precompute temporal-average targets ONCE in the main process (workers load the cache).
     if getattr(cfg, "target_mode", "fullband") == "average":
-        from data.avg_targets import ensure_folder_averages, resolve_avg_cache_dir
+        from octdenoiser.data.avg_targets import ensure_folder_averages, resolve_avg_cache_dir
 
         ensure_folder_averages(cfg.folder_specs, resolve_avg_cache_dir(cfg))
 
@@ -102,7 +102,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
     dm = RawBscanDataModule(cfg)
     dm.setup()
     if cfg.folder_specs:
-        from preprocess import BscanProcessor
+        from octdenoiser.preprocess import BscanProcessor
 
         for folder_spec in cfg.folder_specs:
             folder_name = os.path.basename(folder_spec.data_folder.rstrip("/\\")) or "folder"

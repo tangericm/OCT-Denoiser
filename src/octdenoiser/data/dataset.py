@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, get_worker_info
 
-from preprocess import BscanProcessor
+from octdenoiser.preprocess import BscanProcessor
 
 
 
@@ -159,7 +159,7 @@ class RawBscanDataset(Dataset):
 
         # Load per-folder linear-magnitude sums for temporal-average targets.
         if self.target_mode == "average":
-            from data.avg_targets import load_folder_sum
+            from octdenoiser.data.avg_targets import load_folder_sum
 
             if not self.avg_cache_dir:
                 raise ValueError("target_mode='average' requires avg_cache_dir to be set.")

@@ -23,8 +23,8 @@ Outputs are written to <outdir>/<data_folder>/:
 import argparse
 import os
 
-from configs.default import FolderSpec, TrainConfig
-from engine.infer import predict_from_config
+from octdenoiser.configs.default import FolderSpec, TrainConfig
+from octdenoiser.engine.infer import predict_from_config
 
 
 # ===========================================================================

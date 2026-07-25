@@ -3,8 +3,8 @@ from __future__ import annotations
 import torch
 from torch.utils.data import DataLoader
 
-from data.dataset import RawBscanDataset
-from data.avg_targets import resolve_avg_cache_dir
+from octdenoiser.data.dataset import RawBscanDataset
+from octdenoiser.data.avg_targets import resolve_avg_cache_dir
 
 
 class RawBscanDataModule:

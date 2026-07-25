@@ -17,17 +17,14 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 
-from configs.default import TrainConfig, FolderSpec
-from utils.helpers import seed_all
-from utils.run_manager import make_run_dir, setup_run_dirs
-from engine.train import run_training
-from utils.helpers import save_json
+from octdenoiser.configs.default import TrainConfig, FolderSpec
+from octdenoiser.utils.helpers import seed_all
+from octdenoiser.utils.run_manager import make_run_dir, setup_run_dirs
+from octdenoiser.engine.train import run_training
+from octdenoiser.utils.helpers import save_json
 
 ROOT = r"images\Maestro3"
 # mirror_6mm_1024Aline_5 is excluded entirely: it was acquired while testing
@@ -136,7 +133,7 @@ def main():
             save_json(reg_path, ckpts)
 
     # ---- Evaluate all configs ----
-    from tools.eval_mirror import evaluate_all
+    from octdenoiser.tools.eval_mirror import evaluate_all
     device = args.device if torch.cuda.is_available() else "cpu"
     ms_dir = os.path.join(args.runs_root, args.study_name)
     folders = (TRAIN_FOLDERS + [TEST_FOLDER]) if args.all_folders else [TEST_FOLDER]

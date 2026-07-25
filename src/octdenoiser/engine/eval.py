@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 from .losses import unpack_batch, compute_total_loss
 from .metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
-from utils.helpers import nanmean
+from octdenoiser.utils.helpers import nanmean
 
 
 @torch.no_grad()

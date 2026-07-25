@@ -1,5 +1,21 @@
+import re
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
+
+# Valid enum-like values. `model_name` is deliberately NOT validated here —
+# networks/registry.py is the source of truth and create_model() raises on an
+# unknown name; duplicating the list would drift.
+PATCH_MODES = ("patch", "strip")
+INPUT_MODES = ("bandgap", "fullband")
+TARGET_MODES = ("fullband", "average")
+TIFF_DTYPES = ("uint8", "uint16", "float32")
+_SNR_STAT_RE = re.compile(r"^(max|p\d+(\.\d+)?)$")
+
+MULTILEVEL_MODELS = ("resunet_pseudo3d_multilevel",)
+
+
+class ConfigError(ValueError):
+    """Raised when a configuration is internally inconsistent."""
 
 
 @dataclass
@@ -20,6 +36,26 @@ class FolderSpec:
     gap_offset: float = 0.0                 # shared offset for both window centers
     n_sub_windows: int = 0                  # sub-windows per parent; 0 = disabled
     sub_window_spread: float = 2.0          # sub-window center spread in sigma units
+
+    def __post_init__(self) -> None:
+        if self.pixels <= 0 or self.alines <= 0:
+            raise ConfigError(f"pixels and alines must be positive, got {self.pixels}, {self.alines}")
+        z0, z1 = self.crop_depth
+        if not (0 <= z0 < z1 <= self.pixels):
+            raise ConfigError(
+                f"crop_depth must satisfy 0 <= z0 < z1 <= pixels ({self.pixels}), got {self.crop_depth}"
+            )
+        if self.window_sigma <= 0:
+            raise ConfigError(f"window_sigma must be positive, got {self.window_sigma}")
+        if self.n_sub_windows < 0:
+            raise ConfigError(f"n_sub_windows must be >= 0, got {self.n_sub_windows}")
+        if self.log_eps <= 0:
+            raise ConfigError(f"log_eps must be positive, got {self.log_eps}")
+
+    @property
+    def in_channels_bandgap(self) -> int:
+        """Input channel count this spec produces in bandgap mode."""
+        return 2 + 2 * self.n_sub_windows
 
 
 
@@ -113,3 +149,65 @@ class TrainConfig:
     # ------------------------------------------------------------------
     tiff_dtype: str = "uint16"             # "uint8" | "uint16" | "float32"
     also_save_float32: bool = False
+
+    # ------------------------------------------------------------------
+    def __post_init__(self) -> None:
+        if self.patch_mode not in PATCH_MODES:
+            raise ConfigError(f"patch_mode must be one of {PATCH_MODES}, got {self.patch_mode!r}")
+        if self.input_mode not in INPUT_MODES:
+            raise ConfigError(f"input_mode must be one of {INPUT_MODES}, got {self.input_mode!r}")
+        if self.target_mode not in TARGET_MODES:
+            raise ConfigError(f"target_mode must be one of {TARGET_MODES}, got {self.target_mode!r}")
+        if self.tiff_dtype not in TIFF_DTYPES:
+            raise ConfigError(f"tiff_dtype must be one of {TIFF_DTYPES}, got {self.tiff_dtype!r}")
+        if not _SNR_STAT_RE.match(self.snr_sig_stat):
+            raise ConfigError(
+                f'snr_sig_stat must be "max" or "p<percentile>" (e.g. "p99.99"), got {self.snr_sig_stat!r}'
+            )
+        if not 0.0 < self.train_frac < 1.0:
+            raise ConfigError(f"train_frac must be in (0, 1), got {self.train_frac}")
+        if self.snr_sig_y0 >= self.snr_sig_y1:
+            raise ConfigError(f"snr_sig_y0 must be < snr_sig_y1, got {self.snr_sig_y0}, {self.snr_sig_y1}")
+        for name in ("epochs", "batch_size", "patch_h", "patch_w", "patches_per_frame",
+                     "val_every", "save_every", "base"):
+            if getattr(self, name) <= 0:
+                raise ConfigError(f"{name} must be positive, got {getattr(self, name)}")
+        if self.num_workers < 0:
+            raise ConfigError(f"num_workers must be >= 0, got {self.num_workers}")
+
+        self._validate_model_input_consistency()
+
+    def _validate_model_input_consistency(self) -> None:
+        """Catch model/input mismatches that would otherwise fail at the first
+        forward pass, or — worse — train a different architecture than intended.
+
+        engine/train.py branches on model_name before consulting input_mode, and
+        only reads folder_specs[0].n_sub_windows, so a heterogeneous or
+        inconsistent config silently builds the wrong stem.
+        """
+        if not self.folder_specs:
+            return  # nothing to cross-check yet; the dataloader will raise if it stays None
+
+        n_subs = {fs.n_sub_windows for fs in self.folder_specs}
+        if len(n_subs) > 1:
+            raise ConfigError(
+                f"all folder_specs must share n_sub_windows (only folder_specs[0] is used to "
+                f"size the model stem), got {sorted(n_subs)}"
+            )
+        n_sub = n_subs.pop()
+
+        is_multilevel = self.model_name in MULTILEVEL_MODELS
+        if is_multilevel:
+            if n_sub <= 0:
+                raise ConfigError(
+                    f"model_name={self.model_name!r} needs n_sub_windows > 0 on every FolderSpec, got {n_sub}"
+                )
+            if self.input_mode != "bandgap":
+                raise ConfigError(
+                    f"model_name={self.model_name!r} builds a multi-level spectral stem and requires "
+                    f'input_mode="bandgap", got {self.input_mode!r}'
+                )
+        elif self.input_mode == "fullband" and n_sub > 0:
+            raise ConfigError(
+                f'input_mode="fullband" produces a 1-channel input, so n_sub_windows must be 0, got {n_sub}'
+            )

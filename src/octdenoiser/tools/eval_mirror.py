@@ -21,9 +21,9 @@ import csv
 import numpy as np
 import torch
 
-from networks import create_model
-from engine.metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
-from data.avg_targets import build_folder_sum
+from octdenoiser.networks import create_model
+from octdenoiser.engine.metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
+from octdenoiser.data.avg_targets import build_folder_sum
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +128,8 @@ def _model_kwargs_for_cfg(cfg, n_sub: int) -> dict:
 
 def _save_gt_clean(test_fs, save_dir: str) -> None:
     """Save the shared clean reference (temporal-average, GT display domain) once."""
-    from preprocess import BscanProcessor
-    from utils.io_tiff import save_tiff_stack
+    from octdenoiser.preprocess import BscanProcessor
+    from octdenoiser.utils.io_tiff import save_tiff_stack
     proc = BscanProcessor(test_fs)
     sum_mag, N = build_folder_sum(test_fs)
     clean_lin = (sum_mag / N).astype(np.float64)
@@ -163,8 +163,8 @@ def evaluate_config(cfg: dict, ckpt_path: str, test_fs, device: str,
     If save_dir is given, also writes prediction TIFFs, a [noisy|pred|GT]
     comparison stack, and a per-frame metrics CSV for visual assessment.
     """
-    from preprocess import BscanProcessor
-    from utils.io_tiff import save_tiff_stack
+    from octdenoiser.preprocess import BscanProcessor
+    from octdenoiser.utils.io_tiff import save_tiff_stack
 
     proc = BscanProcessor(test_fs)
     paths = proc.bscan_paths

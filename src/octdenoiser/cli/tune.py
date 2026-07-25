@@ -9,10 +9,10 @@ import optuna
 from dataclasses import asdict
 from typing import Dict, List
 
-from configs.default import TrainConfig, FolderSpec
-from engine.train import run_training
-from utils.helpers import seed_all
-from utils.run_manager import ensure_dir
+from octdenoiser.configs.default import TrainConfig, FolderSpec
+from octdenoiser.engine.train import run_training
+from octdenoiser.utils.helpers import seed_all
+from octdenoiser.utils.run_manager import ensure_dir
 
 
 def make_trial_paths(root: str, trial_number: int) -> Dict[str, str]:

@@ -24,18 +24,15 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import torch
 
-from run_mirror_study import CONFIGS, BAND, CROP, ROOT, ckpt_registry_path
-from configs.default import FolderSpec
-from engine.metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
-from networks import create_model
-from utils.io_tiff import save_tiff_stack
+from octdenoiser.experiments.run_mirror_study import CONFIGS, BAND, CROP, ROOT, ckpt_registry_path
+from octdenoiser.configs.default import FolderSpec
+from octdenoiser.engine.metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
+from octdenoiser.networks import create_model
+from octdenoiser.utils.io_tiff import save_tiff_stack
 
 # Retina signal ROI (y rows) + stat, matching model_train.py's evaluation setup.
 SIG_Y0, SIG_Y1 = 111, 600
@@ -83,7 +80,7 @@ def main():
     fs = FolderSpec(root_folder=ROOT, data_folder=args.folder, pixels=2048, alines=1024,
                     crop_depth=CROP, n_sub_windows=0, **BAND)
 
-    from preprocess import BscanProcessor
+    from octdenoiser.preprocess import BscanProcessor
     proc = BscanProcessor(fs)
     log_eps = float(proc.cfg.log_eps)
     paths = proc.bscan_paths[::max(1, args.stride)]

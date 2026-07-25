@@ -44,7 +44,7 @@ def build_folder_sum(fs) -> Tuple[np.ndarray, int]:
 
     Returns (sum_mag [H,W] float64, N frames).
     """
-    from preprocess import BscanProcessor
+    from octdenoiser.preprocess import BscanProcessor
 
     proc = BscanProcessor(fs)
     paths = proc.bscan_paths

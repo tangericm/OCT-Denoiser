@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import torch
-from networks.registry import create_model
+from octdenoiser.networks.registry import create_model
 
 
 def test_resunet_pseudo3d_forward():

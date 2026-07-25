@@ -10,7 +10,7 @@ import scipy.fft as sfft
 import scipy.linalg as sla
 
 if TYPE_CHECKING:
-    from configs.default import FolderSpec
+    from octdenoiser.configs.default import FolderSpec
 
 # -----------------------------
 # Low-level IO
@@ -370,23 +370,39 @@ class BscanProcessor:
         if not os.path.isdir(self.data_dir):
             raise FileNotFoundError(f"Data folder not found: {self.data_dir}")
 
-        # Find CLB (either in data_dir or root_folder)
-        self.clb_path = None
-        clbs = sorted(glob.glob(os.path.join(self.data_dir, "*.CLB")))
-        if len(clbs) == 1:
-            self.clb_path = clbs[0]
-        elif len(clbs) > 1:
-            raise FileNotFoundError(
-                f"Multiple .CLB files found in dataset folder {self.data_dir}: {clbs}\n"
-            )
+        # Resolve the CLB calibration file.
+        #
+        # Calibration is PER INSTRUMENT: Maestro2 and Maestro3 ship different
+        # .CLB files carrying different k-linearisation LUTs. Applying one
+        # instrument's LUT to the other's data resamples the spectrum onto the
+        # wrong k-grid — the reconstruction still looks plausible but the depth
+        # scale and PSF are wrong, with no error raised. So an explicit
+        # cfg.clb_path always wins over auto-discovery, and the resolved path is
+        # recorded on the instance for run manifests.
+        self.clb_path: Optional[str] = None
+        if getattr(cfg, "clb_path", None):
+            if not os.path.isfile(cfg.clb_path):
+                raise FileNotFoundError(f"clb_path does not exist: {cfg.clb_path}")
+            self.clb_path = cfg.clb_path
+        else:
+            for search_dir, label in ((self.data_dir, "dataset folder"), (root_folder, "root folder")):
+                clbs = sorted(glob.glob(os.path.join(search_dir, "*.CLB")))
+                if len(clbs) > 1:
+                    raise FileNotFoundError(
+                        f"Multiple .CLB files found in {label} {search_dir}: {clbs}\n"
+                        f"Set FolderSpec.clb_path explicitly to disambiguate."
+                    )
+                if len(clbs) == 1:
+                    self.clb_path = clbs[0]
+                    break
+
         if self.clb_path is None:
-            clbs = sorted(glob.glob(os.path.join(root_folder, "*.CLB")))
-            if len(clbs) == 1:
-                self.clb_path = clbs[0]
-            elif len(clbs) > 1:
-                raise FileNotFoundError(
-                    f"Multiple .CLB files found in root folder {root_folder}: {clbs}\n"
-                )
+            raise FileNotFoundError(
+                f"No .CLB calibration file found in {self.data_dir} or {root_folder}. "
+                f"Each instrument (Maestro2 / Maestro3) has its own calibration; "
+                f"point root_folder at the matching instrument directory or set "
+                f"FolderSpec.clb_path explicitly."
+            )
 
         # Enumerate bscans
         self.bscan_paths = sorted(glob.glob(os.path.join(self.data_dir, "bscan*.raw")))

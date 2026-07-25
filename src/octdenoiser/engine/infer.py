@@ -8,12 +8,12 @@ import torch
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
-from networks import create_model
-from engine.metrics import roi_snr_cnr, roi_bounds, bg_bounds, to_physical_intensity
-from utils.helpers import nanmean
-from utils.io_tiff import save_tiff_stack
-from utils.run_manager import ensure_dir, make_param_suffix
-from configs.default import TrainConfig
+from octdenoiser.networks import create_model
+from octdenoiser.engine.metrics import roi_snr_cnr, roi_bounds, bg_bounds, to_physical_intensity
+from octdenoiser.utils.helpers import nanmean
+from octdenoiser.utils.io_tiff import save_tiff_stack
+from octdenoiser.utils.run_manager import ensure_dir, make_param_suffix
+from octdenoiser.configs.default import TrainConfig
 
 DEFAULT_SNR_SIG_Y0 = TrainConfig.__dataclass_fields__["snr_sig_y0"].default
 DEFAULT_SNR_SIG_Y1 = TrainConfig.__dataclass_fields__["snr_sig_y1"].default
@@ -102,7 +102,7 @@ def predict_raw_to_tiffs(
     the linear full-band magnitude, and predictions are back-transformed with the
     (leave-one-out) averaged-target statistics.
     """
-    from preprocess import BscanProcessor
+    from octdenoiser.preprocess import BscanProcessor
 
     ensure_dir(outdir)
     print(f"[START] predict_raw_to_tiffs: outdir={outdir}")
@@ -147,7 +147,7 @@ def predict_raw_to_tiffs(
     sum_mag = clean_lin = None
     N_frames = 0
     if is_average:
-        from data.avg_targets import build_folder_sum
+        from octdenoiser.data.avg_targets import build_folder_sum
         print(f"[INFO] Building temporal-average reference for {folder_spec.data_folder} ...")
         sum_mag, N_frames = build_folder_sum(folder_spec)
         clean_lin = (sum_mag / N_frames).astype(np.float64)

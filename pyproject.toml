@@ -1,0 +1,104 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "octdenoiser"
+version = "0.1.0"
+description = "Self-supervised denoising of OCT B-scans from raw spectral data"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Eric Tang", email = "eric.tang22@gmail.com" }]
+keywords = ["OCT", "denoising", "self-supervised", "medical-imaging"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "License :: OSI Approved :: MIT License",
+]
+
+# First-order dependencies only. The previous requirements.txt was a pip freeze
+# in which ~25 of 32 pins were transitive.
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.14",
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "matplotlib>=3.9",
+    "tifffile>=2024.1.30",
+    "optuna>=4.0",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.scripts]
+oct-train = "octdenoiser.cli.train:main"
+oct-predict = "octdenoiser.cli.predict:main"
+oct-tune = "octdenoiser.cli.tune:main"
+oct-mirror-study = "octdenoiser.experiments.run_mirror_study:main"
+oct-retina-compare = "octdenoiser.experiments.run_retina_compare:main"
+
+[project.urls]
+Repository = "https://github.com/tangericm/OCT-Denoiser"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/octdenoiser"]
+
+# ---------------------------------------------------------------------------
+# torch is intentionally NOT pinned to a CUDA index here: doing so would force
+# multi-GB CUDA wheels onto CPU-only CI. Install the accelerator build first,
+# then the package:
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#   pip install -e ".[dev]"
+#
+# CPU-only (CI, or a machine without CUDA): swap cu128 for cpu.
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: takes more than a few seconds",
+    "needs_data: requires real OCT acquisitions on disk",
+    "needs_cuda: requires a CUDA device",
+]
+filterwarnings = [
+    # test_optimizations.py doubles as a standalone __main__ harness and returns
+    # bools for it. The inserted asserts are what gate the pytest run.
+    "ignore::pytest.PytestReturnNotNoneWarning",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "B008",   # function call in default arg — used deliberately for dataclasses
+    "SIM108", # ternary rewrites hurt readability in the numeric code
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]          # sys.path shims may precede imports
+"src/octdenoiser/networks/__init__.py" = ["F401"]  # side-effect registration
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/octdenoiser"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+# Non-strict to start: 81% of args and 64% of returns are already annotated,
+# so this passes today and can be tightened incrementally.
+disallow_untyped_defs = false
+check_untyped_defs = true
