@@ -6,6 +6,40 @@ Deep learning pipeline for denoising OCT B-scans using a ResUNet with pseudo-3D 
 
 ---
 
+## Results
+
+![Reference versus network prediction](docs/result.jpg)
+
+Self-supervised throughout: no clean reference and no repeat acquisition. Supervision
+comes from splitting the raw interferogram into two Gaussian sub-bands separated by a
+tunable gap, which yields two reconstructions with identical structure but decorrelated
+speckle.
+
+A single model trained across four acquisitions, evaluated against the full-bandwidth
+reference on each:
+
+| Acquisition | ΔSNR | ΔCNR |
+|---|---|---|
+| Macula, 6 mm, 1024 A-lines | +9.45 dB | +4.72 dB |
+| Macula centre | +9.95 dB | +5.37 dB |
+| Optic disc | +13.82 dB | +5.72 dB |
+| Line, 6 mm, 2048 A-lines | +13.71 dB | +8.33 dB |
+
+A run dedicated to a single volume (`window_sigma 0.03`, `gap 0.60`) reaches
+**+16.45 dB SNR** and **+12.27 dB CNR** averaged over 64 frames.
+
+Resolution is preserved rather than smoothed away: on a mirror phantom with a known
+point spread function, the method measures a **PSF FWHM of 8.0 px** against 8.45 px for
+the noisy input, the narrowest of the architectures compared.
+
+> Display note: reference and prediction above are rendered through **one shared
+> window** with a shared gamma. The black point is anchored to the prediction's 1st
+> percentile so its noise floor survives; anchoring to the reference clips 39% of the
+> prediction to pure black, which both misrepresents the output and, counter-intuitively,
+> *reduces* the visible difference as the two images collapse toward the same black.
+
+---
+
 ## Environment Setup
 
 Python 3.14 · PyTorch 2.10.0+cu128 · CUDA required for practical training
