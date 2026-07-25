@@ -99,6 +99,7 @@ class RawBscanDataset(Dataset):
         self._index = None
         self._cache = None
         self._rng = None
+        self._swap_views = False
         self._estimated_len = 1
         self._avg_sum = None
         self._avg_N = None
@@ -193,13 +194,32 @@ class RawBscanDataset(Dataset):
         return out
 
     def _make_inputs(self, out: dict) -> list:
-        """Input channels per input_mode: bandgap [w1,w2(+subs)] or single full-band image."""
+        """Input channels per mode.
+
+        fullband      -> [full-band image]                       (1 channel)
+        complementary -> [one sub-band]; its complement is the target (1 channel)
+        bandgap       -> [w1, w2, *sub-windows]                   (2 + 2*n_sub)
+        """
         if self.input_mode == "fullband":
             return [out["target_full"]]
+        if self.target_mode == "complementary":
+            return self._gather_complementary_input(out)
         return self._gather_inputs(out)
 
     def _make_target(self, out: dict, fidx: int) -> tuple:
         """Return (target [H,W] float32, target_mu, target_sd) per target_mode."""
+        if self.target_mode == "complementary":
+            # The complementary sub-band, not the full band.
+            #
+            # Targeting the full band leaks: it CONTAINS both sub-bands, so the
+            # target's noise is correlated with the input's and the network is
+            # rewarded for passing noise through. Measured on real data, a
+            # sub-band input against its full-band target leaves speckle
+            # correlated at +0.138, against +0.003 for the complementary view --
+            # roughly 40x worse. Noise2Noise needs that near zero.
+            key = "input_w1" if self._swap_views else "input_w2"
+            return out[key], float(out[f"{key}_mu"]), float(out[f"{key}_sd"])
+
         if self.target_mode != "average":
             return out["target_full"], float(out["target_mu"]), float(out["target_sd"])
 
@@ -288,9 +308,27 @@ class RawBscanDataset(Dataset):
             inputs.extend(out["input_sub_windows"])
         return inputs
 
+    def _gather_complementary_input(self, out: dict) -> list:
+        """Single sub-band input; its complement becomes the target.
+
+        Which of the two is the input is randomised per sample so the network
+        cannot learn a directional w1->w2 bias. The two bands sit at different k
+        and scattering is wavelength-dependent, so their expected signals do
+        differ (measured 0.269 relative mismatch in mean depth profile);
+        alternating the direction keeps that bias symmetric rather than letting
+        it accumulate in one direction.
+        """
+        return [out["input_w2" if self._swap_views else "input_w1"]]
+
     def __getitem__(self, idx: int):
         self._init_worker_state()
         entry = self._index[idx]
+
+        # Which sub-band is the input this sample (complementary mode only).
+        # Held fixed for full-frame validation so the metric is deterministic.
+        self._swap_views = (
+            False if self.full_frame else bool(self._rng.randint(0, 2))
+        )
 
         if self.full_frame:
             fidx, frame_idx = entry

@@ -23,9 +23,18 @@ identical between frames and dominated the correlation. It was wrong.)
 
 Registration ROI is per stack, not global. The Maestro2 acquisitions are not all
 retina: `...widefield_anterior_YM` is an anterior-segment scan whose energy spans
-rows 79-973, whereas the 6 mm retina stacks concentrate in rows 146-359. Applying
-a retina ROI to the anterior stack made correlation WORSE (0.64 -> 0.18), because
-the window held mostly noise and phase correlation returned garbage shifts.
+rows ~80-970, whereas the 6 mm retina stacks concentrate in ~150-360. Pass
+roi="auto" to detect the band from the reference frame.
+
+Measured correlation, log domain over the auto ROI, before -> after:
+
+    6 mm retina stack   0.516 -> 0.569   (shifts dz 2-7 px, dx < 1 px)
+    anterior stack      0.198 -> 0.205   (shifts dz 0-7 px, dx 1-3 px)
+
+The anterior stack simply has low frame-to-frame correlation; registration still
+improves it. Set `min_correlation` against THESE log-domain ROI values, not
+against linear full-frame numbers -- they are different quantities and a
+threshold borrowed from one will reject everything under the other.
 
 Motion model
 ------------
@@ -63,6 +72,7 @@ class RegistrationResult:
     reference_index: int = 0
     per_aline: np.ndarray | None = None      # [N, alines] axial shift, if enabled
     notes: list[str] = field(default_factory=list)
+    roi: tuple[int, int] | None = None       # depth rows used to estimate shifts
 
     @property
     def n_kept(self) -> int:
@@ -88,6 +98,44 @@ class RegistrationResult:
             f"dx={np.abs(self.shifts[k, 1]).mean():.3f} px\n"
             f"  rejected           : {(~k).sum()} frame(s)"
         )
+
+
+def auto_roi(
+    frame: np.ndarray,
+    *,
+    skip_top: int = 30,
+    threshold: float = 0.10,
+    pad: int = 20,
+) -> tuple[int, int]:
+    """Locate the tissue depth band from a frame's mean A-line profile.
+
+    A single hard-coded ROI does not work across this dataset. The Maestro2 set
+    is not all retina: the 6 mm retina stacks concentrate their energy in rows
+    146-359, while the anterior-segment stack spreads it over 79-973. Applying
+    the retina ROI to the anterior stack left the correlation window holding
+    mostly noise, and registration made alignment WORSE -- 0.64 down to 0.18.
+
+    `skip_top` excludes the DC roll-off near row 0, which would otherwise
+    dominate the profile and anchor the band at the surface.
+    """
+    prof = np.asarray(frame, dtype=np.float64).mean(axis=1).copy()
+    if skip_top > 0:
+        prof[:skip_top] = -np.inf
+    finite = prof[np.isfinite(prof)]
+    if finite.size == 0:
+        return 0, frame.shape[0]
+
+    lo_v, hi_v = float(finite.min()), float(finite.max())
+    if hi_v <= lo_v:
+        return 0, frame.shape[0]
+
+    rows = np.flatnonzero(prof >= lo_v + threshold * (hi_v - lo_v))
+    if rows.size == 0:
+        return 0, frame.shape[0]
+
+    z0 = max(0, int(rows.min()) - pad)
+    z1 = min(frame.shape[0], int(rows.max()) + 1 + pad)
+    return z0, z1
 
 
 def _normalise(img: np.ndarray) -> np.ndarray:
@@ -230,11 +278,12 @@ def register_stack(
     frames: np.ndarray,
     *,
     reference_index: int = 0,
-    roi: tuple[int, int] | None = None,
+    roi: tuple[int, int] | str | None = None,
     max_shift: int = 64,
     min_correlation: float | None = None,
     refine_per_aline: bool = False,
     aline_group: int = 32,
+    reject_worsening: bool = True,
 ) -> tuple[np.ndarray, RegistrationResult]:
     """Register a stack of log-domain B-scans onto one reference frame.
 
@@ -242,6 +291,10 @@ def register_stack(
     applied to the full frame. The prior MATLAB work cropped rows 130:600 for
     exactly this reason: correlating over the vitreous and the DC roll-off
     dilutes the tissue signal that should be driving alignment.
+
+    Pass "auto" to detect the band per stack from the reference frame, which is
+    what this dataset needs -- a fixed retina ROI applied to the anterior-segment
+    stack made alignment worse rather than better. See `auto_roi`.
 
     `min_correlation` drops frames that remain poorly aligned. Frame 4 of the
     Maestro2 stack sits at 0.700 against 0.975 for its neighbours, and a frame
@@ -253,10 +306,19 @@ def register_stack(
     if not 0 <= reference_index < n:
         raise ValueError(f"reference_index {reference_index} out of range for {n} frames")
 
-    def crop(a: np.ndarray) -> np.ndarray:
-        return a if roi is None else a[roi[0]:roi[1], :]
-
     ref_full = frames[reference_index].astype(np.float64)
+
+    resolved_roi: tuple[int, int] | None
+    if isinstance(roi, str):
+        if roi != "auto":
+            raise ValueError(f'roi must be a (z0, z1) tuple, "auto", or None; got {roi!r}')
+        resolved_roi = auto_roi(ref_full)
+    else:
+        resolved_roi = roi
+
+    def crop(a: np.ndarray) -> np.ndarray:
+        return a if resolved_roi is None else a[resolved_roi[0]:resolved_roi[1], :]
+
     ref = crop(ref_full)
 
     registered = np.empty_like(frames, dtype=np.float32)
@@ -264,14 +326,26 @@ def register_stack(
     corr_before = np.zeros(n)
     corr_after = np.zeros(n)
     per_aline = np.zeros((n, frames.shape[2])) if refine_per_aline else None
+    n_reverted = 0
 
     for i in range(n):
         mov = frames[i].astype(np.float64)
         corr_before[i] = correlation(ref, crop(mov))
 
         dz, dx = phase_correlation_shift(ref, crop(mov), max_shift=max_shift)
-        shifts[i] = (dz, dx)
         out = _apply_shift(mov, dz, dx)
+
+        # Never accept a shift that makes alignment worse. On low-correlation
+        # stacks a wide search finds spurious phase-correlation peaks: the
+        # Maestro2 "YM" stack produced mean shifts of dz=22, dx=20 px and drove
+        # one frame's correlation from 0.716 down to 0.177. Falling back to zero
+        # shift is always available and always at least as good.
+        if reject_worsening and correlation(ref, crop(out)) < corr_before[i]:
+            dz, dx = 0.0, 0.0
+            out = mov
+            n_reverted += 1
+
+        shifts[i] = (dz, dx)
 
         if refine_per_aline:
             resid = per_aline_axial_shift(ref, crop(out), group=aline_group)
@@ -302,6 +376,11 @@ def register_stack(
                 f"threshold is too strict."
             )
 
+    if resolved_roi is not None:
+        notes.append(f"registration ROI rows [{resolved_roi[0]}, {resolved_roi[1]})")
+    if n_reverted:
+        notes.append(f"reverted {n_reverted} shift(s) that worsened alignment")
+
     return registered, RegistrationResult(
         shifts=shifts,
         correlations=corr_after,
@@ -310,6 +389,7 @@ def register_stack(
         reference_index=reference_index,
         per_aline=per_aline,
         notes=notes,
+        roi=resolved_roi,
     )
 
 

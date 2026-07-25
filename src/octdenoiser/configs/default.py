@@ -6,7 +6,7 @@ from dataclasses import dataclass
 # unknown name; duplicating the list would drift.
 PATCH_MODES = ("patch", "strip")
 INPUT_MODES = ("bandgap", "fullband")
-TARGET_MODES = ("fullband", "average")
+TARGET_MODES = ("fullband", "average", "complementary")
 TIFF_DTYPES = ("uint8", "uint16", "float32")
 _SNR_STAT_RE = re.compile(r"^(max|p\d+(\.\d+)?)$")
 
@@ -194,6 +194,28 @@ class TrainConfig:
                 f"size the model stem), got {sorted(n_subs)}"
             )
         n_sub = n_subs.pop()
+
+        if self.target_mode == "complementary":
+            # One sub-band in, the other out: a 1-channel problem on both sides.
+            # This is the fix for the full-band target leak -- see
+            # data/dataset.py _make_target.
+            if self.input_mode != "bandgap":
+                raise ConfigError(
+                    f'target_mode="complementary" needs input_mode="bandgap" to produce the '
+                    f"two sub-bands, got {self.input_mode!r}"
+                )
+            if self.model_name in MULTILEVEL_MODELS:
+                raise ConfigError(
+                    f'target_mode="complementary" feeds a single sub-band (1 channel), which '
+                    f"the multi-level spectral stem of {self.model_name!r} cannot consume. "
+                    f'Use "resunet_pseudo3d", "unet2d" or "dncnn".'
+                )
+            if n_sub > 0:
+                raise ConfigError(
+                    f'target_mode="complementary" uses only the two parent windows, so '
+                    f"n_sub_windows must be 0, got {n_sub}"
+                )
+            return
 
         is_multilevel = self.model_name in MULTILEVEL_MODELS
         if is_multilevel:

@@ -187,6 +187,36 @@ def test_roi_restricts_estimation_but_not_application():
     assert res.improvement() > 0.0
 
 
+def test_worsening_shifts_are_reverted():
+    """A spurious peak must never be accepted.
+
+    On the Maestro2 "YM" stack a wide search produced mean shifts of dz=22,
+    dx=20 px and drove one frame's correlation from 0.716 to 0.177. Zero shift
+    is always available and always at least as good.
+    """
+    frames, _ = make_stack(6, seed=11)
+    rng = np.random.default_rng(1)
+    # A frame that cannot be aligned: any shift makes it worse or no better.
+    frames[3] = frames[0] + 3.0 * rng.standard_normal(frames[0].shape)
+
+    _, guarded = register_stack(frames, max_shift=24, reject_worsening=True)
+    _, unguarded = register_stack(frames, max_shift=24, reject_worsening=False)
+
+    assert (guarded.correlations >= unguarded.correlations - 1e-9).all(), (
+        "the guard must never do worse than the unguarded fit"
+    )
+    assert (guarded.correlations >= guarded.correlations_before - 1e-9).all(), (
+        "no frame may end up worse aligned than it started"
+    )
+
+
+def test_guard_leaves_good_registrations_untouched():
+    frames, _ = make_stack(8, seed=12)
+    _, guarded = register_stack(frames, max_shift=24, reject_worsening=True)
+    _, plain = register_stack(frames, max_shift=24, reject_worsening=False)
+    assert np.allclose(guarded.shifts, plain.shifts), "clean stacks should be unaffected"
+
+
 def test_reference_frame_registers_to_itself():
     frames, _ = make_stack(6, seed=6)
     _, res = register_stack(frames, reference_index=2, max_shift=24)
