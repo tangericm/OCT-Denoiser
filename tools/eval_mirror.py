@@ -65,14 +65,54 @@ def psnr(a: np.ndarray, b: np.ndarray, data_range: float = 1.0) -> float:
 
 
 def _axial_fwhm(img_lin: np.ndarray, peak_row: int, half_span: int = 40) -> float:
-    prof = img_lin.mean(axis=1)
-    lo = max(0, peak_row - half_span); hi = min(len(prof), peak_row + half_span)
+    """Axial FWHM in pixels of the peak near `peak_row`, from linear intensity.
+
+    The half-maximum is taken above a robust background floor (median of the
+    profile outside the peak window), and the width is the contiguous
+    crossing-to-crossing span around the peak with sub-pixel linear
+    interpolation.
+
+    Returns NaN when the profile never falls below the half-maximum inside the
+    window, i.e. the width is not measurable at this span. The previous
+    implementation returned `above.max() - above.min() + 1` over *all* samples
+    above half-max, which silently reported the full window span (2*half_span)
+    whenever a pedestal or side lobe sat above the half-max line.
+    """
+    prof = np.asarray(img_lin, dtype=np.float64).mean(axis=1)
+    n = prof.size
+    lo = max(0, peak_row - half_span)
+    hi = min(n, peak_row + half_span)
     seg = prof[lo:hi]
-    if seg.size == 0:
+    if seg.size < 3:
         return float("nan")
-    pk = seg.max(); half = pk / 2.0
-    above = np.where(seg >= half)[0]
-    return float(above.max() - above.min() + 1) if above.size else float("nan")
+
+    # Measure the half-maximum above the noise pedestal, not above zero.
+    outside = np.concatenate([prof[:lo], prof[hi:]])
+    base = float(np.median(outside)) if outside.size else float(seg.min())
+    seg = seg - base
+
+    pk_i = int(np.argmax(seg))
+    pk = float(seg[pk_i])
+    if not np.isfinite(pk) or pk <= 0:
+        return float("nan")
+    half = pk / 2.0
+
+    def _crossing(indices) -> float | None:
+        """First half-max crossing walking outward from the peak, or None."""
+        prev = pk_i
+        for i in indices:
+            if seg[i] < half:
+                y0, y1 = seg[prev], seg[i]
+                t = (y0 - half) / (y0 - y1) if y0 != y1 else 0.0
+                return prev + t * (i - prev)
+            prev = i
+        return None
+
+    left = _crossing(range(pk_i - 1, -1, -1))
+    right = _crossing(range(pk_i + 1, seg.size))
+    if left is None or right is None:
+        return float("nan")
+    return float(right - left)
 
 
 # ---------------------------------------------------------------------------

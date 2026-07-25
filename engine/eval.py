@@ -93,8 +93,10 @@ def evaluate_full_frames(
             sy0, sy1, sx0, sx1 = sig_roi
             bg_roi = bg_bounds(h, w, x0=sx0, x1=sx1)
 
+            # Both must use the same signal statistic: SNR_pred - SNR_gt is only
+            # meaningful as a difference of like estimators.
             snr_pred, cnr_pred = roi_snr_cnr(pred_eval, sig_roi, bg_roi, sig_stat=snr_sig_stat)
-            snr_gt, cnr_gt = roi_snr_cnr(gt_eval, sig_roi, bg_roi, sig_stat="max")
+            snr_gt, cnr_gt = roi_snr_cnr(gt_eval, sig_roi, bg_roi, sig_stat=snr_sig_stat)
             snr_pred_list.append(snr_pred)
             snr_gt_list.append(snr_gt)
             cnr_pred_list.append(cnr_pred)

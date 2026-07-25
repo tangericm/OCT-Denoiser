@@ -1,18 +1,35 @@
+# Python
 __pycache__/
-.*
-.gitignore
-*.pyc
-*.pyo
-runs/
+*.py[cod]
 *.egg-info/
-*.docx
-*.png
-Backup/
-MATLAB/
-*.pptx
-*NLL*
+.venv/
+venv/
+
+# Tooling caches. Listed explicitly rather than as a bare `.*`, which would also
+# swallow .github/, .pre-commit-config.yaml, .ruff.toml and .env.example.
+.vscode/
+.idea/
+.claude/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+
+# Data and derived artifacts — never committed
+images/
+runs/
+predictions_tiff/
+avg_cache/
+*.raw
+*.CLB
 *.tif
 *.tiff
 *.npz
-predictions_tiff/
-images/
+
+# Local-only trees
+Backup/
+MATLAB/
+
+# Office documents
+*.docx
+*.pptx

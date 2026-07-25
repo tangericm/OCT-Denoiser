@@ -282,8 +282,10 @@ def predict_raw_to_tiffs(
         sample_meta = {"target_mu": target_mu, "target_sd": target_sd, "log_eps": proc.cfg.log_eps}
         pred_lin = to_physical_intensity(pred, sample_meta)
 
+        # Both must use the same signal statistic: SNR_pred - SNR_gt is only
+        # meaningful as a difference of like estimators.
         snr_pred, cnr_pred = roi_snr_cnr(pred_lin, sig_roi_c, bg_roi_c, sig_stat=snr_sig_stat)
-        snr_gt, cnr_gt = roi_snr_cnr(gt_lin, sig_roi_c, bg_roi_c, sig_stat="max")
+        snr_gt, cnr_gt = roi_snr_cnr(gt_lin, sig_roi_c, bg_roi_c, sig_stat=snr_sig_stat)
         snr_pred_list.append(snr_pred)
         snr_gt_list.append(snr_gt)
         cnr_pred_list.append(cnr_pred)

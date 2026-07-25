@@ -28,9 +28,13 @@ reference on each:
 A run dedicated to a single volume (`window_sigma 0.03`, `gap 0.60`) reaches
 **+16.45 dB SNR** and **+12.27 dB CNR** averaged over 64 frames.
 
-Resolution is preserved rather than smoothed away: on a mirror phantom with a known
-point spread function, the method measures a **PSF FWHM of 8.0 px** against 8.45 px for
-the noisy input, the narrowest of the architectures compared.
+> **Numbers pending regeneration.** The table above was produced before two
+> metric fixes: ground-truth SNR was computed with `sig_stat="max"` while
+> prediction SNR used `"p99.99"`, so ΔSNR was a difference of two different
+> estimators — and, since `max ≥ p99.99`, an *understated* one. The axial-FWHM
+> estimator also saturated at the search-window edge. Both are fixed in
+> `engine/eval.py`, `engine/infer.py` and `tools/eval_mirror.py`; these results
+> will be re-run and replaced.
 
 > Display note: reference and prediction above are rendered through **one shared
 > window** with a shared gamma. The black point is anchored to the prediction's 1st
@@ -84,11 +88,14 @@ Outputs written to `runs/<experiment_name>/<timestamp>/`:
 
 ### 3. Inference from a checkpoint
 
-Edit the `USER CONFIGURATION` section in [model_predict.py](model_predict.py) with the checkpoint path and matching `FolderSpec`, then:
+Edit the `USER CONFIGURATION` section in [model_predict.py](model_predict.py) so the
+model and `FolderSpec` match the checkpoint, then pass the checkpoint path:
 
 ```bash
-python model_predict.py
+python model_predict.py --checkpoint runs/OCT-Denoiser/<timestamp>/checkpoints/best.pt
 ```
+
+`--outdir` defaults to `<run_dir>/predictions`.
 
 ### 4. Hyperparameter tuning (optional)
 
@@ -104,8 +111,12 @@ Results are saved as `runs/optuna/<timestamp>/study_results.csv`.
 
 ```bash
 python tests/test_optimizations.py          # preprocessing + model forward pass
-python -m compileall .                      # syntax check (no data needed)
+python -m compileall configs data engine networks utils tools experiments tests \
+       preprocess.py model_train.py model_predict.py tune.py   # syntax check
 ```
+
+> Do not run bare `python -m compileall .` — it descends into `.git/refs/` where
+> branch names ending in `.py` are parsed as source and always fail.
 
 ---
 
@@ -114,13 +125,14 @@ python -m compileall .                      # syntax check (no data needed)
 ```
 OCT-Denoiser/
 ├── model_train.py                          # training entry point
-├── model_predict.py                        # standalone inference
+├── model_predict.py                        # standalone inference (--checkpoint)
 ├── preprocess.py                           # BscanProcessor: raw -> B-scan tensor
 ├── tune.py                                 # Optuna window parameter search
 ├── configs/default.py                      # TrainConfig, FolderSpec dataclasses
 ├── data/
 │   ├── dataset.py                          # RawBscanDataset (lazy init, LRU cache)
-│   └── datamodule.py                       # DataLoader factory
+│   ├── datamodule.py                       # DataLoader factory
+│   └── avg_targets.py                      # temporal-average target cache
 ├── engine/
 │   ├── train.py                            # AMP training loop, checkpointing
 │   ├── eval.py                             # patch + full-frame validation
@@ -131,7 +143,14 @@ OCT-Denoiser/
 ├── networks/
 │   ├── registry.py                         # @register_model decorator
 │   ├── resunet_pseudo3d.py                 # base ResUNet with Pseudo-3D stem
-│   └── resunet_pseudo3d_multilevel.py      # + multi-level spectral input
+│   ├── resunet_pseudo3d_multilevel.py      # + multi-level spectral input
+│   ├── dncnn.py                            # DnCNN baseline
+│   └── unet2d.py                           # plain U-Net baseline
+├── experiments/
+│   ├── run_mirror_study.py                 # mirror-phantom baseline study (CLI)
+│   └── run_retina_compare.py               # qualitative retina comparison (CLI)
+├── tools/
+│   └── eval_mirror.py                      # PSNR/SSIM/FWHM metric harness
 ├── utils/
 │   ├── helpers.py                          # seed_all, save_json, nanmean
 │   ├── run_manager.py                      # run directory management
@@ -142,40 +161,52 @@ OCT-Denoiser/
     └── test_resunet_multilevel_1d.py       # model forward pass shape tests
 ```
 
+`experiments/` and `tools/` carry the only argparse-driven CLIs in the repo;
+`run_mirror_study.py` has 14 flags including `--smoke` and `--eval-only`.
+
 ---
 
 ## Configuration Reference
 
 All configuration is defined in Python dataclasses — no YAML or JSON files.
 
+Two columns below: the **dataclass default** in `configs/default.py`, and the
+value **actually shipped** in `model_train.py`'s `USER CONFIGURATION` block —
+which is what produced the results above. They differ; the shipped column is
+the one to reproduce.
+
 ### `FolderSpec` — per-dataset specification
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `root_folder` | — | Root path containing the dataset folder and `.CLB` file |
-| `data_folder` | — | Subfolder containing `bscan*.raw` files |
-| `pixels` | — | Spectral samples per A-line (e.g. 2048) |
-| `alines` | — | A-lines per B-scan (e.g. 1024) |
-| `crop_depth` | `(1024, 2048)` | `[z0, z1)` pixel crop after IFFT |
-| `window_sigma` | `0.08` | Gaussian spectral window width |
-| `gap` | `0.15` | Separation between the two window centres |
-| `gap_offset` | `0.0` | Shared shift of both window centres |
-| `n_sub_windows` | `0` | Sub-windows per parent; `0` = disabled |
-| `sub_window_spread` | `2.0` | Sub-window centre spread in sigma units |
+| Field | Default | Shipped | Description |
+|-------|---------|---------|-------------|
+| `root_folder` | — | `images\Maestro3` | Root path containing the dataset folder and `.CLB` file |
+| `data_folder` | — | `6mm_1024Aline` | Subfolder containing `bscan*.raw` files |
+| `pixels` | — | `2048` | Spectral samples per A-line |
+| `alines` | — | `1024` | A-lines per B-scan |
+| `crop_depth` | `(1024, 2048)` | `(0, 1024)` | `[z0, z1)` pixel crop after IFFT |
+| `window_sigma` | `0.08` | `0.05` | Gaussian spectral window width |
+| `gap` | `0.15` | `0.60` | Separation between the two window centres |
+| `gap_offset` | `0.0` | `0.015` | Shared shift of both window centres |
+| `n_sub_windows` | `0` | `2` | Sub-windows per parent; `0` = disabled |
+| `sub_window_spread` | `2.0` | `0.5` | Sub-window centre spread in sigma units |
 
 ### `TrainConfig` — training hyperparameters
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `model_name` | `"resunet_pseudo3d"` | Model to train |
-| `base` | `64` | Base channel width |
-| `epochs` | `300` | Maximum training epochs |
-| `lr` | `3e-4` | AdamW learning rate |
-| `batch_size` | `32` | Training batch size |
-| `patch_mode` | `"patch"` | `"patch"` = random crop; `"strip"` = full-depth A-line |
-| `w_charb` / `w_grad` | `0.8 / 0.5` | Charbonnier and gradient loss weights |
-| `early_stop_patience` | `5` | Validation checks without improvement before stopping |
-| `snr_sig_stat` | `"max"` | Signal statistic: `"max"` or `"p<N>"` e.g. `"p99.99"` |
+| Field | Default | Shipped | Description |
+|-------|---------|---------|-------------|
+| `model_name` | `"resunet_pseudo3d"` | `"resunet_pseudo3d_multilevel"` | Model to train |
+| `base` | `64` | `32` | Base channel width |
+| `epochs` | `300` | `300` | Maximum training epochs |
+| `lr` | `3e-4` | `3e-4` | AdamW learning rate |
+| `weight_decay` | `5e-5` | `8e-5` | AdamW weight decay |
+| `batch_size` | `32` | `12` | Training batch size |
+| `patch_mode` | `"patch"` | `"strip"` | `"patch"` = random crop; `"strip"` = full-depth A-line |
+| `patch_h` / `patch_w` | `128 / 128` | `288 / 32` | Patch geometry |
+| `patches_per_frame` | `16` | `32` | Patches sampled per frame |
+| `w_charb` / `w_grad` | `0.8 / 0.5` | `0.0103 / 0.0102` | Charbonnier and gradient loss weights |
+| `early_stop_patience` | `5` | `20` | Validation checks without improvement before stopping |
+| `snr_sig_stat` | `"max"` | `"p99.99"` | Signal statistic: `"max"` or `"p<N>"` |
+| `snr_sig_y0` / `snr_sig_y1` | `111 / 600` | `111 / 600` | SNR/CNR signal ROI rows |
 
 ---
 

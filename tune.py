@@ -66,8 +66,13 @@ def main():
                 pixels=2048,
                 alines=1024,
                 crop_depth=(0, 1024),
-                window_sigma=0.08,
-                gap=0.25,
+                window_sigma=0.08,      # overwritten per trial
+                gap=0.25,               # overwritten per trial
+                # Must match model_train.py: the multilevel stem's channel count
+                # is derived from n_sub_windows, so tuning with a different value
+                # would tune a different architecture than the one trained.
+                n_sub_windows=2,
+                sub_window_spread=0.5,
             ),
         ],
         cache_frames_per_worker=1000,
@@ -76,6 +81,9 @@ def main():
         amp=True,
         deterministic=True,
         epochs=100,
+        # Architecture must match model_train.py, otherwise the tuned
+        # window_sigma/gap are transferred across models.
+        model_name="resunet_pseudo3d_multilevel",
         base=32,
         batch_size=12,
         lr=3e-4,
@@ -93,6 +101,7 @@ def main():
 
         snr_sig_y0=111,
         snr_sig_y1=600,
+        snr_sig_stat="p99.99",  # match model_train.py; trials record SNR/CNR per trial
         val_every=5,
         save_every=5,
         early_stop_patience=20,
