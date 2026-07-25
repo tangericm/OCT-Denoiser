@@ -24,6 +24,38 @@ class RawBscanDataModule:
             avg_leave_one_out=getattr(c, "avg_leave_one_out", True),
             avg_cache_dir=resolve_avg_cache_dir(c),
         )
+
+        if getattr(c, "supervision", "spectral") == "frame_pair":
+            # Two full-bandwidth frames from an OCTA volume rather than two
+            # views of one frame's spectrum.
+            from octdenoiser.data.paired_dataset import PairedFrameDataset
+
+            pair_kwargs = dict(
+                pair_mode=c.pair_mode,
+                position_step=c.position_step,
+                repeats_per_position=c.repeats_per_position,
+                input_mode="fullband",
+                target_mode="fullband",
+                avg_leave_one_out=mode_kwargs["avg_leave_one_out"],
+                avg_cache_dir=mode_kwargs["avg_cache_dir"],
+            )
+            common = dict(
+                folder_specs=c.folder_specs, train_frac=c.train_frac, seed=c.seed,
+                cache_frames_per_worker=c.cache_frames_per_worker, **pair_kwargs,
+            )
+            self._train = PairedFrameDataset(
+                split="train", patch_h=c.patch_h, patch_w=c.patch_w,
+                patches_per_frame=c.patches_per_frame, patch_mode=c.patch_mode,
+                augment=c.augment, **common,
+            )
+            self._val = PairedFrameDataset(
+                split="val", patch_h=c.patch_h, patch_w=c.patch_w,
+                patches_per_frame=max(1, c.patches_per_frame // 2),
+                patch_mode=c.patch_mode, **common,
+            )
+            self._val_full = PairedFrameDataset(split="val", full_frame=True, **common)
+            return
+
         self._train = RawBscanDataset(
             folder_specs=c.folder_specs,
             split="train",

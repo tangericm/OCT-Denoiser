@@ -8,6 +8,8 @@ PATCH_MODES = ("patch", "strip")
 INPUT_MODES = ("bandgap", "fullband")
 TARGET_MODES = ("fullband", "average", "complementary")
 TIFF_DTYPES = ("uint8", "uint16", "float32")
+SUPERVISIONS = ("spectral", "frame_pair")
+PAIR_MODES = ("position", "repeat")
 _SNR_STAT_RE = re.compile(r"^(max|p\d+(\.\d+)?)$")
 
 MULTILEVEL_MODELS = ("resunet_pseudo3d_multilevel",)
@@ -104,6 +106,17 @@ class TrainConfig:
     avg_cache_dir: str = "avg_cache"       # per-folder linear-magnitude sum cache (relative to runs_root)
 
     # ------------------------------------------------------------------
+    # Supervision scheme
+    # ------------------------------------------------------------------
+    # "spectral"   — views built from ONE frame's spectrum (input_mode/target_mode)
+    # "frame_pair" — two full-bandwidth FRAMES from an OCTA volume; no spectral
+    #                splitting, so no resolution or chromatic cost
+    supervision: str = "spectral"
+    pair_mode: str = "position"            # "position" (measured best) | "repeat"
+    position_step: int = 1                 # positions apart; 1 step = 11.7 um at 6mm/512
+    repeats_per_position: int = 2          # OCTA x2 volumes interleave 2 repeats
+
+    # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
     model_name: str = "resunet_pseudo3d"   # "resunet_pseudo3d" | "resunet_pseudo3d_multilevel" | "dncnn" | "unet2d"
@@ -159,6 +172,14 @@ class TrainConfig:
             raise ConfigError(f"target_mode must be one of {TARGET_MODES}, got {self.target_mode!r}")
         if self.tiff_dtype not in TIFF_DTYPES:
             raise ConfigError(f"tiff_dtype must be one of {TIFF_DTYPES}, got {self.tiff_dtype!r}")
+        if self.supervision not in SUPERVISIONS:
+            raise ConfigError(f"supervision must be one of {SUPERVISIONS}, got {self.supervision!r}")
+        if self.pair_mode not in PAIR_MODES:
+            raise ConfigError(f"pair_mode must be one of {PAIR_MODES}, got {self.pair_mode!r}")
+        if self.position_step < 1:
+            raise ConfigError(f"position_step must be >= 1, got {self.position_step}")
+        if self.repeats_per_position < 1:
+            raise ConfigError(f"repeats_per_position must be >= 1, got {self.repeats_per_position}")
         if not _SNR_STAT_RE.match(self.snr_sig_stat):
             raise ConfigError(
                 f'snr_sig_stat must be "max" or "p<percentile>" (e.g. "p99.99"), got {self.snr_sig_stat!r}'
@@ -184,6 +205,23 @@ class TrainConfig:
         only reads folder_specs[0].n_sub_windows, so a heterogeneous or
         inconsistent config silently builds the wrong stem.
         """
+        if self.supervision == "frame_pair":
+            # Both sides are full-bandwidth frames, so this is a 1-channel
+            # problem and no spectral view is constructed. The multi-level stem
+            # has nothing to consume.
+            if self.model_name in MULTILEVEL_MODELS:
+                raise ConfigError(
+                    f'supervision="frame_pair" feeds a single full-band frame (1 channel), '
+                    f"which the multi-level spectral stem of {self.model_name!r} cannot "
+                    f'consume. Use "resunet_pseudo3d", "unet2d" or "dncnn".'
+                )
+            if self.target_mode == "complementary":
+                raise ConfigError(
+                    'supervision="frame_pair" and target_mode="complementary" are two '
+                    "different schemes; pick one."
+                )
+            return
+
         if not self.folder_specs:
             return  # nothing to cross-check yet; the dataloader will raise if it stays None
 
