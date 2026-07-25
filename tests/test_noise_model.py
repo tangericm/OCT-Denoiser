@@ -101,6 +101,61 @@ def test_linear_model_would_fail_where_quadratic_succeeds():
     assert model.is_physical()
 
 
+def test_fit_never_returns_negative_parameters():
+    """NNLS keeps every term in the physically valid region.
+
+    On real data, M3_Macula_3x3mm produced gain = -0.0120 from an unconstrained
+    fit -- numerically good (R^2 0.992) but impossible. Constrained, it returns
+    exactly 0.0 with R^2 unchanged at 0.99217, i.e. the negative term explained
+    nothing. RIN-dominated data with no separable shot component is the case
+    that provokes this.
+    """
+    frames = synth_frames(n_frames=12, read_var=40.0, gain=0.0, rin=4e-3, seed=3)
+    model, _ = fit_noise_model(frames)
+
+    assert model.read_var >= 0.0, model.summary()
+    assert model.gain >= 0.0, model.summary()
+    assert model.rin >= 0.0, model.summary()
+    assert model.is_physical(), model.summary()
+    assert model.r_squared > 0.95, model.summary()
+
+
+def test_pooled_fit_reports_poor_r2_when_gain_is_not_shared():
+    """Pooling is a hypothesis test, not a production calibration path.
+
+    Detector gain is an adjustable acquisition setting on this instrument (the
+    Maestro2 folder names carry "gain165"/"gain167"), so a shared-gain fit
+    should fit badly when the acquisitions differ. On real Maestro3 data pooling
+    dropped mean R^2 from 0.995 to 0.323.
+    """
+    from octdenoiser.physics.noise_model import fit_pooled_noise_model, photon_transfer_curve
+
+    curves = {
+        "low_gain": photon_transfer_curve(synth_frames(n_frames=40, gain=1.0, seed=1)),
+        "high_gain": photon_transfer_curve(synth_frames(n_frames=40, gain=9.0, seed=2)),
+    }
+    pooled = fit_pooled_noise_model(curves)
+    assert len(pooled) == 2
+    gains = {round(m.gain, 9) for m in pooled.values()}
+    assert len(gains) == 1, "pooled fit must share one gain by construction"
+    assert min(m.r_squared for m in pooled.values()) < 0.9, (
+        "a shared-gain fit over genuinely different gains should fit poorly"
+    )
+
+
+def test_pooled_fit_recovers_a_genuinely_shared_gain():
+    from octdenoiser.physics.noise_model import fit_pooled_noise_model, photon_transfer_curve
+
+    curves = {
+        f"acq{i}": photon_transfer_curve(synth_frames(n_frames=40, gain=4.0, seed=i))
+        for i in range(3)
+    }
+    pooled = fit_pooled_noise_model(curves)
+    shared = next(iter(pooled.values())).gain
+    assert shared == pytest.approx(4.0, rel=0.15)
+    assert all(m.r_squared > 0.95 for m in pooled.values())
+
+
 def test_is_physical_rejects_negative_intercept():
     assert not NoiseModel(read_var=-1518.0, gain=6.25, rin=0.0).is_physical()
     assert not NoiseModel(read_var=10.0, gain=-1.0, rin=0.0).is_physical()

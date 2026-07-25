@@ -41,6 +41,7 @@ import os
 from dataclasses import dataclass, field
 
 import numpy as np
+import scipy.optimize as sopt
 
 # uint16 sensor: values approaching full scale are clipped and their variance
 # collapses, which drags a fit badly if not excluded.
@@ -216,7 +217,13 @@ def fit_noise_model(
         w = 1.0 / np.maximum(v[used], 1e-9) ** 2
         Aw = A * np.sqrt(w)[:, None]
         yw = v[used] * np.sqrt(w)
-        coef, *_ = np.linalg.lstsq(Aw, yw, rcond=None)
+        # Non-negative least squares: all three terms are variances or
+        # variance-per-unit-signal and cannot be negative. An unconstrained fit
+        # returned gain = -0.012 on M3_Macula_3x3mm -- a good fit numerically
+        # (R^2 0.992) but physically impossible. NNLS pins such a term at zero,
+        # meaning "no shot contribution separable from RIN here", instead of
+        # reporting a negative one.
+        coef, _ = sopt.nnls(Aw, yw)
 
         pred_all = coef[0] + coef[1] * m + coef[2] * m * m
         rel = np.abs(v - pred_all) / np.maximum(pred_all, 1e-9)
@@ -251,3 +258,89 @@ def calibrate_folder(
     """Calibrate one acquisition folder from its background frames."""
     frames = load_background_frames(data_dir, pixels, alines)
     return fit_noise_model(frames, source=os.path.basename(data_dir.rstrip("/\\")), **fit_kw)
+
+
+def fit_pooled_noise_model(
+    curves: dict[str, PTCCurve],
+    *,
+    n_frames: dict[str, int] | None = None,
+) -> dict[str, NoiseModel]:
+    """Fit a SHARED gain and RIN across acquisitions, with per-acquisition read_var.
+
+        var_ij = read_var_i + gain * mu_ij + rin * mu_ij^2
+
+    Linear in every parameter, so this is one exact weighted least-squares solve
+    with an indicator column per acquisition plus two shared columns.
+
+    THE MAESTRO3 DATA REJECTS THIS MODEL -- keep it for diagnosis, not for
+    production calibration
+    ----------------------------------------------------------------------
+    The hypothesis was that gain scatter across acquisitions (0.016-0.061, with
+    one negative) reflected fit degeneracy between the shot and RIN terms, since
+    both grow with mean level and only ~9 dark frames are available.
+
+    Pooling refuted it. Mean R^2 collapsed from 0.995 (independent fits) to
+    0.323, with three acquisitions going NEGATIVE -- the shared-gain model fits
+    worse than a constant. Detector gain is an adjustable acquisition setting on
+    this instrument, which the Maestro2 folder names state outright
+    ("...gain165", "...gain167"), so the spread is real and per-acquisition
+    fitting is correct.
+
+    Use this only to test whether a set of acquisitions shares a gain setting.
+    A high pooled R^2 means they do; a collapse means they do not.
+    """
+    if not curves:
+        raise ValueError("no curves supplied")
+
+    names = list(curves)
+    n_acq = len(names)
+
+    rows, targets, weights, owner = [], [], [], []
+    for i, name in enumerate(names):
+        c = curves[name]
+        used = c.used if c.used.size == c.mean.size else np.ones(c.mean.size, dtype=bool)
+        m, v = c.mean[used], c.variance[used]
+        for mj, vj in zip(m, v, strict=True):
+            row = np.zeros(n_acq + 2)
+            row[i] = 1.0          # this acquisition's read_var
+            row[n_acq] = mj       # shared gain
+            row[n_acq + 1] = mj * mj  # shared rin
+            rows.append(row)
+            targets.append(vj)
+            # Constant relative error on a variance estimate -> absolute error
+            # scales with the variance, so weight by 1/var^2.
+            weights.append(1.0 / max(vj, 1e-9) ** 2)
+            owner.append(i)
+
+    A = np.asarray(rows)
+    y = np.asarray(targets)
+    w = np.sqrt(np.asarray(weights))
+    if A.shape[0] < n_acq + 2:
+        raise RuntimeError(f"only {A.shape[0]} bins for {n_acq + 2} parameters")
+
+    coef, *_ = np.linalg.lstsq(A * w[:, None], y * w, rcond=None)
+    gain, rin = float(coef[n_acq]), float(coef[n_acq + 1])
+
+    pred = A @ coef
+    owner_arr = np.asarray(owner)
+
+    out: dict[str, NoiseModel] = {}
+    for i, name in enumerate(names):
+        sel = owner_arr == i
+        ss_res = float(np.sum((y[sel] - pred[sel]) ** 2))
+        ss_tot = float(np.sum((y[sel] - y[sel].mean()) ** 2))
+        c = curves[name]
+        out[name] = NoiseModel(
+            read_var=float(coef[i]),
+            gain=gain,
+            rin=rin,
+            n_frames=(n_frames or {}).get(name, 0),
+            n_bins_used=int(sel.sum()),
+            r_squared=float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan"),
+            max_rel_residual=float(
+                np.max(np.abs(y[sel] - pred[sel]) / np.maximum(pred[sel], 1e-9))
+            ),
+            mean_range=(float(c.mean.min()), float(c.mean.max())),
+            source=f"{name} (pooled)",
+        )
+    return out
