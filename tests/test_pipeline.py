@@ -10,10 +10,9 @@ import os
 import numpy as np
 import pytest
 
+from conftest import ALINES, CROP, LAYERS, PIXELS
 from octdenoiser.configs.default import FolderSpec
 from octdenoiser.preprocess import BscanProcessor
-
-from conftest import ALINES, CROP, LAYERS, PIXELS
 
 
 # --------------------------------------------------------------------------
@@ -43,7 +42,8 @@ def test_missing_clb_raises_actionable_error(tmp_path, synthetic_dataset):
     (root / "synth_folder").mkdir(parents=True)
     src = os.path.join(synthetic_dataset, "synth_folder")
     for name in sorted(os.listdir(src))[:2]:
-        (root / "synth_folder" / name).write_bytes(open(os.path.join(src, name), "rb").read())
+        with open(os.path.join(src, name), "rb") as fh:
+            (root / "synth_folder" / name).write_bytes(fh.read())
 
     spec = FolderSpec(root_folder=str(root), data_folder="synth_folder",
                       pixels=PIXELS, alines=ALINES, crop_depth=CROP)

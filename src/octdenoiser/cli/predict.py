@@ -26,7 +26,6 @@ import os
 from octdenoiser.configs.default import FolderSpec, TrainConfig
 from octdenoiser.engine.infer import predict_from_config
 
-
 # ===========================================================================
 # USER CONFIGURATION — edit this section
 # ===========================================================================

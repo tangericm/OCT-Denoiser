@@ -3,8 +3,8 @@ from __future__ import annotations
 import torch
 from torch.utils.data import DataLoader
 
-from octdenoiser.data.dataset import RawBscanDataset
 from octdenoiser.data.avg_targets import resolve_avg_cache_dir
+from octdenoiser.data.dataset import RawBscanDataset
 
 
 class RawBscanDataModule:
@@ -98,5 +98,5 @@ class RawBscanDataModule:
 
 
 def _collate(batch):
-    xs, ys, metas = zip(*batch)
+    xs, ys, metas = zip(*batch, strict=True)
     return torch.stack(xs, 0), torch.stack(ys, 0), metas

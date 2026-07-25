@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-from collections import OrderedDict
 import glob
 import os
-from typing import List, Any, Tuple
+from collections import OrderedDict
+from typing import Any
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset, get_worker_info
 
 from octdenoiser.preprocess import BscanProcessor
-
-
 
 
 def _to_torch_float32(arr: np.ndarray) -> torch.Tensor:
@@ -46,15 +44,23 @@ class RawBscanDataset(Dataset):
     """
     Unified dataset for both patch-based training and full-frame validation.
 
+    Returns (x, y, meta). The target y is always 1-channel; the input channel
+    count C depends on the mode, so it is NOT always 2:
+
+      input_mode="fullband"                       -> C = 1
+      input_mode="bandgap", n_sub_windows=0       -> C = 2          (w1, w2)
+      input_mode="bandgap", n_sub_windows=k > 0   -> C = 2 + 2*k    (+ sub-windows)
+
     When full_frame=False (default):
-      Returns (x, y, meta) with x: [2, patch_h, patch_w], y: [1, patch_h, patch_w]
+      x: [C, patch_h, patch_w], y: [1, patch_h, patch_w]
     When full_frame=True:
-      Returns (x, y, meta) with x: [2, H, W], y: [1, H, W]
+      x: [C, H, W], y: [1, H, W], and meta carries target_mu / target_sd /
+      log_eps so metrics can be computed in physical intensity.
     """
 
     def __init__(
         self,
-        folder_specs: List[Any],
+        folder_specs: list[Any],
         split: str,
         train_frac: float,
         patch_h: int = 128,
@@ -215,7 +221,7 @@ class RawBscanDataset(Dataset):
         self,
         inputs: list,
         tgt: np.ndarray,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         H, W = tgt.shape
         if self.patch_mode == "strip":
             x0 = self._rng.randint(0, W - self.patch_w + 1)
@@ -231,7 +237,7 @@ class RawBscanDataset(Dataset):
         y = tgt[y0:y0 + self.patch_h, x0:x0 + self.patch_w][None, ...].astype(np.float32)
         return x, y
 
-    def _random_flips(self, x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _random_flips(self, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if self._rng.rand() < 0.5:
             x = x[:, :, ::-1]
             y = y[:, :, ::-1]

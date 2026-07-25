@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import os
 import time
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
 from dataclasses import asdict
-from typing import Dict, Any
+from typing import Any
 
-from octdenoiser.engine.early_stopping import EarlyStopping
-from octdenoiser.engine.losses import unpack_batch, compute_total_loss
-from octdenoiser.engine.eval import evaluate, evaluate_full_frames
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+
 from octdenoiser.data.datamodule import RawBscanDataModule
+from octdenoiser.engine.early_stopping import EarlyStopping
+from octdenoiser.engine.eval import evaluate, evaluate_full_frames
+from octdenoiser.engine.losses import compute_total_loss, unpack_batch
 from octdenoiser.networks import create_model
 from octdenoiser.utils.helpers import save_json
 from octdenoiser.utils.io_tiff import save_tiff_stack
@@ -80,7 +81,7 @@ def _make_labeled_val_frame(pred_img: np.ndarray, *, epoch: int) -> np.ndarray:
 
 
 
-def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
+def run_training(cfg, paths: dict[str, str]) -> dict[str, Any]:
     """
     Returns dict with:
       - model (trained model)
@@ -154,7 +155,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
         out_dir=paths["run"],
         title=f"Loss - {cfg.experiment_name}, Network: {cfg.model_name}",
     )
-    
+
     print(f"[INFO] Device={cfg.device}  train_batches={len(train_loader)}  val_batches={len(val_loader)}")
 
     # ---- Timing bookkeeping ----
@@ -182,7 +183,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
             if cfg.grad_clip and cfg.grad_clip > 0:
                 scaler.unscale_(opt)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg.grad_clip)
-            
+
             scaler.step(opt)
             scaler.update()
 
@@ -283,7 +284,7 @@ def run_training(cfg, paths: Dict[str, str]) -> Dict[str, Any]:
                     f"Stopping at epoch={epoch}."
                 )
                 break
-        
+
         epoch_dt = time.time() - t0
         epoch_times.append(epoch_dt)
         if (epoch % cfg.save_every) == 0:

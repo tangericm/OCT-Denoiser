@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-from typing import Tuple
 
 import numpy as np
 
@@ -39,7 +38,7 @@ def folder_cache_path(cache_dir: str, fs) -> str:
     return os.path.join(cache_dir, f"summag_{_folder_key(fs)}.npz")
 
 
-def build_folder_sum(fs) -> Tuple[np.ndarray, int]:
+def build_folder_sum(fs) -> tuple[np.ndarray, int]:
     """Sum linear full-band magnitude over all frames in the folder.
 
     Returns (sum_mag [H,W] float64, N frames).
@@ -80,7 +79,7 @@ def ensure_folder_averages(folder_specs, cache_dir: str, verbose: bool = True) -
             print(f"[avg] cached {path}  N={n}  shape={sum_mag.shape}")
 
 
-def load_folder_sum(cache_dir: str, fs) -> Tuple[np.ndarray, int]:
+def load_folder_sum(cache_dir: str, fs) -> tuple[np.ndarray, int]:
     path = folder_cache_path(cache_dir, fs)
     if not os.path.exists(path):
         raise FileNotFoundError(

@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 from .registry import register_model
 
+
 class ResBlock2D(nn.Module):
     def __init__(self, ch: int):
         super().__init__()

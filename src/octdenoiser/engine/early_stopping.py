@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -19,10 +18,10 @@ class EarlyStopping:
     mode: str = "min"             # "min" or "max"
     warmup: int = 0               # ignore stopping for first N val checks
 
-    best: Optional[float] = None
+    best: float | None = None
     num_bad: int = 0
     num_checks: int = 0
-    best_epoch: Optional[int] = None
+    best_epoch: int | None = None
     stop_epoch: int = -1           # epoch at which stopping was triggered
 
     def _is_improvement(self, value: float) -> bool:
@@ -50,7 +49,7 @@ class EarlyStopping:
 
         if self.num_checks <= self.warmup:
             return False
-        
+
         if self.num_bad >= self.patience:
             self.stop_epoch = epoch
             return True

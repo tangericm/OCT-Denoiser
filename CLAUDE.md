@@ -8,40 +8,56 @@ Deep learning pipeline for denoising OCT B-scans. ResUNet with pseudo-3D stem pr
 
 ## Quick Commands
 ```bash
-python model_train.py                   # train
-python model_predict.py                 # inference from checkpoint
-python tune.py                          # Optuna hyperparameter search
-python tests/test_optimizations.py      # sanity checks
-python -m compileall .                  # syntax check (no data required)
+pip install -e ".[dev]"                 # after installing torch from the PyTorch index
+oct-train                               # train
+oct-predict --checkpoint <path>         # inference from checkpoint
+oct-tune                                # Optuna hyperparameter search
+oct-mirror-study                        # mirror-phantom baseline study
+pytest                                  # full suite, needs no OCT data
+ruff check . && mypy                    # lint + types
+python -m compileall -q src tests       # syntax check
 ```
 
-**Stack:** Python 3.14 · PyTorch 2.10.0+cu128 · CUDA required for practical use
+Never run bare `python -m compileall .` — it descends into `.git/refs/`, where
+branch names ending in `.py` are parsed as source and always fail.
+
+**Stack:** Python ≥3.10 · PyTorch ≥2.4 · CUDA required for practical use
 
 ---
 
 ## Repository Map
 ```
 OCT-Denoiser/
-├── model_train.py           # training entrypoint
-├── model_predict.py         # standalone inference
-├── preprocess.py            # BscanProcessor: DC subtract → k-linear resample → window → FFT → log compress
-├── tune.py                  # Optuna search for window_sigma and gap
-├── configs/default.py       # TrainConfig, FolderSpec dataclasses
-├── data/dataset.py          # RawBscanDataset (lazy init, per-worker LRU cache)
-├── data/datamodule.py       # DataLoader factory
-├── engine/train.py          # AMP training loop, early stopping, checkpointing
-├── engine/eval.py           # patch + full-frame validation
-├── engine/infer.py          # raw → TIFF inference pipeline
-├── engine/losses.py         # Charbonnier + gradient L1, unpack_batch
-├── engine/metrics.py        # SNR/CNR in dB, ROI helpers
-├── engine/early_stopping.py # patience-based early stopping
-├── networks/registry.py     # @register_model decorator + create_model()
-├── networks/resunet_pseudo3d.py              # base ResUNet
-├── networks/resunet_pseudo3d_multilevel.py   # + multi-level spectral stem
-└── utils/                   # run dirs, seeding, TIFF I/O, live plot
+├── pyproject.toml                    # packaging + ruff/mypy/pytest config
+├── .github/workflows/ci.yml          # ruff → mypy → pytest → compileall
+├── src/octdenoiser/
+│   ├── preprocess.py                 # BscanProcessor: DC subtract → k-linear resample → window → FFT → log compress
+│   ├── cli/{train,predict,tune}.py   # console scripts oct-train / oct-predict / oct-tune
+│   ├── configs/default.py            # TrainConfig, FolderSpec (+ __post_init__ validation)
+│   ├── data/dataset.py               # RawBscanDataset (lazy init, per-worker LRU cache)
+│   ├── data/datamodule.py            # DataLoader factory
+│   ├── data/avg_targets.py           # temporal-average target cache
+│   ├── engine/train.py               # AMP training loop, early stopping, checkpointing
+│   ├── engine/eval.py                # patch + full-frame validation
+│   ├── engine/infer.py               # raw → TIFF inference pipeline
+│   ├── engine/losses.py              # Charbonnier + gradient L1, unpack_batch
+│   ├── engine/metrics.py             # SNR/CNR in dB, ROI helpers
+│   ├── engine/early_stopping.py      # patience-based early stopping
+│   ├── networks/registry.py          # @register_model decorator + create_model()
+│   ├── networks/*.py                 # resunet_pseudo3d, _multilevel, dncnn, unet2d
+│   ├── experiments/                  # run_mirror_study, run_retina_compare (CLIs)
+│   ├── tools/eval_mirror.py          # PSNR/SSIM/FWHM harness
+│   └── utils/                        # run dirs, seeding, TIFF I/O, live plot
+└── tests/conftest.py                 # synthetic raw + .CLB fixtures — suite needs no data
 ```
 
-Layer direction: `configs → data/networks/utils → engine → entry scripts`
+Layer direction: `configs → data/networks/utils → engine → cli`
+
+**Calibration is per instrument.** Maestro2 and Maestro3 ship different `.CLB`
+k-linearisation LUTs. Applying the wrong one resamples onto the wrong k-grid and
+yields a plausible-looking reconstruction with the wrong depth scale and PSF, with
+no error raised. `root_folder` must point at the matching instrument directory, or
+set `FolderSpec.clb_path` explicitly (it now wins over auto-discovery).
 
 ---
 

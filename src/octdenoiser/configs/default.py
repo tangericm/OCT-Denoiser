@@ -1,6 +1,5 @@
 import re
 from dataclasses import dataclass
-from typing import Optional, Tuple, List
 
 # Valid enum-like values. `model_name` is deliberately NOT validated here —
 # networks/registry.py is the source of truth and create_model() raises on an
@@ -25,8 +24,8 @@ class FolderSpec:
     data_folder: str                        # e.g. "6mm_1024Aline"
     pixels: int                             # spectral samples per A-line (e.g. 2048)
     alines: int                             # A-lines per B-scan (e.g. 1024 or 2048)
-    clb_path: Optional[str] = None          # override CLB path; auto-discovered if None
-    crop_depth: Tuple[int, int] = (1024, 2048)  # [z0, z1) pixel crop after IFFT
+    clb_path: str | None = None          # override CLB path; auto-discovered if None
+    crop_depth: tuple[int, int] = (1024, 2048)  # [z0, z1) pixel crop after IFFT
     do_dc_subtract: bool = True
     use_log: bool = True
     log_eps: float = 1e-6
@@ -69,7 +68,7 @@ class TrainConfig:
     runs_root: str = "runs"
     experiment_name: str = "experiment"
 
-    folder_specs: Optional[List[FolderSpec]] = None
+    folder_specs: list[FolderSpec] | None = None
     cache_frames_per_worker: int = 1000     # LRU cache size per DataLoader worker
 
     # ------------------------------------------------------------------

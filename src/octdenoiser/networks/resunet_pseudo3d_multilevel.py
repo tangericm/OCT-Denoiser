@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from .registry import register_model
-from .resunet_pseudo3d import ResUNetPseudo3D, Pseudo3DStem
+from .resunet_pseudo3d import Pseudo3DStem, ResUNetPseudo3D
 
 
 class Level2Stem(nn.Module):

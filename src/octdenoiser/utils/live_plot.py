@@ -43,8 +43,8 @@ class LiveLossPlot:
                 self._plt = plt
                 self._fig, self._ax = plt.subplots()
             else:
-                import matplotlib.figure
                 import matplotlib.backends.backend_agg as _agg
+                import matplotlib.figure
                 self._fig = matplotlib.figure.Figure()
                 _agg.FigureCanvasAgg(self._fig)   # attach Agg canvas — no Tk
                 self._ax = self._fig.add_subplot(111)
@@ -61,7 +61,7 @@ class LiveLossPlot:
             (self._snr_line,) = self._snr_ax.plot([], [], label="val_snr", color="tab:green")
 
             lines = [self._train_line, self._val_line, self._snr_line]
-            self._ax.legend(lines, [l.get_label() for l in lines], loc="best")
+            self._ax.legend(lines, [ln.get_label() for ln in lines], loc="best")
 
             if self.show_window:
                 plt.ion()

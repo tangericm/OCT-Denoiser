@@ -1,7 +1,7 @@
 import os
 import re
 from datetime import datetime
-from typing import Dict
+
 
 def ensure_dir(path: str) -> None:
     if path:
@@ -38,7 +38,7 @@ def make_param_suffix(folder_spec) -> str:
     return f"{folder_name}_s{sigma:03d}_g{gap:03d}"
 
 
-def setup_run_dirs(run_dir: str) -> Dict[str, str]:
+def setup_run_dirs(run_dir: str) -> dict[str, str]:
     paths = {
         "run": run_dir,
         "checkpoints": os.path.join(run_dir, "checkpoints"),

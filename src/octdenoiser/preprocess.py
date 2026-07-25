@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
 import glob
-from typing import TYPE_CHECKING, Tuple, Dict, Any, Optional
+import os
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import scipy.fft as sfft
 import scipy.linalg as sla
 
@@ -47,32 +47,16 @@ def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
 
     # uniform spacing
     h = np.float32(1.0 / (n - 1))
-    inv_h = np.float32((n - 1))  # 1/h
+    inv_h = np.float32(n - 1)  # 1/h
 
-    # Build banded matrix for natural spline second derivatives M:
-    # M0 = Mn-1 = 0 (natural)
-    # interior: M_{i-1} + 4 M_i + M_{i+1} = (6/h^2) * (y_{i+1} - 2y_i + y_{i-1})
-    # (uniform grid; the "h" factors cancel out except in rhs)
-    ab = np.zeros((3, n), dtype=np.float32)  # (upper, diag, lower) for solve_banded((1,1), ab, b)
-
-    # diag
-    ab[1, :] = 4.0
-    ab[1, 0] = 1.0
-    ab[1, -1] = 1.0
-
-    # upper diag (ab[0,1:] corresponds to A[i-1,i])
-    ab[0, 1:] = 1.0
-    ab[0, 1] = 0.0     # because row 0 is boundary
-    ab[0, -1] = 0.0    # last row boundary
-
-    # lower diag (ab[2,:-1] corresponds to A[i+1,i])
-    ab[2, :-1] = 1.0
-    ab[2, -2] = 0.0    # because last row boundary
-    ab[2, 0] = 0.0     # first row boundary
-
-    # Build explicit tridiagonal arrays (dl, d, du) and factorize once.
-    # This avoids refactorizing the same system every frame (major speed-up vs solve_banded).
-    # Matrix corresponds to the banded 'ab' above (natural spline: M0=Mn-1=0, dropped from first/last interior eqs).
+    # Natural spline second derivatives M:
+    #   M0 = Mn-1 = 0 (natural boundary)
+    #   interior: M_{i-1} + 4 M_i + M_{i+1} = (6/h^2) * (y_{i+1} - 2y_i + y_{i-1})
+    # (uniform grid; the "h" factors cancel out except in the rhs)
+    #
+    # Build explicit tridiagonal arrays (dl, d, du) and factorize once. This
+    # avoids refactorizing the same system every frame -- the major speed-up
+    # over scipy solve_banded.
     dl = np.ones(n - 1, dtype=np.float32)   # sub-diagonal: A[i+1,i]
     d  = np.full(n, 4.0, dtype=np.float32) # main diagonal
     du = np.ones(n - 1, dtype=np.float32)   # super-diagonal: A[i,i+1]
@@ -90,7 +74,7 @@ def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
     dl_f, d_f, du_f, du2, ipiv, info = gttrf(dl.copy(), d.copy(), du.copy())
     if info != 0:
         raise RuntimeError(f"gttrf failed with info={info}")
-    
+
     # Precompute evaluation indices and weights for each xp
     # Map xp in [0,1] to interval index i in [0, n-2]
     # i = floor(xp / h) = floor(xp * (n-1))
@@ -117,14 +101,12 @@ def _precompute_natural_cubic_uniform(pixels: int, xp: np.ndarray) -> dict:
     a3ma_col = a3ma[:, None].copy()
     b3mb_col = b3mb[:, None].copy()
 
+    # Only the *_col forms are consumed by resample_klinear_cubic_operator; the
+    # 1-D a/b/a3ma/b3mb arrays and the old banded matrix were dead weight in the
+    # returned dict and have been dropped.
     return {
-        "ab": ab,          # banded system matrix for M
         "h2_over_6": c,
         "i0": i0,
-        "a": a,
-        "b": b,
-        "a3ma": a3ma,
-        "b3mb": b3mb,
         "a_col": a_col,       # [pixels, 1] for broadcasting
         "b_col": b_col,
         "a3ma_col": a3ma_col,
@@ -156,7 +138,7 @@ def resample_klinear_cubic_operator(spec: np.ndarray, pre: dict) -> np.ndarray:
     # --- Build rhs for second derivatives M ---
     # rhs[0] = rhs[-1] = 0
     # rhs[1:-1] = (6/h^2) * (y[i+1] - 2y[i] + y[i-1])
-    rhs = pre.get("_rhs", None)
+    rhs = pre.get("_rhs")
     if rhs is None or rhs.shape != spec.shape:
         rhs = np.empty_like(spec, dtype=np.float32)
         pre["_rhs"] = rhs
@@ -187,7 +169,7 @@ def resample_klinear_cubic_operator(spec: np.ndarray, pre: dict) -> np.ndarray:
     return out
 
 def recon_bscan_from_spectrum(spec_complex: np.ndarray,
-                              crop: Tuple[int, int],
+                              crop: tuple[int, int],
                               use_log: bool,
                               log_eps: float,
                               apply_fftshift_depth: bool) -> np.ndarray:
@@ -216,7 +198,7 @@ def recon_bscan_from_spectrum(spec_complex: np.ndarray,
 
 
 def recon_bscan_batch(spec_batch: np.ndarray,
-                      crop: Tuple[int, int],
+                      crop: tuple[int, int],
                       use_log: bool,
                       log_eps: float,
                       apply_fftshift_depth: bool,
@@ -276,7 +258,7 @@ def gaussian_window_1d(pixels: int, center: float, sigma: float) -> np.ndarray:
     return w
 
 
-def make_two_window_masks(pixels: int, gap: float, sigma: float, gap_offset: float = 0.0) -> Tuple[np.ndarray, np.ndarray]:
+def make_two_window_masks(pixels: int, gap: float, sigma: float, gap_offset: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
     """
     Two Gaussian windows placed around the spectral midpoint with optional offset.
 
@@ -307,7 +289,7 @@ def make_multilevel_window_masks(
     gap_offset: float = 0.0,
     n_sub: int = 8,
     spread: float = 2.0,
-) -> Tuple[list, list]:
+) -> tuple[list, list]:
     """
     Generate sub-windows for multi-level spectral analysis.
 
@@ -379,7 +361,7 @@ class BscanProcessor:
         # scale and PSF are wrong, with no error raised. So an explicit
         # cfg.clb_path always wins over auto-discovery, and the resolved path is
         # recorded on the instance for run manifests.
-        self.clb_path: Optional[str] = None
+        self.clb_path: str | None = None
         if getattr(cfg, "clb_path", None):
             if not os.path.isfile(cfg.clb_path):
                 raise FileNotFoundError(f"clb_path does not exist: {cfg.clb_path}")
@@ -436,7 +418,7 @@ class BscanProcessor:
         n_batch_total = 3 + len(self.sub_w1s) + len(self.sub_w2s)
         self._spec_batch_c64 = np.empty((n_batch_total, cfg.pixels, cfg.alines), dtype=np.complex64)
 
-    def save_window_figure(self, out_path: str, bscan_path: Optional[str] = None) -> None:
+    def save_window_figure(self, out_path: str, bscan_path: str | None = None) -> None:
         cfg = self.cfg
         if bscan_path is None:
             if not self.bscan_paths:
@@ -471,9 +453,9 @@ class BscanProcessor:
 
         # Plot sub-windows if multi-level is enabled
         if self.sub_w1s:
-            for i, sw in enumerate(self.sub_w1s):
+            for sw in self.sub_w1s:
                 ax.plot(sw, color="darkred", alpha=0.35, linewidth=0.75, linestyle="--")
-            for i, sw in enumerate(self.sub_w2s):
+            for sw in self.sub_w2s:
                 ax.plot(sw, color="darkorange", alpha=0.35, linewidth=0.75, linestyle="--")
 
         ax.set_xlabel("Pixel")
@@ -490,7 +472,7 @@ class BscanProcessor:
         plt.close(fig)
 
     def process_one(self, bscan_path: str, frame_idx: int = 0, need_linear_full: bool = False,
-                    fft_workers: int = -1) -> Dict[str, Any]:
+                    fft_workers: int = -1) -> dict[str, Any]:
         """
         Process a single raw B-scan file into denoising inputs and target.
 

@@ -13,12 +13,12 @@ Outputs are written to:  runs/<experiment_name>/<timestamp>/
 """
 
 import os
-from octdenoiser.configs.default import TrainConfig, FolderSpec
+
+from octdenoiser.configs.default import FolderSpec, TrainConfig
+from octdenoiser.engine.infer import predict_from_config
+from octdenoiser.engine.train import run_training
 from octdenoiser.utils.helpers import seed_all
 from octdenoiser.utils.run_manager import make_run_dir, setup_run_dirs
-from octdenoiser.engine.train import run_training
-from octdenoiser.engine.infer import predict_from_config
-
 
 # ===========================================================================
 # USER CONFIGURATION — edit this section to match your dataset and hardware

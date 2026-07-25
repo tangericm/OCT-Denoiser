@@ -1,27 +1,26 @@
 # tune.py
 from __future__ import annotations
 
-import os
-import csv
-import time
 import copy
-import optuna
-from dataclasses import asdict
-from typing import Dict, List
+import csv
+import os
+import time
 
-from octdenoiser.configs.default import TrainConfig, FolderSpec
+import optuna
+
+from octdenoiser.configs.default import FolderSpec, TrainConfig
 from octdenoiser.engine.train import run_training
 from octdenoiser.utils.helpers import seed_all
 from octdenoiser.utils.run_manager import ensure_dir
 
 
-def make_trial_paths(root: str, trial_number: int) -> Dict[str, str]:
+def make_trial_paths(root: str, trial_number: int) -> dict[str, str]:
     run_dir = os.path.join(root, f"trial_{trial_number:04d}")
     ckpt_dir = os.path.join(run_dir, "checkpoints")
     val_dir = os.path.join(run_dir, "val_outputs")
     ensure_dir(ckpt_dir)
     ensure_dir(val_dir)
-    return {"run": run_dir, "checkpoints": ckpt_dir, "val_outputs": val_dir}   
+    return {"run": run_dir, "checkpoints": ckpt_dir, "val_outputs": val_dir}
 
 
 def write_results_csv(path: str, rows: list[dict]) -> None:
@@ -34,13 +33,13 @@ def write_results_csv(path: str, rows: list[dict]) -> None:
         for r in rows:
             w.writerow(r)
 
-def _apply_folder_knobs(folder_specs: List[FolderSpec], *, window_sigma: float, gap: float) -> None:
+def _apply_folder_knobs(folder_specs: list[FolderSpec], *, window_sigma: float, gap: float) -> None:
     # Apply the same spectral-window knobs to all folders (common case).
     # If you want per-folder tuning later, sample separate values per folder.
     for fs in folder_specs:
         fs.window_sigma = float(window_sigma)
         fs.gap = float(gap)
-        
+
 
 def main():
     # -----------------------------
@@ -107,7 +106,7 @@ def main():
         early_stop_patience=20,
     )
 
-    def objective(trial: "optuna.Trial") -> float:
+    def objective(trial: optuna.Trial) -> float:
         # Sample hyperparameters (conservative ranges to start)
         cfg = copy.deepcopy(base_cfg)
 

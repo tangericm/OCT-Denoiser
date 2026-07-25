@@ -87,6 +87,8 @@ ignore = [
     "E501",   # line length is handled by the formatter
     "B008",   # function call in default arg — used deliberately for dataclasses
     "SIM108", # ternary rewrites hurt readability in the numeric code
+    "C408",   # dict(...) for kwargs splatting reads better than a literal here
+    "E702",   # `lo = ...; hi = ...` keeps paired numeric bounds on one line
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -98,7 +100,40 @@ python_version = "3.10"
 files = ["src/octdenoiser"]
 ignore_missing_imports = true
 warn_unused_ignores = true
-# Non-strict to start: 81% of args and 64% of returns are already annotated,
-# so this passes today and can be tightened incrementally.
+# Non-strict to start. 81% of args and 64% of returns are already annotated,
+# so this is a realistic baseline that can be tightened incrementally.
 disallow_untyped_defs = false
 check_untyped_defs = true
+
+# Ratchet. These modules do not type-check yet; the gate enforces the other 22
+# so the clean set can only grow. Work the list down largest-first and delete
+# each entry as it goes green -- do NOT add to it.
+#
+#   27  data/dataset.py          16  data/datamodule.py
+#   13  engine/infer.py          13  engine/train.py
+#   12  utils/live_plot.py        6  tools/eval_mirror.py
+#    4  preprocess.py             4  experiments/run_retina_compare.py
+#    2  experiments/run_mirror_study.py
+#    1 each: utils/helpers.py, cli/tune.py, cli/train.py,
+#            networks/resunet_pseudo3d_multilevel.py
+#
+# Two of these are real latent bugs worth fixing first, not just annotations:
+#   cli/train.py            folder_specs is Optional but iterated unguarded
+#   engine/infer.py:289     sig_stat passed as str|None where str is required
+[[tool.mypy.overrides]]
+module = [
+    "octdenoiser.data.dataset",
+    "octdenoiser.data.datamodule",
+    "octdenoiser.engine.infer",
+    "octdenoiser.engine.train",
+    "octdenoiser.utils.live_plot",
+    "octdenoiser.utils.helpers",
+    "octdenoiser.tools.eval_mirror",
+    "octdenoiser.preprocess",
+    "octdenoiser.experiments.run_retina_compare",
+    "octdenoiser.experiments.run_mirror_study",
+    "octdenoiser.cli.train",
+    "octdenoiser.cli.tune",
+    "octdenoiser.networks.resunet_pseudo3d_multilevel",
+]
+ignore_errors = true

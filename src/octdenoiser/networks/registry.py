@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, Any
+from collections.abc import Callable
+from typing import Any
+
 import torch.nn as nn
 
-_MODEL_REGISTRY: Dict[str, Callable[..., nn.Module]] = {}
+_MODEL_REGISTRY: dict[str, Callable[..., nn.Module]] = {}
 
 def register_model(name: str):
     def deco(fn: Callable[..., nn.Module]):

@@ -28,9 +28,9 @@ import os
 import numpy as np
 import torch
 
-from octdenoiser.experiments.run_mirror_study import CONFIGS, BAND, CROP, ROOT, ckpt_registry_path
 from octdenoiser.configs.default import FolderSpec
-from octdenoiser.engine.metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
+from octdenoiser.engine.metrics import bg_bounds, roi_bounds, roi_snr_cnr, to_physical_intensity
+from octdenoiser.experiments.run_mirror_study import BAND, CONFIGS, CROP, ROOT, ckpt_registry_path
 from octdenoiser.networks import create_model
 from octdenoiser.utils.io_tiff import save_tiff_stack
 

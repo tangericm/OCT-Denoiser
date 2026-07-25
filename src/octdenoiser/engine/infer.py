@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import os
 import csv
-import numpy as np
+import os
 import time
-import torch
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 
+import matplotlib.patches as patches
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+
+from octdenoiser.configs.default import TrainConfig
+from octdenoiser.engine.metrics import bg_bounds, roi_bounds, roi_snr_cnr, to_physical_intensity
 from octdenoiser.networks import create_model
-from octdenoiser.engine.metrics import roi_snr_cnr, roi_bounds, bg_bounds, to_physical_intensity
 from octdenoiser.utils.helpers import nanmean
 from octdenoiser.utils.io_tiff import save_tiff_stack
 from octdenoiser.utils.run_manager import ensure_dir, make_param_suffix
-from octdenoiser.configs.default import TrainConfig
 
 DEFAULT_SNR_SIG_Y0 = TrainConfig.__dataclass_fields__["snr_sig_y0"].default
 DEFAULT_SNR_SIG_Y1 = TrainConfig.__dataclass_fields__["snr_sig_y1"].default
@@ -131,7 +132,7 @@ def predict_raw_to_tiffs(
     model = create_model(model_name, **model_kwargs).to(device)
     model.load_state_dict(ckpt["model"], strict=True)
     model.eval()
-    print(f"[INFO] Model loaded and set to eval mode")
+    print("[INFO] Model loaded and set to eval mode")
 
     # Determine frame count + shape
     paths = proc.bscan_paths
@@ -252,11 +253,11 @@ def predict_raw_to_tiffs(
         return gt_norm, clean_lin.astype(np.float32), mu, sd
 
     # Warmup
-    print(f"[INFO] Running warmup inference...")
+    print("[INFO] Running warmup inference...")
     _ = _infer_1(_gather_input(out0))
     if device.startswith("cuda"):
         torch.cuda.synchronize()
-    print(f"[INFO] Warmup complete, starting predictions...")
+    print("[INFO] Warmup complete, starting predictions...")
 
     for i, p in enumerate(paths):
         out = proc.process_one(p, frame_idx=i, need_linear_full=need_lin)
@@ -352,7 +353,9 @@ def predict_raw_to_tiffs(
         save_tiff_stack(os.path.join(outdir, f"w2_{param_suffix}.tiff"), w2, dtype=tiff_dtype, scale_per_slice=True)
 
     if also_save_float32:
-        save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds, dtype="float32", scale_per_slice=True)
+        # float32 output is written unscaled by design: save_tiff_stack ignores
+        # scale_per_slice for float32, so passing it here only misled readers.
+        save_tiff_stack(os.path.join(outdir, f"pred_{param_suffix}_float32.tiff"), preds, dtype="float32")
 
 
 

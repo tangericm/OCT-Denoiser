@@ -1,5 +1,9 @@
 # OCT Denoiser
 
+[![CI](https://github.com/tangericm/OCT-Denoiser/actions/workflows/ci.yml/badge.svg)](https://github.com/tangericm/OCT-Denoiser/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
 Deep learning pipeline for denoising OCT B-scans using a ResUNet with pseudo-3D spectral stem. Raw `.raw` spectral data is preprocessed on-the-fly (k-linearisation → spectral windowing → IFFT → log compress → z-score) and fed to the network as dual-channel (or multi-level sub-window) inputs.
 
 **Author:** Eric Tang (tangericm) · eric.tang22@gmail.com
@@ -46,22 +50,40 @@ A run dedicated to a single volume (`window_sigma 0.03`, `gap 0.60`) reaches
 
 ## Environment Setup
 
-Python 3.14 · PyTorch 2.10.0+cu128 · CUDA required for practical training
+Python ≥3.10 · PyTorch ≥2.4 · CUDA required for practical training
+
+Install the accelerator build of torch first, then the package. `torch` is
+deliberately not pinned to a CUDA index in `pyproject.toml`, so CPU-only
+environments (including CI) are not forced to download multi-GB wheels.
 
 ```bash
-conda create --name OCTDenoiser python=3.14
+conda create --name OCTDenoiser python=3.12
 conda activate OCTDenoiser
+
+# GPU (swap cu128 -> cpu for a CPU-only install)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
+
+pip install -e ".[dev]"        # drop [dev] if you don't need the test tooling
 ```
+
+This installs the `octdenoiser` package and the `oct-*` commands below.
 
 ---
 
 ## Quick Start
 
+| Command | Does |
+|---------|------|
+| `oct-train` | training |
+| `oct-predict --checkpoint <path>` | inference from a checkpoint |
+| `oct-tune` | Optuna window-parameter search |
+| `oct-mirror-study` | mirror-phantom baseline study (14 CLI flags) |
+| `oct-retina-compare` | qualitative retina comparison |
+
 ### 1. Configure your dataset
 
-Edit the `USER CONFIGURATION` section in [model_train.py](model_train.py):
+Edit the `USER CONFIGURATION` section in
+[src/octdenoiser/cli/train.py](src/octdenoiser/cli/train.py):
 
 - Set `root_folder` / `data_folder` to point at your `bscan*.raw` files
 - Set `pixels` / `alines` to match your OCT system
@@ -73,7 +95,7 @@ Edit the `USER CONFIGURATION` section in [model_train.py](model_train.py):
 ### 2. Train
 
 ```bash
-python model_train.py
+oct-train
 ```
 
 Outputs written to `runs/<experiment_name>/<timestamp>/`:
@@ -88,21 +110,29 @@ Outputs written to `runs/<experiment_name>/<timestamp>/`:
 
 ### 3. Inference from a checkpoint
 
-Edit the `USER CONFIGURATION` section in [model_predict.py](model_predict.py) so the
-model and `FolderSpec` match the checkpoint, then pass the checkpoint path:
+Edit the `USER CONFIGURATION` section in
+[src/octdenoiser/cli/predict.py](src/octdenoiser/cli/predict.py) so the model and
+`FolderSpec` match the checkpoint, then pass the checkpoint path:
 
 ```bash
-python model_predict.py --checkpoint runs/OCT-Denoiser/<timestamp>/checkpoints/best.pt
+oct-predict --checkpoint runs/OCT-Denoiser/<timestamp>/checkpoints/best.pt
 ```
 
 `--outdir` defaults to `<run_dir>/predictions`.
+
+> Calibration is **per instrument**. Maestro2 and Maestro3 ship different `.CLB`
+> files carrying different k-linearisation LUTs, and applying the wrong one
+> resamples onto the wrong k-grid — the reconstruction still looks plausible but
+> the depth scale and PSF are wrong, with no error raised. `root_folder` must
+> point at the matching instrument directory, or set `FolderSpec.clb_path`
+> explicitly.
 
 ### 4. Hyperparameter tuning (optional)
 
 Tune `window_sigma` and `gap` with Optuna:
 
 ```bash
-python tune.py
+oct-tune
 ```
 
 Results are saved as `runs/optuna/<timestamp>/study_results.csv`.
@@ -110,13 +140,19 @@ Results are saved as `runs/optuna/<timestamp>/study_results.csv`.
 ### 5. Sanity checks
 
 ```bash
-python tests/test_optimizations.py          # preprocessing + model forward pass
-python -m compileall configs data engine networks utils tools experiments tests \
-       preprocess.py model_train.py model_predict.py tune.py   # syntax check
+pytest                            # full suite; needs no OCT data
+ruff check .                      # lint
+mypy                              # types
+python -m compileall -q src tests # syntax
 ```
 
-> Do not run bare `python -m compileall .` — it descends into `.git/refs/` where
-> branch names ending in `.py` are parsed as source and always fail.
+The suite runs entirely on synthesised raw interferograms and a synthetic `.CLB`
+(see [tests/conftest.py](tests/conftest.py)), so it works on a clean checkout
+with no instrument data. Fringes are generated against the inverse resampling
+LUT, matching the fact that real spectrometers sample linearly in wavelength.
+
+> Do not run bare `python -m compileall .` — it descends into `.git/refs/`,
+> where branch names ending in `.py` are parsed as source and always fail.
 
 ---
 
@@ -124,45 +160,43 @@ python -m compileall configs data engine networks utils tools experiments tests 
 
 ```
 OCT-Denoiser/
-├── model_train.py                          # training entry point
-├── model_predict.py                        # standalone inference (--checkpoint)
-├── preprocess.py                           # BscanProcessor: raw -> B-scan tensor
-├── tune.py                                 # Optuna window parameter search
-├── configs/default.py                      # TrainConfig, FolderSpec dataclasses
-├── data/
-│   ├── dataset.py                          # RawBscanDataset (lazy init, LRU cache)
-│   ├── datamodule.py                       # DataLoader factory
-│   └── avg_targets.py                      # temporal-average target cache
-├── engine/
-│   ├── train.py                            # AMP training loop, checkpointing
-│   ├── eval.py                             # patch + full-frame validation
-│   ├── infer.py                            # raw -> TIFF inference pipeline
-│   ├── losses.py                           # Charbonnier + gradient L1
-│   ├── metrics.py                          # SNR/CNR (physical domain)
-│   └── early_stopping.py                   # patience-based early stopping
-├── networks/
-│   ├── registry.py                         # @register_model decorator
-│   ├── resunet_pseudo3d.py                 # base ResUNet with Pseudo-3D stem
-│   ├── resunet_pseudo3d_multilevel.py      # + multi-level spectral input
-│   ├── dncnn.py                            # DnCNN baseline
-│   └── unet2d.py                           # plain U-Net baseline
-├── experiments/
-│   ├── run_mirror_study.py                 # mirror-phantom baseline study (CLI)
-│   └── run_retina_compare.py               # qualitative retina comparison (CLI)
-├── tools/
-│   └── eval_mirror.py                      # PSNR/SSIM/FWHM metric harness
-├── utils/
-│   ├── helpers.py                          # seed_all, save_json, nanmean
-│   ├── run_manager.py                      # run directory management
-│   ├── io_tiff.py                          # TIFF stack I/O
-│   └── live_plot.py                        # live loss curve (PNG + optional window)
+├── pyproject.toml                              # packaging, ruff/mypy/pytest config
+├── src/octdenoiser/
+│   ├── preprocess.py                           # BscanProcessor: raw -> B-scan tensor
+│   ├── cli/
+│   │   ├── train.py                            # oct-train
+│   │   ├── predict.py                          # oct-predict
+│   │   └── tune.py                             # oct-tune
+│   ├── configs/default.py                      # TrainConfig, FolderSpec (+ validation)
+│   ├── data/
+│   │   ├── dataset.py                          # RawBscanDataset (lazy init, LRU cache)
+│   │   ├── datamodule.py                       # DataLoader factory
+│   │   └── avg_targets.py                      # temporal-average target cache
+│   ├── engine/
+│   │   ├── train.py                            # AMP training loop, checkpointing
+│   │   ├── eval.py                             # patch + full-frame validation
+│   │   ├── infer.py                            # raw -> TIFF inference pipeline
+│   │   ├── losses.py                           # Charbonnier + gradient L1
+│   │   ├── metrics.py                          # SNR/CNR (physical domain)
+│   │   └── early_stopping.py                   # patience-based early stopping
+│   ├── networks/
+│   │   ├── registry.py                         # @register_model decorator
+│   │   ├── resunet_pseudo3d.py                 # base ResUNet with Pseudo-3D stem
+│   │   ├── resunet_pseudo3d_multilevel.py      # + multi-level spectral input
+│   │   ├── dncnn.py                            # DnCNN baseline
+│   │   └── unet2d.py                           # plain U-Net baseline
+│   ├── experiments/
+│   │   ├── run_mirror_study.py                 # oct-mirror-study (14 CLI flags)
+│   │   └── run_retina_compare.py               # oct-retina-compare
+│   ├── tools/eval_mirror.py                    # PSNR/SSIM/FWHM metric harness
+│   └── utils/                                  # seeding, run dirs, TIFF I/O, live plot
 └── tests/
-    ├── test_optimizations.py               # preprocessing + model validation
-    └── test_resunet_multilevel_1d.py       # model forward pass shape tests
+    ├── conftest.py                             # synthetic raw + .CLB fixtures
+    ├── test_pipeline.py                        # end-to-end preprocessing/dataset
+    ├── test_config_validation.py               # config consistency rules
+    ├── test_networks.py                        # model forward-pass shapes
+    └── test_optimizations.py                   # FFT/resample equivalence
 ```
-
-`experiments/` and `tools/` carry the only argparse-driven CLIs in the repo;
-`run_mirror_study.py` has 14 flags including `--smoke` and `--eval-only`.
 
 ---
 

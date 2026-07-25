@@ -4,9 +4,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from .losses import unpack_batch, compute_total_loss
-from .metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
 from octdenoiser.utils.helpers import nanmean
+
+from .losses import compute_total_loss, unpack_batch
+from .metrics import bg_bounds, roi_bounds, roi_snr_cnr, to_physical_intensity
 
 
 @torch.no_grad()

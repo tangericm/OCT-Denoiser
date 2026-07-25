@@ -1,7 +1,10 @@
 import os
+
 import numpy as np
 import tifffile as tiff
+
 from .run_manager import ensure_dir
+
 
 def _robust_scale(img: np.ndarray, out_max: float, p_lo: float, p_hi: float) -> np.ndarray:
     lo, hi = np.percentile(img, [p_lo, p_hi])

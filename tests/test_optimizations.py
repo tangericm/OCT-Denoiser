@@ -20,6 +20,7 @@ import time
 
 import numpy as np
 
+
 # ---------------------------------------------------------------------------
 # 1) Preprocessing equivalence: old single-FFT vs new batched-FFT
 # ---------------------------------------------------------------------------
@@ -28,7 +29,7 @@ def test_preprocessing_equivalence():
     Compare recon_bscan_from_spectrum (single) vs recon_bscan_batch (batched)
     on identical synthetic spectra.  Report max/mean absolute and relative error.
     """
-    from octdenoiser.preprocess import recon_bscan_from_spectrum, recon_bscan_batch
+    from octdenoiser.preprocess import recon_bscan_batch, recon_bscan_from_spectrum
 
     rng = np.random.default_rng(42)
     pixels, alines = 2048, 512
@@ -87,7 +88,7 @@ def benchmark_preprocessing():
     Deliberately NOT named test_* — it has no pass criterion, so collecting it
     as a test would report a meaningless pass. Run via __main__ only.
     """
-    from octdenoiser.preprocess import recon_bscan_from_spectrum, recon_bscan_batch
+    from octdenoiser.preprocess import recon_bscan_batch, recon_bscan_from_spectrum
 
     rng = np.random.default_rng(123)
     pixels, alines = 2048, 1024
@@ -132,13 +133,13 @@ def benchmark_preprocessing():
     print(f"  Old (3 x single FFT):  {t_old*1e3:.2f} ms")
     print(f"  New (batched FFT):     {t_new*1e3:.2f} ms")
     print(f"  FFT speedup:           {speedup:.2f}x")
-    print(f"  Note: Batched FFT may be slower in isolation due to FFTW plan overhead.")
-    print(f"  Real gains come from: cached LAPACK gttrs, pre-allocated buffers,")
-    print(f"  and precomputed broadcast vectors in the resampling hot path.")
+    print("  Note: Batched FFT may be slower in isolation due to FFTW plan overhead.")
+    print("  Real gains come from: cached LAPACK gttrs, pre-allocated buffers,")
+    print("  and precomputed broadcast vectors in the resampling hot path.")
 
     # Also benchmark the resampling operator (gttrs caching benefit)
+
     from octdenoiser.preprocess import _precompute_natural_cubic_uniform, resample_klinear_cubic_operator
-    import scipy.linalg as sla_bench
 
     rng2 = np.random.default_rng(77)
     pixels_r, alines_r = 2048, 1024
@@ -173,6 +174,7 @@ def test_resampling_cached():
     by comparing against scipy CubicSpline.
     """
     from scipy.interpolate import CubicSpline
+
     from octdenoiser.preprocess import _precompute_natural_cubic_uniform, resample_klinear_cubic_operator
 
     rng = np.random.default_rng(99)
@@ -218,6 +220,7 @@ def test_train_step_smoke():
     on a small synthetic batch. Verify no NaNs.
     """
     import torch
+
     from octdenoiser.engine.losses import charbonnier_loss, gradient_l1
 
     print("=" * 60)
@@ -264,7 +267,7 @@ def test_gaussian_window_invariants():
       b) Changing gap does NOT change peak widths.
       c) Windows are symmetric around the midpoint.
     """
-    from octdenoiser.preprocess import make_two_window_masks, gaussian_window_1d
+    from octdenoiser.preprocess import make_two_window_masks
 
     pixels = 2048
 

@@ -16,14 +16,15 @@ floor.
 """
 from __future__ import annotations
 
-import os
 import csv
+import os
+
 import numpy as np
 import torch
 
-from octdenoiser.networks import create_model
-from octdenoiser.engine.metrics import roi_bounds, bg_bounds, roi_snr_cnr, to_physical_intensity
 from octdenoiser.data.avg_targets import build_folder_sum
+from octdenoiser.engine.metrics import bg_bounds, roi_bounds, roi_snr_cnr, to_physical_intensity
+from octdenoiser.networks import create_model
 
 
 # ---------------------------------------------------------------------------
