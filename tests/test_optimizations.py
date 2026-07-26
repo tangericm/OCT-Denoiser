@@ -16,12 +16,10 @@ from __future__ import annotations
 
 import os
 import sys
-
-# Ensure project root is on sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 import time
+
 import numpy as np
+
 
 # ---------------------------------------------------------------------------
 # 1) Preprocessing equivalence: old single-FFT vs new batched-FFT
@@ -31,7 +29,7 @@ def test_preprocessing_equivalence():
     Compare recon_bscan_from_spectrum (single) vs recon_bscan_batch (batched)
     on identical synthetic spectra.  Report max/mean absolute and relative error.
     """
-    from preprocess import recon_bscan_from_spectrum, recon_bscan_batch
+    from octdenoiser.preprocess import recon_bscan_batch, recon_bscan_from_spectrum
 
     rng = np.random.default_rng(42)
     pixels, alines = 2048, 512
@@ -76,17 +74,21 @@ def test_preprocessing_equivalence():
 
     print(f"  Overall: {'PASS' if all_pass else 'FAIL'}")
     print()
+    assert all_pass, "batched FFT reconstruction must match single-spectrum path within 1e-5"
     return all_pass
 
 
 # ---------------------------------------------------------------------------
 # 2) Preprocessing microbenchmark
 # ---------------------------------------------------------------------------
-def test_preprocessing_benchmark():
+def benchmark_preprocessing():
     """
     Benchmark single-FFT vs batched-FFT reconstruction timing.
+
+    Deliberately NOT named test_* — it has no pass criterion, so collecting it
+    as a test would report a meaningless pass. Run via __main__ only.
     """
-    from preprocess import recon_bscan_from_spectrum, recon_bscan_batch
+    from octdenoiser.preprocess import recon_bscan_batch, recon_bscan_from_spectrum
 
     rng = np.random.default_rng(123)
     pixels, alines = 2048, 1024
@@ -131,13 +133,13 @@ def test_preprocessing_benchmark():
     print(f"  Old (3 x single FFT):  {t_old*1e3:.2f} ms")
     print(f"  New (batched FFT):     {t_new*1e3:.2f} ms")
     print(f"  FFT speedup:           {speedup:.2f}x")
-    print(f"  Note: Batched FFT may be slower in isolation due to FFTW plan overhead.")
-    print(f"  Real gains come from: cached LAPACK gttrs, pre-allocated buffers,")
-    print(f"  and precomputed broadcast vectors in the resampling hot path.")
+    print("  Note: Batched FFT may be slower in isolation due to FFTW plan overhead.")
+    print("  Real gains come from: cached LAPACK gttrs, pre-allocated buffers,")
+    print("  and precomputed broadcast vectors in the resampling hot path.")
 
     # Also benchmark the resampling operator (gttrs caching benefit)
-    from preprocess import _precompute_natural_cubic_uniform, resample_klinear_cubic_operator
-    import scipy.linalg as sla_bench
+
+    from octdenoiser.preprocess import _precompute_natural_cubic_uniform, resample_klinear_cubic_operator
 
     rng2 = np.random.default_rng(77)
     pixels_r, alines_r = 2048, 1024
@@ -172,7 +174,8 @@ def test_resampling_cached():
     by comparing against scipy CubicSpline.
     """
     from scipy.interpolate import CubicSpline
-    from preprocess import _precompute_natural_cubic_uniform, resample_klinear_cubic_operator
+
+    from octdenoiser.preprocess import _precompute_natural_cubic_uniform, resample_klinear_cubic_operator
 
     rng = np.random.default_rng(99)
     pixels = 2048
@@ -204,6 +207,7 @@ def test_resampling_cached():
     status = "PASS" if ok else "FAIL"
     print(f"  max_abs_err={max_abs:.2e}  mean_abs_err={mean_abs:.2e}  [{status}]")
     print()
+    assert ok, f"cached gttrs resample must match scipy CubicSpline within 1e-3, got max_abs={max_abs:.3e}"
     return ok
 
 
@@ -216,7 +220,8 @@ def test_train_step_smoke():
     on a small synthetic batch. Verify no NaNs.
     """
     import torch
-    from engine.losses import charbonnier_loss, gradient_l1
+
+    from octdenoiser.engine.losses import charbonnier_loss, gradient_l1
 
     print("=" * 60)
     print("TEST 4: Single Train-Step Smoke Test")
@@ -248,6 +253,7 @@ def test_train_step_smoke():
           f"grad={loss_grad.item():.6f}")
     print(f"  All finite: {all_finite}  [{'PASS' if all_finite else 'FAIL'}]")
     print()
+    assert all_finite, f"train step produced non-finite values (total_loss={total_loss.item()})"
     return all_finite
 
 
@@ -261,7 +267,7 @@ def test_gaussian_window_invariants():
       b) Changing gap does NOT change peak widths.
       c) Windows are symmetric around the midpoint.
     """
-    from preprocess import make_two_window_masks, gaussian_window_1d
+    from octdenoiser.preprocess import make_two_window_masks
 
     pixels = 2048
 
@@ -323,6 +329,7 @@ def test_gaussian_window_invariants():
 
     print(f"  Overall: {'PASS' if all_pass else 'FAIL'}")
     print()
+    assert all_pass, "Gaussian window invariants violated: sigma must not move peaks, gap must not change FWHM"
     return all_pass
 
 
@@ -337,7 +344,7 @@ def test_multilevel_windows():
       c) Sub-window centers span the parent's range.
       d) All sub-windows have valid shapes.
     """
-    from preprocess import make_multilevel_window_masks, make_two_window_masks
+    from octdenoiser.preprocess import make_multilevel_window_masks, make_two_window_masks
 
     pixels = 2048
     gap = 0.30
@@ -393,6 +400,7 @@ def test_multilevel_windows():
 
     print(f"  Overall: {'PASS' if all_pass else 'FAIL'}")
     print()
+    assert all_pass, "multi-level window generation violated count/width/span/shape invariants"
     return all_pass
 
 
@@ -413,7 +421,7 @@ def test_multilevel_model_forward():
     all_pass = True
 
     # Standard model: [B, 2, H, W] -> [B, 1, H, W]
-    from networks import create_model
+    from octdenoiser.networks import create_model
     model_std = create_model("resunet_pseudo3d", base=16)
     x_std = torch.randn(1, 2, 32, 32)
     y_std = model_std(x_std)
@@ -444,6 +452,7 @@ def test_multilevel_model_forward():
 
     print(f"  Overall: {'PASS' if all_pass else 'FAIL'}")
     print()
+    assert all_pass, "multi-level model forward/backward pass failed shape or finiteness checks"
     return all_pass
 
 
@@ -478,7 +487,7 @@ if __name__ == "__main__":
 
     if mode in ("all", "numpy"):
         results["preprocess_equiv"] = test_preprocessing_equivalence()
-        test_preprocessing_benchmark()
+        benchmark_preprocessing()
         results["resampling_cached"] = test_resampling_cached()
         results["gaussian_window"] = test_gaussian_window_invariants()
         results["multilevel_windows"] = test_multilevel_windows()

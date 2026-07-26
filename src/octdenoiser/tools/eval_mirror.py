@@ -1,0 +1,313 @@
+"""Evaluate mirror-denoising configs against a clean temporal-average reference.
+
+For a held-out mirror folder, the clean reference is the full-frame temporal
+mean of the linear full-band magnitude. Each trained config is run on every
+frame of the held-out folder and scored against that reference in a common,
+GT-defined display domain so numbers are comparable across configs.
+
+Metrics (per frame, then averaged):
+  PSNR, SSIM        vs clean reference (log domain, GT-normalized to [0,1])
+  bg_sigma          background noise std in the GT-normalized log domain (lower=better)
+  SNR, CNR (dB)     mirror-peak ROI, computed in linear intensity
+  psf_fwhm          axial FWHM (px) of the peak; compare to reference FWHM
+
+A "noisy input" row (raw single full-band frame) is included as the no-denoise
+floor.
+"""
+from __future__ import annotations
+
+import csv
+import os
+
+import numpy as np
+import torch
+
+from octdenoiser.data.avg_targets import build_folder_sum
+from octdenoiser.engine.metrics import bg_bounds, roi_bounds, roi_snr_cnr, to_physical_intensity
+from octdenoiser.networks import create_model
+
+
+# ---------------------------------------------------------------------------
+# Small dependency-free SSIM (Gaussian window, standard constants)
+# ---------------------------------------------------------------------------
+def _gaussian_kernel(size: int = 11, sigma: float = 1.5) -> np.ndarray:
+    ax = np.arange(size) - (size - 1) / 2.0
+    g = np.exp(-(ax ** 2) / (2 * sigma ** 2))
+    g = g / g.sum()
+    return np.outer(g, g).astype(np.float64)
+
+
+def _filter2(img: np.ndarray, k: np.ndarray) -> np.ndarray:
+    # separable-equivalent full 2D convolution via FFT (valid region trimmed)
+    from scipy.signal import fftconvolve
+    return fftconvolve(img, k, mode="valid")
+
+
+def ssim(a: np.ndarray, b: np.ndarray, data_range: float = 1.0) -> float:
+    a = a.astype(np.float64); b = b.astype(np.float64)
+    k = _gaussian_kernel()
+    c1 = (0.01 * data_range) ** 2
+    c2 = (0.03 * data_range) ** 2
+    mu_a = _filter2(a, k); mu_b = _filter2(b, k)
+    mu_a2, mu_b2, mu_ab = mu_a * mu_a, mu_b * mu_b, mu_a * mu_b
+    sa = _filter2(a * a, k) - mu_a2
+    sb = _filter2(b * b, k) - mu_b2
+    sab = _filter2(a * b, k) - mu_ab
+    num = (2 * mu_ab + c1) * (2 * sab + c2)
+    den = (mu_a2 + mu_b2 + c1) * (sa + sb + c2)
+    return float(np.mean(num / den))
+
+
+def psnr(a: np.ndarray, b: np.ndarray, data_range: float = 1.0) -> float:
+    mse = float(np.mean((a - b) ** 2))
+    if mse <= 0:
+        return float("inf")
+    return 10.0 * np.log10((data_range ** 2) / mse)
+
+
+def _axial_fwhm(img_lin: np.ndarray, peak_row: int, half_span: int = 40) -> float:
+    """Axial FWHM in pixels of the peak near `peak_row`, from linear intensity.
+
+    The half-maximum is taken above a robust background floor (median of the
+    profile outside the peak window), and the width is the contiguous
+    crossing-to-crossing span around the peak with sub-pixel linear
+    interpolation.
+
+    Returns NaN when the profile never falls below the half-maximum inside the
+    window, i.e. the width is not measurable at this span. The previous
+    implementation returned `above.max() - above.min() + 1` over *all* samples
+    above half-max, which silently reported the full window span (2*half_span)
+    whenever a pedestal or side lobe sat above the half-max line.
+    """
+    prof = np.asarray(img_lin, dtype=np.float64).mean(axis=1)
+    n = prof.size
+    lo = max(0, peak_row - half_span)
+    hi = min(n, peak_row + half_span)
+    seg = prof[lo:hi]
+    if seg.size < 3:
+        return float("nan")
+
+    # Measure the half-maximum above the noise pedestal, not above zero.
+    outside = np.concatenate([prof[:lo], prof[hi:]])
+    base = float(np.median(outside)) if outside.size else float(seg.min())
+    seg = seg - base
+
+    pk_i = int(np.argmax(seg))
+    pk = float(seg[pk_i])
+    if not np.isfinite(pk) or pk <= 0:
+        return float("nan")
+    half = pk / 2.0
+
+    def _crossing(indices) -> float | None:
+        """First half-max crossing walking outward from the peak, or None."""
+        prev = pk_i
+        for i in indices:
+            if seg[i] < half:
+                y0, y1 = seg[prev], seg[i]
+                t = (y0 - half) / (y0 - y1) if y0 != y1 else 0.0
+                return prev + t * (i - prev)
+            prev = i
+        return None
+
+    left = _crossing(range(pk_i - 1, -1, -1))
+    right = _crossing(range(pk_i + 1, seg.size))
+    if left is None or right is None:
+        return float("nan")
+    return float(right - left)
+
+
+# ---------------------------------------------------------------------------
+def _model_kwargs_for_cfg(cfg, n_sub: int) -> dict:
+    """Mirror engine/train.py model-kwargs logic so eval builds an identical model."""
+    kw = {"base": cfg["base"]}
+    if cfg["model_name"] == "resunet_pseudo3d_multilevel":
+        kw["n_sub_channels"] = 2 * n_sub
+    else:
+        kw["in_ch"] = 1 if cfg["input_mode"] == "fullband" else (2 + (2 * n_sub if n_sub > 0 else 0))
+    return kw
+
+
+def _save_gt_clean(test_fs, save_dir: str) -> None:
+    """Save the shared clean reference (temporal-average, GT display domain) once."""
+    from octdenoiser.preprocess import BscanProcessor
+    from octdenoiser.utils.io_tiff import save_tiff_stack
+    proc = BscanProcessor(test_fs)
+    sum_mag, N = build_folder_sum(test_fs)
+    clean_lin = (sum_mag / N).astype(np.float64)
+    gt_log = np.log10(clean_lin + float(proc.cfg.log_eps))
+    lo, hi = np.percentile(gt_log, [1, 99])
+    gt_disp = np.clip((gt_log - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
+    os.makedirs(save_dir, exist_ok=True)
+    save_tiff_stack(os.path.join(save_dir, "gt_clean.tiff"),
+                    gt_disp.astype(np.float32)[None, ...], dtype="float32")
+
+
+def _write_perframe_csv(path: str, per_frame: dict) -> None:
+    """Write one row per held-out frame: frame index + each metric."""
+    cols = ["frame", "psnr", "ssim", "bg_sigma", "snr", "cnr", "psf_fwhm"]
+    n = len(per_frame["psnr"])
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="") as f:
+        wtr = csv.DictWriter(f, fieldnames=cols)
+        wtr.writeheader()
+        for i in range(n):
+            wtr.writerow({"frame": i, **{k: per_frame[k][i] for k in cols if k != "frame"}})
+
+
+@torch.no_grad()
+def evaluate_config(cfg: dict, ckpt_path: str, test_fs, device: str,
+                    peak_row: int, sig_y0: int, sig_y1: int,
+                    avg_leave_one_out: bool = True,
+                    save_dir: str | None = None, tag: str | None = None) -> dict:
+    """Run one config's checkpoint over the held-out folder; return mean metrics.
+
+    If save_dir is given, also writes prediction TIFFs, a [noisy|pred|GT]
+    comparison stack, and a per-frame metrics CSV for visual assessment.
+    """
+    from octdenoiser.preprocess import BscanProcessor
+    from octdenoiser.utils.io_tiff import save_tiff_stack
+
+    proc = BscanProcessor(test_fs)
+    paths = proc.bscan_paths
+    n_sub = getattr(test_fs, "n_sub_windows", 0)
+
+    # Clean reference: full-frame temporal mean of linear magnitude.
+    sum_mag, N = build_folder_sum(test_fs)
+    clean_lin = (sum_mag / N).astype(np.float64)
+    log_eps = float(proc.cfg.log_eps)
+    gt_log = np.log10(clean_lin + log_eps)
+    lo, hi = np.percentile(gt_log, [1, 99])
+    rng = max(hi - lo, 1e-6)
+    def gt_norm(x_log):  # common GT-defined [0,1] display scaling
+        return np.clip((x_log - lo) / rng, 0.0, 1.0)
+    gt_disp = gt_norm(gt_log)
+
+    H, W = clean_lin.shape
+    sig_roi = roi_bounds(H, W, sig_y0, sig_y1)
+    sy0, sy1, sx0, sx1 = sig_roi
+    bg_roi = bg_bounds(H, W, x0=sx0, x1=sx1)
+    by0, by1, bx0, bx1 = bg_roi
+
+    model = None
+    if ckpt_path is not None:
+        model = create_model(cfg["model_name"], **_model_kwargs_for_cfg(cfg, n_sub)).to(device)
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        model.load_state_dict(ckpt["model"], strict=True)
+        model.eval()
+
+    acc = {k: [] for k in ("psnr", "ssim", "bg_sigma", "snr", "cnr", "psf_fwhm")}
+    save = save_dir is not None and model is not None
+    pred_pages: list = []       # predicted display frames
+    compare_pages: list = []    # [noisy | pred | GT] triptych frames
+
+    for i, p in enumerate(paths):
+        out = proc.process_one(p, frame_idx=i, need_linear_full=True)
+        mag_i = out["target_full_linear"].astype(np.float64)
+
+        # Per-frame averaged-target normalization (matches training target domain).
+        if avg_leave_one_out and N > 1:
+            avg_i = (sum_mag - mag_i) / (N - 1)
+        else:
+            avg_i = clean_lin
+        t = np.log10(avg_i + log_eps)
+        tmu, tsd = float(t.mean()), float(t.std()) + 1e-6
+
+        if model is None:
+            # noisy-input floor: the raw single full-band frame
+            pred_lin = mag_i
+        else:
+            if cfg["input_mode"] == "fullband":
+                x = out["target_full"][None, None, ...]
+            else:
+                chans = [out["input_w1"], out["input_w2"]]
+                if "input_sub_windows" in out:
+                    chans.extend(out["input_sub_windows"])
+                x = np.stack(chans, axis=0)[None, ...]
+            xt = torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32)).to(device)
+            pred_norm = model(xt).cpu().numpy()[0, 0]
+            # Back-transform uses the normalization the network was TRAINED to output:
+            # full-band-target configs use the single-frame stats; average-target configs
+            # use the averaged-target stats.
+            if cfg.get("target_mode", "average") == "fullband":
+                bmu, bsd = float(out["target_mu"]), float(out["target_sd"])
+            else:
+                bmu, bsd = tmu, tsd
+            pred_lin = to_physical_intensity(pred_norm, {"target_mu": bmu, "target_sd": bsd, "log_eps": log_eps})
+
+        pred_log = np.log10(np.maximum(pred_lin, 0) + log_eps)
+        pred_disp = gt_norm(pred_log)
+
+        acc["psnr"].append(psnr(pred_disp, gt_disp, 1.0))
+        acc["ssim"].append(ssim(pred_disp, gt_disp, 1.0))
+        acc["bg_sigma"].append(float(np.std(pred_disp[by0:by1, bx0:bx1])))
+        s, c = roi_snr_cnr(pred_lin.astype(np.float32), sig_roi, bg_roi, sig_stat="max")
+        acc["snr"].append(s); acc["cnr"].append(c)
+        acc["psf_fwhm"].append(_axial_fwhm(pred_lin, peak_row))
+
+        if save:
+            noisy_disp = gt_norm(np.log10(mag_i + log_eps))
+            pred_pages.append(pred_disp.astype(np.float32))
+            compare_pages.append(np.concatenate(
+                [noisy_disp, pred_disp, gt_disp], axis=1).astype(np.float32))
+
+    if save:
+        stem = tag or cfg.get("model_name", "config")
+        os.makedirs(save_dir, exist_ok=True)
+        # Prediction stack (uint16). Data already in the common GT [0,1] display
+        # domain; p_lo/p_hi=0/100 makes this an exact [0,1]->[0,65535] map (no
+        # per-frame contrast stretch), so frames stay comparable.
+        save_tiff_stack(os.path.join(save_dir, f"{stem}_pred.tiff"),
+                        np.stack(pred_pages, axis=0), dtype="uint16",
+                        scale_per_slice=False, p_lo=0.0, p_hi=100.0)
+        # [noisy | pred | GT] side-by-side, same fixed [0,1] mapping.
+        save_tiff_stack(os.path.join(save_dir, f"{stem}_compare.tiff"),
+                        np.stack(compare_pages, axis=0), dtype="uint16",
+                        scale_per_slice=False, p_lo=0.0, p_hi=100.0)
+        _write_perframe_csv(os.path.join(save_dir, f"{stem}_perframe.csv"), acc)
+
+    return {k: float(np.nanmean(v)) for k, v in acc.items()}
+
+
+def evaluate_all(configs: list, ckpts: dict, test_fs, device: str,
+                 peak_row: int, sig_y0: int, sig_y1: int, out_csv: str,
+                 avg_leave_one_out: bool = True, save_dir: str | None = None) -> list:
+    """Score every config + a noisy-input floor; write and return a summary table.
+
+    If save_dir is given, each config also gets prediction/comparison TIFFs and a
+    per-frame metrics CSV, plus a single shared gt_clean.tiff reference.
+    """
+    rows = []
+    # Noisy input floor (no model)
+    print("[eval] noisy-input floor ...")
+    m = evaluate_config({"model_name": "dncnn", "base": 1, "input_mode": "fullband"},
+                        None, test_fs, device, peak_row, sig_y0, sig_y1, avg_leave_one_out)
+    rows.append({"tag": "noisy_input", **m})
+
+    for tag, cfg in configs:
+        ck = ckpts.get(tag)
+        if not ck or not os.path.exists(ck):
+            print(f"[eval] SKIP {tag} (missing checkpoint {ck})")
+            continue
+        print(f"[eval] {tag}: {cfg['model_name']} input={cfg['input_mode']} target={cfg['target_mode']}")
+        m = evaluate_config(cfg, ck, test_fs, device, peak_row, sig_y0, sig_y1, avg_leave_one_out,
+                            save_dir=save_dir, tag=tag)
+        rows.append({"tag": tag, **m})
+
+    if save_dir is not None:
+        _save_gt_clean(test_fs, save_dir)
+
+    cols = ["tag", "psnr", "ssim", "bg_sigma", "snr", "cnr", "psf_fwhm"]
+    os.makedirs(os.path.dirname(out_csv), exist_ok=True)
+    with open(out_csv, "w", newline="") as f:
+        wtr = csv.DictWriter(f, fieldnames=cols)
+        wtr.writeheader()
+        for r in rows:
+            wtr.writerow({c: r.get(c) for c in cols})
+
+    print("\n=== MIRROR STUDY RESULTS (held-out folder) ===")
+    print(f"{'config':<14}{'PSNR':>8}{'SSIM':>8}{'bg_sig':>9}{'SNR_dB':>9}{'CNR_dB':>9}{'FWHM':>7}")
+    for r in rows:
+        print(f"{r['tag']:<14}{r['psnr']:>8.2f}{r['ssim']:>8.4f}{r['bg_sigma']:>9.4f}"
+              f"{r['snr']:>9.2f}{r['cnr']:>9.2f}{r['psf_fwhm']:>7.1f}")
+    print(f"\n[OK] wrote {out_csv}")
+    return rows

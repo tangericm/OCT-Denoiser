@@ -1,5 +1,9 @@
 # OCT Denoiser
 
+[![CI](https://github.com/tangericm/OCT-Denoiser/actions/workflows/ci.yml/badge.svg)](https://github.com/tangericm/OCT-Denoiser/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
 Deep learning pipeline for denoising OCT B-scans using a ResUNet with pseudo-3D spectral stem. Raw `.raw` spectral data is preprocessed on-the-fly (k-linearisation → spectral windowing → IFFT → log compress → z-score) and fed to the network as dual-channel (or multi-level sub-window) inputs.
 
 **Author:** Eric Tang (tangericm) · eric.tang22@gmail.com
@@ -28,9 +32,27 @@ reference on each:
 A run dedicated to a single volume (`window_sigma 0.03`, `gap 0.60`) reaches
 **+16.45 dB SNR** and **+12.27 dB CNR** averaged over 64 frames.
 
-Resolution is preserved rather than smoothed away: on a mirror phantom with a known
-point spread function, the method measures a **PSF FWHM of 8.0 px** against 8.45 px for
-the noisy input, the narrowest of the architectures compared.
+> **Numbers pending regeneration.** The table above was produced before two
+> metric fixes: ground-truth SNR was computed with `sig_stat="max"` while
+> prediction SNR used `"p99.99"`, so ΔSNR was a difference of two different
+> estimators — and, since `max ≥ p99.99`, an *understated* one. The axial-FWHM
+> estimator also saturated at the search-window edge. Both are fixed; these
+> results will be re-run and replaced.
+
+**See [docs/FINDINGS.md](docs/FINDINGS.md)** for the measured study that followed:
+supervision schemes compared against near-clean references, detector noise
+calibration, the networks-versus-averaging control, and the metric caveats —
+including which earlier claims measurement overturned.
+
+Headline results from that study:
+
+- The full-band target **contains** its own input, leaving speckle correlated at
+  +0.138 against +0.003 for a clean pairing — the dominant defect in the
+  original method.
+- Contiguous sub-bands cost **2.43×** the axial PSF width; full-bandwidth frame
+  pairing costs none.
+- **A single network pass is worth roughly 8–16 averaged frames.**
+- PSNR and SSIM reward blur; a residual-structure test catches what they miss.
 
 > Display note: reference and prediction above are rendered through **one shared
 > window** with a shared gamma. The black point is anchored to the prediction's 1st
@@ -42,34 +64,55 @@ the noisy input, the narrowest of the architectures compared.
 
 ## Environment Setup
 
-Python 3.14 · PyTorch 2.10.0+cu128 · CUDA required for practical training
+Python ≥3.10 · PyTorch ≥2.4 · CUDA required for practical training
+
+Install the accelerator build of torch first, then the package. `torch` is
+deliberately not pinned to a CUDA index in `pyproject.toml`, so CPU-only
+environments (including CI) are not forced to download multi-GB wheels.
 
 ```bash
-conda create --name OCTDenoiser python=3.14
+conda create --name OCTDenoiser python=3.12
 conda activate OCTDenoiser
+
+# GPU (swap cu128 -> cpu for a CPU-only install)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
+
+pip install -e ".[dev]"        # drop [dev] if you don't need the test tooling
 ```
+
+This installs the `octdenoiser` package and the `oct-*` commands below.
 
 ---
 
 ## Quick Start
 
+| Command | Does |
+|---------|------|
+| `oct-train` | training |
+| `oct-predict --checkpoint <path>` | inference from a checkpoint |
+| `oct-tune` | Optuna window-parameter search |
+| `oct-mirror-study` | mirror-phantom baseline study (15 CLI flags) |
+| `oct-retina-compare` | qualitative retina comparison |
+
 ### 1. Configure your dataset
 
-Edit the `USER CONFIGURATION` section in [model_train.py](model_train.py):
+Edit the `USER CONFIGURATION` section in
+[src/octdenoiser/cli/train.py](src/octdenoiser/cli/train.py):
 
 - Set `root_folder` / `data_folder` to point at your `bscan*.raw` files
 - Set `pixels` / `alines` to match your OCT system
 - Adjust `crop_depth`, `window_sigma`, and `gap` as needed
-- Choose `model_name`:
-  - `"resunet_pseudo3d"` — standard 2-channel input (no sub-windows)
+- Choose `model_name` — nine are registered; `octdenoiser.networks.list_models()` enumerates them:
+  - `"resunet_pseudo3d"` — the baseline (7.23M params)
   - `"resunet_pseudo3d_multilevel"` — multi-level input (requires `n_sub_windows > 0`)
+  - `"nafnet"`, `"restormer"`, `"ffc_resunet"`, `"aniso_resunet"` — modern backbones
+  - `"dncnn"`, `"unet2d"` — simple reference baselines
+  - `"deform_fusion"` — multi-frame; consumes K frames, so not like-for-like
 
 ### 2. Train
 
 ```bash
-python model_train.py
+oct-train
 ```
 
 Outputs written to `runs/<experiment_name>/<timestamp>/`:
@@ -84,28 +127,51 @@ Outputs written to `runs/<experiment_name>/<timestamp>/`:
 
 ### 3. Inference from a checkpoint
 
-Edit the `USER CONFIGURATION` section in [model_predict.py](model_predict.py) with the checkpoint path and matching `FolderSpec`, then:
+Edit the `USER CONFIGURATION` section in
+[src/octdenoiser/cli/predict.py](src/octdenoiser/cli/predict.py) so the model and
+`FolderSpec` match the checkpoint, then pass the checkpoint path:
 
 ```bash
-python model_predict.py
+oct-predict --checkpoint runs/OCT-Denoiser/<timestamp>/checkpoints/best.pt
 ```
+
+`--outdir` defaults to `<run_dir>/predictions`.
+
+> Calibration is **per instrument**. Maestro2 and Maestro3 ship different `.CLB`
+> files carrying different k-linearisation LUTs, and applying the wrong one
+> resamples onto the wrong k-grid — the reconstruction still looks plausible but
+> the depth scale and PSF are wrong, with no error raised. `root_folder` must
+> point at the matching instrument directory, or set `FolderSpec.clb_path`
+> explicitly.
 
 ### 4. Hyperparameter tuning (optional)
 
 Tune `window_sigma` and `gap` with Optuna:
 
 ```bash
-python tune.py
+oct-tune
 ```
 
-Results are saved as `runs/optuna/<timestamp>/study_results.csv`.
+Results are saved as `runs/optuna/optuna_tune_<timestamp>/study_results.csv`.
 
 ### 5. Sanity checks
 
 ```bash
-python tests/test_optimizations.py          # preprocessing + model forward pass
-python -m compileall .                      # syntax check (no data needed)
+pytest                            # full suite; needs no OCT data
+ruff check .                      # lint
+mypy                              # types
+python -m compileall -q src tests # syntax
 ```
+
+The suite runs entirely on synthesised raw interferograms and a synthetic `.CLB`
+(see [tests/conftest.py](tests/conftest.py)), so it works on a clean checkout
+with no instrument data. Fringes are generated against the inverse resampling
+LUT, matching the fact that real spectrometers sample linearly in wavelength.
+
+> `compileall` descends into `.git/refs/`, so a branch whose name ends in `.py`
+> gets parsed as Python source and fails. Three such branches existed and have
+> been pruned; prefer the explicit `src tests` form above so the check cannot
+> break again.
 
 ---
 
@@ -113,33 +179,60 @@ python -m compileall .                      # syntax check (no data needed)
 
 ```
 OCT-Denoiser/
-├── model_train.py                          # training entry point
-├── model_predict.py                        # standalone inference
-├── preprocess.py                           # BscanProcessor: raw -> B-scan tensor
-├── tune.py                                 # Optuna window parameter search
-├── configs/default.py                      # TrainConfig, FolderSpec dataclasses
-├── data/
-│   ├── dataset.py                          # RawBscanDataset (lazy init, LRU cache)
-│   └── datamodule.py                       # DataLoader factory
-├── engine/
-│   ├── train.py                            # AMP training loop, checkpointing
-│   ├── eval.py                             # patch + full-frame validation
-│   ├── infer.py                            # raw -> TIFF inference pipeline
-│   ├── losses.py                           # Charbonnier + gradient L1
-│   ├── metrics.py                          # SNR/CNR (physical domain)
-│   └── early_stopping.py                   # patience-based early stopping
-├── networks/
-│   ├── registry.py                         # @register_model decorator
-│   ├── resunet_pseudo3d.py                 # base ResUNet with Pseudo-3D stem
-│   └── resunet_pseudo3d_multilevel.py      # + multi-level spectral input
-├── utils/
-│   ├── helpers.py                          # seed_all, save_json, nanmean
-│   ├── run_manager.py                      # run directory management
-│   ├── io_tiff.py                          # TIFF stack I/O
-│   └── live_plot.py                        # live loss curve (PNG + optional window)
-└── tests/
-    ├── test_optimizations.py               # preprocessing + model validation
-    └── test_resunet_multilevel_1d.py       # model forward pass shape tests
+├── pyproject.toml                              # packaging, ruff/mypy/pytest config
+├── src/octdenoiser/
+│   ├── preprocess.py                           # BscanProcessor: raw -> B-scan tensor
+│   ├── cli/
+│   │   ├── train.py                            # oct-train
+│   │   ├── predict.py                          # oct-predict
+│   │   └── tune.py                             # oct-tune
+│   ├── configs/default.py                      # TrainConfig, FolderSpec (+ validation)
+│   ├── data/
+│   │   ├── dataset.py                          # RawBscanDataset (lazy init, LRU cache)
+│   │   ├── datamodule.py                       # DataLoader factory
+│   │   └── avg_targets.py                      # temporal-average target cache
+│   ├── engine/
+│   │   ├── train.py                            # AMP training loop, checkpointing
+│   │   ├── eval.py                             # patch + full-frame validation
+│   │   ├── infer.py                            # raw -> TIFF inference pipeline
+│   │   ├── losses.py                           # Charbonnier + gradient L1
+│   │   ├── metrics.py                          # SNR/CNR (physical domain)
+│   │   └── early_stopping.py                   # patience-based early stopping
+│   ├── networks/
+│   │   ├── registry.py                         # @register_model decorator
+│   │   ├── build.py                            # single source of truth for input width
+│   │   ├── resunet_pseudo3d.py                 # base ResUNet with Pseudo-3D stem
+│   │   ├── resunet_pseudo3d_multilevel.py      # + multi-level spectral input
+│   │   ├── nafnet.py  restormer.py             # modern restoration backbones
+│   │   ├── ffc_resunet.py  aniso_resunet.py    # Fourier / anisotropic variants
+│   │   ├── deform_fusion.py                    # multi-frame deformable fusion
+│   │   ├── dncnn.py                            # DnCNN baseline
+│   │   └── unet2d.py                           # plain U-Net baseline
+│   ├── physics/
+│   │   ├── noise_model.py                      # photon-transfer-curve calibration
+│   │   └── masks.py                            # complementary spectral masks
+│   ├── eval/
+│   │   ├── reference.py                        # registration + near-clean averaging
+│   │   └── selfval.py                          # held-out-mask self-validation
+│   ├── experiments/
+│   │   ├── run_mirror_study.py                 # oct-mirror-study (15 CLI flags)
+│   │   ├── run_retina_compare.py               # oct-retina-compare
+│   │   ├── run_supervision_ablation.py         # schemes A-D head to head
+│   │   ├── run_fair_eval.py                    # scoring vs near-clean references
+│   │   ├── run_controlled_comparison.py        # multi-seed B vs C
+│   │   └── run_architecture_sweep.py           # backbones at fixed supervision
+│   ├── tools/eval_mirror.py                    # PSNR/SSIM/FWHM metric harness
+│   └── utils/                                  # seeding, run dirs, TIFF I/O, live plot
+└── tests/                                      # 220 tests, no OCT data required
+    ├── conftest.py                             # synthetic raw + .CLB fixtures
+    ├── test_pipeline.py                        # end-to-end preprocessing/dataset
+    ├── test_config_validation.py               # config consistency rules
+    ├── test_networks.py                        # model forward-pass shapes
+    ├── test_model_build.py                     # input width follows supervision
+    ├── test_paired_dataset.py                  # frame-pair index + split isolation
+    ├── test_reference.py                       # registration + aligned scoring
+    ├── test_selfval.py                         # held-out-mask metric
+    └── test_optimizations.py                   # FFT/resample equivalence
 ```
 
 ---
@@ -148,34 +241,47 @@ OCT-Denoiser/
 
 All configuration is defined in Python dataclasses — no YAML or JSON files.
 
+Two columns below: the **dataclass default** in `configs/default.py`, and the
+value **actually shipped** in `src/octdenoiser/cli/train.py`'s `USER CONFIGURATION` block.
+They differ; the shipped column is the one to reproduce.
+
+The shipped block carries the hyperparameters that produced the results table, but
+declares **one** `FolderSpec` while that table reports four acquisitions — reproducing
+it means appending the other three specs. The per-acquisition paths are not committed,
+per the no-hardcoded-absolute-paths rule.
+
 ### `FolderSpec` — per-dataset specification
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `root_folder` | — | Root path containing the dataset folder and `.CLB` file |
-| `data_folder` | — | Subfolder containing `bscan*.raw` files |
-| `pixels` | — | Spectral samples per A-line (e.g. 2048) |
-| `alines` | — | A-lines per B-scan (e.g. 1024) |
-| `crop_depth` | `(1024, 2048)` | `[z0, z1)` pixel crop after IFFT |
-| `window_sigma` | `0.08` | Gaussian spectral window width |
-| `gap` | `0.15` | Separation between the two window centres |
-| `gap_offset` | `0.0` | Shared shift of both window centres |
-| `n_sub_windows` | `0` | Sub-windows per parent; `0` = disabled |
-| `sub_window_spread` | `2.0` | Sub-window centre spread in sigma units |
+| Field | Default | Shipped | Description |
+|-------|---------|---------|-------------|
+| `root_folder` | — | `images\Maestro3` | Root path containing the dataset folder and `.CLB` file |
+| `data_folder` | — | `6mm_1024Aline` | Subfolder containing `bscan*.raw` files |
+| `pixels` | — | `2048` | Spectral samples per A-line |
+| `alines` | — | `1024` | A-lines per B-scan |
+| `crop_depth` | `(1024, 2048)` | `(0, 1024)` | `[z0, z1)` pixel crop after IFFT |
+| `window_sigma` | `0.08` | `0.05` | Gaussian spectral window width |
+| `gap` | `0.15` | `0.60` | Separation between the two window centres |
+| `gap_offset` | `0.0` | `0.015` | Shared shift of both window centres |
+| `n_sub_windows` | `0` | `2` | Sub-windows per parent; `0` = disabled |
+| `sub_window_spread` | `2.0` | `0.5` | Sub-window centre spread in sigma units |
 
 ### `TrainConfig` — training hyperparameters
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `model_name` | `"resunet_pseudo3d"` | Model to train |
-| `base` | `64` | Base channel width |
-| `epochs` | `300` | Maximum training epochs |
-| `lr` | `3e-4` | AdamW learning rate |
-| `batch_size` | `32` | Training batch size |
-| `patch_mode` | `"patch"` | `"patch"` = random crop; `"strip"` = full-depth A-line |
-| `w_charb` / `w_grad` | `0.8 / 0.5` | Charbonnier and gradient loss weights |
-| `early_stop_patience` | `5` | Validation checks without improvement before stopping |
-| `snr_sig_stat` | `"max"` | Signal statistic: `"max"` or `"p<N>"` e.g. `"p99.99"` |
+| Field | Default | Shipped | Description |
+|-------|---------|---------|-------------|
+| `model_name` | `"resunet_pseudo3d"` | `"resunet_pseudo3d_multilevel"` | Model to train |
+| `base` | `64` | `32` | Base channel width |
+| `epochs` | `300` | `300` | Maximum training epochs |
+| `lr` | `3e-4` | `3e-4` | AdamW learning rate |
+| `weight_decay` | `5e-5` | `8e-5` | AdamW weight decay |
+| `batch_size` | `32` | `12` | Training batch size |
+| `patch_mode` | `"patch"` | `"strip"` | `"patch"` = random crop; `"strip"` = full-depth A-line |
+| `patch_h` / `patch_w` | `128 / 128` | `288 / 32` | Patch geometry |
+| `patches_per_frame` | `16` | `32` | Patches sampled per frame |
+| `w_charb` / `w_grad` | `0.8 / 0.5` | `0.0103 / 0.0102` | Charbonnier and gradient loss weights |
+| `early_stop_patience` | `5` | `20` | Validation checks without improvement before stopping |
+| `snr_sig_stat` | `"max"` | `"p99.99"` | Signal statistic: `"max"` or `"p<N>"` |
+| `snr_sig_y0` / `snr_sig_y1` | `111 / 600` | `111 / 600` | SNR/CNR signal ROI rows |
 
 ---
 
