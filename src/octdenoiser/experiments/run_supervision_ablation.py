@@ -112,9 +112,21 @@ def evaluate(model, root: str, device: str, scheme: str, n_frames: int = 12) -> 
         step = max(1, len(proc.bscan_paths) // n_frames)
         for i in range(0, min(len(proc.bscan_paths), n_frames * step), step):
             out = proc.process_one(proc.bscan_paths[i], frame_idx=i, fft_workers=-1)
-            # Scheme B is trained on a sub-band, so it must be fed one.
-            src = out["input_w1"] if scheme == "B_complementary" else out["target_full"]
-            x = torch.from_numpy(src[None, None].astype(np.float32)).to(device)
+            # Each scheme must be fed the input it was TRAINED on. A consumes
+            # both sub-bands (its Pseudo3DStem treats them as a depth-2 volume,
+            # so a 1-channel input fails outright); B consumes one sub-band;
+            # the frame-pair schemes consume a full-band frame.
+            if scheme == "A_bandgap_fullband":
+                chans = [out["input_w1"], out["input_w2"]]
+            elif scheme == "B_complementary":
+                chans = [out["input_w1"]]
+            else:
+                chans = [out["target_full"]]
+
+            # The reference for the metrics is the model's OWN first input
+            # channel, so each scheme is judged against what it actually saw.
+            src = chans[0]
+            x = torch.from_numpy(np.stack(chans)[None].astype(np.float32)).to(device)
             pred = model(x)[0, 0].float().cpu().numpy()
 
             st_in, sp_in = _parts(src[TISSUE])
