@@ -247,7 +247,12 @@ def main():
               f"unaligned {m['psnr_unaligned']:.3f} / {m['ssim_unaligned']:.4f}   "
               f"delta {m['d_psnr']:+.3f} dB", flush=True)
 
-    print("\n" + "=" * 96)
+    # Persist BEFORE formatting anything. Scoring is the expensive part; a
+    # summary-printing bug should never be able to throw it away.
+    save_json(os.path.join(args.out, "rescored.json"), results)
+    print(f"\nwrote {os.path.join(args.out, 'rescored.json')}")
+
+    print("=" * 96)
     print(f"{'architecture':<22}{'PSNR now':>10}{'PSNR was':>10}{'delta':>9}"
           f"{'SSIM now':>10}{'SSIM was':>10}{'delta':>9}{'frames':>8}")
     print("=" * 96)
@@ -262,13 +267,11 @@ def main():
               f"{m['d_ssim']:>+9.4f}{args.n_frames if name in MULTI_FRAME else 1:>8}")
 
     deltas = np.array([results[n]["d_psnr"] for n in models])
+    # np.ptp(), not deltas.ptp(): the ndarray method was removed in NumPy 2.0.
     print(f"\ndelta spread across models: {deltas.min():+.3f} to {deltas.max():+.3f} dB "
-          f"(range {deltas.ptp():.3f})")
+          f"(range {np.ptp(deltas):.3f})")
     print("A uniform delta would mean the old ordering survived the bug; a spread")
     print("means part of the old ordering was an artefact of the misalignment.")
-
-    save_json(os.path.join(args.out, "rescored.json"), results)
-    print(f"wrote {os.path.join(args.out, 'rescored.json')}")
 
     if not args.no_panels:
         print("\nqualitative panels", flush=True)
