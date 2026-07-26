@@ -213,3 +213,86 @@ class PairedFrameDataset(RawBscanDataset):
                 target_mu=tmu, target_sd=tsd,
             ),
         )
+
+
+class MultiFrameDataset(PairedFrameDataset):
+    """K neighbouring frames in, one held-out frame as the target.
+
+    Every scheme compared so far is single-frame in, single-frame out, and they
+    share a ceiling: one B-scan does not contain what a 50-frame average does.
+    Measured, one network pass is worth roughly 8-16 averaged frames, yet
+    50-frame averaging still looks clearly better than any of them. Feeding
+    several frames is the direct attack on that ceiling.
+
+    Layout, with s = repeats_per_position so one position step is s indices:
+
+        input  : c - m*s, ..., c, ..., c + m*s      (K frames, m = K//2)
+        target : c + (m+1)*s                        (one position beyond)
+
+    The target sits outside the input window, so it shares no frame with the
+    input and its speckle is decorrelated (measured +0.017 at one position of
+    separation). Keeping the same repeat index throughout avoids mixing in the
+    repeat pairing, whose speckle correlation is 6x higher.
+    """
+
+    def __init__(self, folder_specs, split, train_frac, *, n_input_frames: int = 5, **kw):
+        if n_input_frames < 2:
+            raise ValueError(f"n_input_frames must be >= 2, got {n_input_frames}")
+        self.n_input_frames = n_input_frames
+        kw.setdefault("pair_mode", "position")
+        super().__init__(folder_specs, split, train_frac, **kw)
+
+    @property
+    def _half(self) -> int:
+        return self.n_input_frames // 2
+
+    @property
+    def frame_offset(self) -> int:
+        """Index span from the first input frame to the target."""
+        s = self.repeats_per_position * self.position_step
+        return (self._half + self._half + 1) * s
+
+    def _pair_starts(self, n_frames: int) -> list[int]:
+        return list(range(0, n_frames - self.frame_offset))
+
+    def _input_and_target(self, start: int) -> tuple[list[int], int]:
+        s = self.repeats_per_position * self.position_step
+        inputs = [start + i * s for i in range(self.n_input_frames)]
+        return inputs, start + self.n_input_frames * s
+
+    def __getitem__(self, idx: int):
+        self._init_worker_state()
+        assert self._index is not None
+        entry = self._index[idx]
+        fidx, start = entry[0], entry[1]
+
+        in_idx, tgt_idx = self._input_and_target(start)
+        # Reversing the stack is a free augmentation: the physics is symmetric
+        # in scan direction, and it keeps the residual structure bias symmetric.
+        self._swapped = not self.full_frame and bool(self._rng.randint(0, 2))
+        if self._swapped:
+            in_idx = in_idx[::-1]
+
+        inputs = [self._fetch_frame(fidx, i)["target_full"] for i in in_idx]
+        out_t = self._fetch_frame(fidx, tgt_idx)
+        tgt = out_t["target_full"]
+
+        if self.full_frame:
+            x = np.stack(inputs, axis=0).astype(np.float32)
+            y = tgt[None, ...].astype(np.float32)
+        else:
+            x, y = self._random_crop(inputs, tgt)
+            if self.augment:
+                x, y = self._random_flips(x, y)
+            else:
+                x = np.ascontiguousarray(x)
+                y = np.ascontiguousarray(y)
+
+        return (
+            _to_torch_float32(x),
+            _to_torch_float32(y),
+            self._build_meta(fidx, in_idx[len(in_idx) // 2],
+                             out=out_t if self.full_frame else None,
+                             target_mu=float(out_t["target_mu"]),
+                             target_sd=float(out_t["target_sd"])),
+        )
