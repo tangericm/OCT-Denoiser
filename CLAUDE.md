@@ -13,6 +13,7 @@ oct-train                               # train
 oct-predict --checkpoint <path>         # inference from checkpoint
 oct-tune                                # Optuna hyperparameter search
 oct-mirror-study                        # mirror-phantom baseline study
+oct-retina-compare                      # qualitative retina comparison
 pytest                                  # full suite, needs no OCT data
 ruff check . && mypy                    # lint + types
 python -m compileall -q src tests       # syntax check
@@ -44,9 +45,17 @@ OCT-Denoiser/
 │   ├── engine/losses.py              # Charbonnier + gradient L1, unpack_batch
 │   ├── engine/metrics.py             # SNR/CNR in dB, ROI helpers
 │   ├── engine/early_stopping.py      # patience-based early stopping
+│   ├── data/paired_dataset.py        # PairedFrameDataset: frame-pair N2N, block split
 │   ├── networks/registry.py          # @register_model decorator + create_model()
-│   ├── networks/*.py                 # resunet_pseudo3d, _multilevel, dncnn, unet2d
-│   ├── experiments/                  # run_mirror_study, run_retina_compare (CLIs)
+│   ├── networks/build.py             # SINGLE source of truth for model input width
+│   ├── networks/*.py                 # 9 registered models — see Model Registry below
+│   ├── physics/noise_model.py        # photon-transfer-curve detector calibration
+│   ├── physics/masks.py              # complementary spectral masks (diagnostic)
+│   ├── eval/reference.py             # B-scan registration + near-clean averaging
+│   ├── eval/selfval.py               # held-out-mask self-validation metric
+│   ├── experiments/                  # 6 study CLIs — mirror_study, retina_compare,
+│   │                                 #   supervision_ablation, fair_eval,
+│   │                                 #   controlled_comparison, architecture_sweep
 │   ├── tools/eval_mirror.py          # PSNR/SSIM/FWHM harness
 │   └── utils/                        # run dirs, seeding, TIFF I/O, live plot
 └── tests/conftest.py                 # synthetic raw + .CLB fixtures — suite needs no data
@@ -76,7 +85,12 @@ Raw .raw (uint16)
 ```
 
 **Tensor conventions:**
-- Input: `[B, 2+n_sub, H, W]` — log-compressed floats, z-score normalized per frame
+- Input: `[B, C, H, W]` — log-compressed floats, z-score normalized per frame.
+  `C` follows the **supervision scheme**, not `input_mode`. It is `2 + 2*n_sub_windows`
+  for the default spectral scheme, and **1** for each of three others: `input_mode="fullband"`,
+  `target_mode="complementary"`, and `supervision="frame_pair"`. The last two leave
+  `input_mode` reading `"bandgap"`, which is why the rule lives in exactly one place —
+  `networks/build.effective_in_channels()`. Never re-derive it.
 - Target: `[B, 1, H, W]`
 - Raw files are uint16; all model tensors are float32
 
@@ -102,15 +116,29 @@ All config lives in Python dataclasses in `configs/default.py`. No YAML/JSON.
 ## Model Registry
 ```python
 @register_model("my_model")
-def build_my_model(*, base: int = 64) -> nn.Module:
-    ...  # must accept [B, 2+n_sub, H, W], return [B, 1, H, W]
+def build_my_model(*, base: int = 32, in_ch: int = 1, **_) -> nn.Module:
+    ...  # must accept [B, in_ch, H, W], return [B, 1, H, W]
 ```
+
+`in_ch` is **required**: `networks/build.build_model_kwargs()` always passes it for
+single-level models, so a builder that omits it raises `TypeError` at `create_model()`.
+Accept `**_` so future kwargs do not break the builder.
 
 Register → import in `networks/__init__.py` → set `model_name` in `TrainConfig`.
 
-**Available models:** `resunet_pseudo3d` · `resunet_pseudo3d_multilevel`
+**Available models (9):**
 
-For multi-level models, pass `n_sub_channels = 2 * n_sub_windows` to `create_model()`.
+| Model | Notes |
+|---|---|
+| `resunet_pseudo3d` | baseline, 7.23M params |
+| `resunet_pseudo3d_multilevel` | takes `n_sub_channels`, **not** `in_ch` |
+| `dncnn` · `unet2d` | simple reference baselines |
+| `nafnet` · `restormer` | modern restoration backbones |
+| `ffc_resunet` · `aniso_resunet` | Fourier / anisotropic variants |
+| `deform_fusion` | **multi-frame** — consumes K frames, not like-for-like |
+
+`list_models()` returns all of them. For multi-level models, pass
+`n_sub_channels = 2 * n_sub_windows` — `build_model_kwargs()` does this for you.
 
 ---
 
@@ -136,8 +164,9 @@ For multi-level models, pass `n_sub_channels = 2 * n_sub_windows` to `create_mod
 
 ### Add a new model
 1. Create `networks/my_model.py`, decorate builder with `@register_model("my_model")`
-2. Import in `networks/__init__.py`
-3. Set `model_name="my_model"` in `TrainConfig`
+2. Give the builder an `in_ch` keyword and `**_` — `build_model_kwargs()` always passes `in_ch`
+3. Import in `networks/__init__.py`
+4. Set `model_name="my_model"` in `TrainConfig`
 
 ### Add a new loss
 1. Add function to `engine/losses.py`
@@ -158,8 +187,10 @@ For multi-level models, pass `n_sub_channels = 2 * n_sub_windows` to `create_mod
 - [ ] Checkpoint load/save compatibility preserved
 - [ ] Inference path verified with `best.pt`
 - [ ] Output dtype assumptions preserved (`uint16` vs `float32`)
-- [ ] `python -m compileall .` passes
-- [ ] `python tests/test_optimizations.py` passes where feasible
+- [ ] Model input width comes from `networks/build.py` — never re-derived at a call site
+- [ ] `ruff check . && mypy` clean
+- [ ] `python -m compileall -q src tests` passes (the explicit form — see Quick Commands)
+- [ ] `pytest` passes
 
 ---
 

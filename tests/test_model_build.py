@@ -7,6 +7,9 @@ forward pass and inference died on strict state-dict load.
 """
 from __future__ import annotations
 
+import ast
+import pathlib
+
 import pytest
 import torch
 
@@ -77,3 +80,46 @@ def test_from_cfg_reads_n_sub_windows_off_the_folder_spec():
                       crop_depth=(0, 128), n_sub_windows=2, sub_window_spread=0.5)
     cfg = TrainConfig(model_name="resunet_pseudo3d", base=8, folder_specs=[spec])
     assert build_model_kwargs_from_cfg(cfg)["in_ch"] == 6
+
+
+# --------------------------------------------------------------------------
+# The call sites must actually USE the helper
+# --------------------------------------------------------------------------
+# Testing the helper alone leaves the original bug reachable: train.py and
+# infer.py each derived the width inline, and both carried a comment claiming to
+# mirror the other. Reverting either call site would keep every test above green,
+# so pin the call sites too.
+_SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "octdenoiser"
+_CALL_SITES = ["engine/train.py", "engine/infer.py"]
+
+
+def _tree(rel: str) -> ast.Module:
+    return ast.parse((_SRC / rel).read_text(encoding="utf-8"))
+
+
+def _calls_named(tree: ast.Module, name: str) -> list[ast.Call]:
+    return [n for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name) and n.func.id == name]
+
+
+@pytest.mark.parametrize("rel", _CALL_SITES)
+def test_call_site_delegates_the_width_to_build(rel):
+    tree = _tree(rel)
+    helpers = (_calls_named(tree, "build_model_kwargs")
+               + _calls_named(tree, "build_model_kwargs_from_cfg"))
+    assert helpers, f"{rel} must derive model kwargs via networks/build.py"
+
+
+@pytest.mark.parametrize("rel", _CALL_SITES)
+def test_call_site_never_passes_a_hand_computed_width(rel):
+    """`create_model(..., in_ch=<something local>)` is the regression itself."""
+    for call in _calls_named(_tree(rel), "create_model"):
+        named = {kw.arg for kw in call.keywords if kw.arg is not None}
+        assert not named & {"in_ch", "n_sub_channels"}, (
+            f"{rel} passes {named & {'in_ch', 'n_sub_channels'}} explicitly to "
+            f"create_model; the width belongs to networks/build.py alone"
+        )
+        assert any(kw.arg is None for kw in call.keywords), (
+            f"{rel} must splat the kwargs built by networks/build.py"
+        )

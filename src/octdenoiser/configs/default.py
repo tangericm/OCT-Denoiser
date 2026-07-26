@@ -123,7 +123,7 @@ class TrainConfig:
     # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
-    model_name: str = "resunet_pseudo3d"   # "resunet_pseudo3d" | "resunet_pseudo3d_multilevel" | "dncnn" | "unet2d"
+    model_name: str = "resunet_pseudo3d"   # any registered name; networks.list_models() enumerates them
     base: int = 64                         # base channel width
 
     # ------------------------------------------------------------------

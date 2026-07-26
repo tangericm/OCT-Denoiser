@@ -115,7 +115,7 @@ module = ["tifffile.*", "scipy.*", "matplotlib.*", "optuna.*", "torchvision.*"]
 follow_imports = "skip"
 follow_imports_for_stubs = true
 
-# Ratchet. These modules do not type-check yet; the gate enforces the other 22
+# Ratchet. These modules do not type-check yet; the gate enforces the other 39
 # so the clean set can only grow. Work the list down largest-first and delete
 # each entry as it goes green -- do NOT add to it.
 #

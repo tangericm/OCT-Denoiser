@@ -125,6 +125,46 @@ def test_too_few_frames_raises(synthetic_spec):
         ds._build_index()
 
 
+def test_split_failure_advises_raising_group_size_not_lowering_it(synthetic_spec):
+    """The remediation half of the message must point somewhere that works.
+
+    `_blocks` uses n_blocks = max(2, n // group_size), so block WIDTH scales with
+    group_size and a block survives only if it is wider than frame_offset.
+    Lowering group_size narrows blocks and can only make the failure worse, so
+    advice to lower it is never correct -- and group_size is floored at 2, so a
+    user already at the floor would be told to do something the ctor rejects.
+    """
+    with pytest.raises(ValueError, match="raise group_size"):
+        _ds(synthetic_spec, pair_mode="position", position_step=99)._build_index()
+
+
+@pytest.mark.parametrize("n_frames,offset", [(64, 10), (128, 6), (1024, 2)])
+def test_group_sizes_that_work_are_upward_closed(n_frames, offset):
+    """The property that makes "raise group_size" sound advice.
+
+    Not the surviving-block COUNT -- that peaks and then falls, since bigger
+    blocks means fewer of them (n=64, offset=10 gives [0,0,0,4,2,2]). What holds
+    is that the split SUCCEEDS on an upward-closed set: below a threshold every
+    group_size fails, at and above it every group_size works. So raising can fix
+    a failure and lowering never can.
+    """
+    sizes = (2, 4, 8, 16, 32, 64, 128)
+    ok = []
+    for gs in sizes:
+        ds = _ds(_spec(), pair_mode="position", position_step=offset // 2, group_size=gs)
+        assert ds.frame_offset == offset, "test setup must hit the intended offset"
+        ok.append(len(ds._blocks(n_frames)) >= 2)
+
+    assert any(ok), f"n={n_frames} offset={offset}: no group_size works, bad fixture"
+    first = ok.index(True)
+    assert all(ok[first:]), (
+        f"n={n_frames} offset={offset}: success by group_size "
+        f"{dict(zip(sizes, ok, strict=True))} "
+        f"is not upward-closed, so 'raise group_size' would not be sound advice"
+    )
+    assert not any(ok[:first]), "failures must all sit below the threshold"
+
+
 # --------------------------------------------------------------------------
 # Item construction
 # --------------------------------------------------------------------------

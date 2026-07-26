@@ -271,7 +271,7 @@ correct values are ~0.04.
   should move those numbers up.
 - **Registration is not wired into a CLI** — it exists as a library plus
   experiment scripts.
-- **mypy ratchet**: 13 of 51 modules excluded, listed largest-first in
+- **mypy ratchet**: 13 of 52 modules excluded, listed largest-first in
   `pyproject.toml`. Two entries are real latent bugs, not missing annotations.
 
 ---

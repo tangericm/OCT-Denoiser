@@ -91,7 +91,7 @@ This installs the `octdenoiser` package and the `oct-*` commands below.
 | `oct-train` | training |
 | `oct-predict --checkpoint <path>` | inference from a checkpoint |
 | `oct-tune` | Optuna window-parameter search |
-| `oct-mirror-study` | mirror-phantom baseline study (14 CLI flags) |
+| `oct-mirror-study` | mirror-phantom baseline study (15 CLI flags) |
 | `oct-retina-compare` | qualitative retina comparison |
 
 ### 1. Configure your dataset
@@ -102,9 +102,12 @@ Edit the `USER CONFIGURATION` section in
 - Set `root_folder` / `data_folder` to point at your `bscan*.raw` files
 - Set `pixels` / `alines` to match your OCT system
 - Adjust `crop_depth`, `window_sigma`, and `gap` as needed
-- Choose `model_name`:
-  - `"resunet_pseudo3d"` — standard 2-channel input (no sub-windows)
+- Choose `model_name` — nine are registered; `octdenoiser.networks.list_models()` enumerates them:
+  - `"resunet_pseudo3d"` — the baseline (7.23M params)
   - `"resunet_pseudo3d_multilevel"` — multi-level input (requires `n_sub_windows > 0`)
+  - `"nafnet"`, `"restormer"`, `"ffc_resunet"`, `"aniso_resunet"` — modern backbones
+  - `"dncnn"`, `"unet2d"` — simple reference baselines
+  - `"deform_fusion"` — multi-frame; consumes K frames, so not like-for-like
 
 ### 2. Train
 
@@ -149,7 +152,7 @@ Tune `window_sigma` and `gap` with Optuna:
 oct-tune
 ```
 
-Results are saved as `runs/optuna/<timestamp>/study_results.csv`.
+Results are saved as `runs/optuna/optuna_tune_<timestamp>/study_results.csv`.
 
 ### 5. Sanity checks
 
@@ -197,20 +200,38 @@ OCT-Denoiser/
 │   │   └── early_stopping.py                   # patience-based early stopping
 │   ├── networks/
 │   │   ├── registry.py                         # @register_model decorator
+│   │   ├── build.py                            # single source of truth for input width
 │   │   ├── resunet_pseudo3d.py                 # base ResUNet with Pseudo-3D stem
 │   │   ├── resunet_pseudo3d_multilevel.py      # + multi-level spectral input
+│   │   ├── nafnet.py  restormer.py             # modern restoration backbones
+│   │   ├── ffc_resunet.py  aniso_resunet.py    # Fourier / anisotropic variants
+│   │   ├── deform_fusion.py                    # multi-frame deformable fusion
 │   │   ├── dncnn.py                            # DnCNN baseline
 │   │   └── unet2d.py                           # plain U-Net baseline
+│   ├── physics/
+│   │   ├── noise_model.py                      # photon-transfer-curve calibration
+│   │   └── masks.py                            # complementary spectral masks
+│   ├── eval/
+│   │   ├── reference.py                        # registration + near-clean averaging
+│   │   └── selfval.py                          # held-out-mask self-validation
 │   ├── experiments/
-│   │   ├── run_mirror_study.py                 # oct-mirror-study (14 CLI flags)
-│   │   └── run_retina_compare.py               # oct-retina-compare
+│   │   ├── run_mirror_study.py                 # oct-mirror-study (15 CLI flags)
+│   │   ├── run_retina_compare.py               # oct-retina-compare
+│   │   ├── run_supervision_ablation.py         # schemes A-D head to head
+│   │   ├── run_fair_eval.py                    # scoring vs near-clean references
+│   │   ├── run_controlled_comparison.py        # multi-seed B vs C
+│   │   └── run_architecture_sweep.py           # backbones at fixed supervision
 │   ├── tools/eval_mirror.py                    # PSNR/SSIM/FWHM metric harness
 │   └── utils/                                  # seeding, run dirs, TIFF I/O, live plot
-└── tests/
+└── tests/                                      # 220 tests, no OCT data required
     ├── conftest.py                             # synthetic raw + .CLB fixtures
     ├── test_pipeline.py                        # end-to-end preprocessing/dataset
     ├── test_config_validation.py               # config consistency rules
     ├── test_networks.py                        # model forward-pass shapes
+    ├── test_model_build.py                     # input width follows supervision
+    ├── test_paired_dataset.py                  # frame-pair index + split isolation
+    ├── test_reference.py                       # registration + aligned scoring
+    ├── test_selfval.py                         # held-out-mask metric
     └── test_optimizations.py                   # FFT/resample equivalence
 ```
 
@@ -221,9 +242,13 @@ OCT-Denoiser/
 All configuration is defined in Python dataclasses — no YAML or JSON files.
 
 Two columns below: the **dataclass default** in `configs/default.py`, and the
-value **actually shipped** in `src/octdenoiser/cli/train.py`'s `USER CONFIGURATION` block —
-which is what produced the results above. They differ; the shipped column is
-the one to reproduce.
+value **actually shipped** in `src/octdenoiser/cli/train.py`'s `USER CONFIGURATION` block.
+They differ; the shipped column is the one to reproduce.
+
+The shipped block carries the hyperparameters that produced the results table, but
+declares **one** `FolderSpec` while that table reports four acquisitions — reproducing
+it means appending the other three specs. The per-acquisition paths are not committed,
+per the no-hardcoded-absolute-paths rule.
 
 ### `FolderSpec` — per-dataset specification
 

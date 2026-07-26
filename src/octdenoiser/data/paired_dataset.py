@@ -170,10 +170,15 @@ class PairedFrameDataset(RawBscanDataset):
             # them per block (~3% at the default group_size=64, offset 2).
             blocks = self._blocks(n)
             if len(blocks) < 2:
+                # group_size is the block WIDTH target, and a block is kept only
+                # if it is wider than frame_offset -- so RAISING group_size is
+                # what widens the blocks. Lowering it narrows them and can only
+                # make this worse.
                 raise ValueError(
                     f"{fs.data_folder}: {n} frames cannot be split into two blocks "
-                    f"holding a pair of offset {self.frame_offset}; lower group_size "
-                    f"(currently {self.group_size}) or use a longer acquisition"
+                    f"holding a pair of offset {self.frame_offset}; raise group_size "
+                    f"(currently {self.group_size}, needs > {self.frame_offset}) "
+                    f"or use a longer acquisition"
                 )
 
             order = np.arange(len(blocks))
