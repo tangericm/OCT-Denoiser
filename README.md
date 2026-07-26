@@ -36,9 +36,23 @@ A run dedicated to a single volume (`window_sigma 0.03`, `gap 0.60`) reaches
 > metric fixes: ground-truth SNR was computed with `sig_stat="max"` while
 > prediction SNR used `"p99.99"`, so ΔSNR was a difference of two different
 > estimators — and, since `max ≥ p99.99`, an *understated* one. The axial-FWHM
-> estimator also saturated at the search-window edge. Both are fixed in
-> `engine/eval.py`, `engine/infer.py` and `tools/eval_mirror.py`; these results
-> will be re-run and replaced.
+> estimator also saturated at the search-window edge. Both are fixed; these
+> results will be re-run and replaced.
+
+**See [docs/FINDINGS.md](docs/FINDINGS.md)** for the measured study that followed:
+supervision schemes compared against near-clean references, detector noise
+calibration, the networks-versus-averaging control, and the metric caveats —
+including which earlier claims measurement overturned.
+
+Headline results from that study:
+
+- The full-band target **contains** its own input, leaving speckle correlated at
+  +0.138 against +0.003 for a clean pairing — the dominant defect in the
+  original method.
+- Contiguous sub-bands cost **2.43×** the axial PSF width; full-bandwidth frame
+  pairing costs none.
+- **A single network pass is worth roughly 8–16 averaged frames.**
+- PSNR and SSIM reward blur; a residual-structure test catches what they miss.
 
 > Display note: reference and prediction above are rendered through **one shared
 > window** with a shared gamma. The black point is anchored to the prediction's 1st
@@ -207,7 +221,7 @@ OCT-Denoiser/
 All configuration is defined in Python dataclasses — no YAML or JSON files.
 
 Two columns below: the **dataclass default** in `configs/default.py`, and the
-value **actually shipped** in `model_train.py`'s `USER CONFIGURATION` block —
+value **actually shipped** in `src/octdenoiser/cli/train.py`'s `USER CONFIGURATION` block —
 which is what produced the results above. They differ; the shipped column is
 the one to reproduce.
 

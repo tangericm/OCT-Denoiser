@@ -146,7 +146,7 @@ For multi-level models, pass `n_sub_channels = 2 * n_sub_windows` to `create_mod
 
 ### Add a new dataset
 1. Create a `FolderSpec` with correct dims, crop, window parameters
-2. Append to `folder_specs` in `model_train.py`
+2. Append to `folder_specs` in `src/octdenoiser/cli/train.py`
 
 ---
 

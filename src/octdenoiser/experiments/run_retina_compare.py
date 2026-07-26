@@ -7,7 +7,7 @@ This script therefore produces a *qualitative + no-reference* comparison:
   - montage TIFF per frame  [noisy | A | B | C | D | E]  in one fixed display
     domain so panels are directly comparable
   - no-reference metrics per config: SNR/CNR (linear domain, retina signal ROI,
-    p99.99 stat — matches model_train.py) and bg_sigma (display domain, bottom
+    p99.99 stat — matches cli/train.py) and bg_sigma (display domain, bottom
     rows above the noise floor)
 
 Back-transform caveat: average-target configs (B-E) were trained to output the
@@ -34,7 +34,7 @@ from octdenoiser.experiments.run_mirror_study import BAND, CONFIGS, CROP, ROOT, 
 from octdenoiser.networks import create_model
 from octdenoiser.utils.io_tiff import save_tiff_stack
 
-# Retina signal ROI (y rows) + stat, matching model_train.py's evaluation setup.
+# Retina signal ROI (y rows) + stat, matching cli/train.py's evaluation setup.
 SIG_Y0, SIG_Y1 = 111, 600
 SIG_STAT = "p99.99"
 
