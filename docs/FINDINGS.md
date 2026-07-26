@@ -247,6 +247,14 @@ direction these metrics are already biased in, so the small gaps (B vs C at
 0.56 dB) are the ones least safe to trust. Fixed in `run_fair_eval.Reference`;
 re-scoring needs no retraining because the scripts save checkpoints.
 
+**The correction has now been measured, and it was not small.** Mean |shift|
+across the three Maestro2 stacks is 21.5, 12.2 and 2.6 px. Re-scoring the
+architecture sweep moved every trained model up by 2.6-4.3 dB and **reversed its
+ranking** — see section 10. The size of the bias was not the surprise; the fact
+that it was non-uniform, and therefore changed the ordering rather than shifting
+it, is. Sections 4, 5 and 6 have NOT yet been re-scored and should be read as
+provisional until they are.
+
 **Corrected numbers.** An earlier repeat-frame correlation of 0.975 was inflated
 by a DC artefact in a reconstruction that skipped k-linearisation; the correct
 value is ~0.50. Gains of 6.25/4.46 came from the discredited linear PTC fit; the
@@ -254,18 +262,104 @@ correct values are ~0.04.
 
 ---
 
-## 10. Open / incomplete
+## 10. Architecture sweep, re-scored — the alignment bug inverted the result
 
-- **Controlled B-vs-C comparison**, 3 seeds × 6000 steps. B's three seeds gave
-  PSNR 19.987 / 20.071 / 20.201 — mean 20.09, sd 0.11. The single-seed gap that
-  prompted the run was 0.56 dB, five times that spread, so it survives unless
-  C's own spread is much wider. C is still training.
-- **Re-score all saved checkpoints** with the aligned reference (§9). Both the
-  controlled comparison and the sweep write `.pt` files, so this is an eval
-  pass, not a retrain.
-- **Architecture sweep**, 6 backbones at fixed supervision. `deform_fusion`
-  consumes 5 frames against 1 for the rest — more information at inference, not
-  a like-for-like architecture win.
+Supervision held fixed at frame-pair position, 1200 steps, single seed. Scored
+first against the unregistered average, then re-scored from the saved
+checkpoints against the aligned one (section 9). No retraining.
+
+| Architecture | PSNR now | was | Δ | SSIM now | was | Params | Latency | Frames |
+|---|---|---|---|---|---|---|---|---|
+| noisy input | 9.839 | 9.566 | +0.273 | 0.0712 | 0.0442 | — | — | — |
+| **nafnet** | **25.323** | 21.042 | +4.281 | **0.5327** | 0.4620 | 6.82M | **10.7 ms** | 1 |
+| restormer | 25.317 | 20.993 | +4.324 | 0.5150 | 0.4441 | 6.53M | 50.3 ms | 1 |
+| aniso_resunet | 25.117 | 20.927 | +4.190 | 0.5278 | 0.4615 | 9.92M | 12.2 ms | 1 |
+| resunet_pseudo3d | 24.818 | 20.832 | +3.986 | 0.5125 | 0.4476 | 7.23M | 11.8 ms | 1 |
+| deform_fusion | 24.428 | **21.857** | +2.571 | 0.5251 | 0.4875 | 1.09M | 33.5 ms | **5** |
+
+**deform_fusion went from first to last.** It led the unaligned table by 0.8 dB;
+aligned, it sits 0.9 dB below nafnet and below the baseline as well.
+
+The delta column measures the bias predicted in section 9 rather than assuming
+it. Misalignment costs a SHARP output more than a blurred one, so the blurriest
+model is penalised least: deform_fusion gained only +2.571 dB from alignment
+while every single-frame model gained 3.99-4.32. It had been winning by being
+smooth enough to escape the penalty. The qualitative panels agree — in the zoom
+it alone has lost the speckle texture and choroidal detail.
+
+The noisy-input floor barely moved (+0.273 dB) for the complementary reason:
+raw speckle matches the reference at no alignment, so registering it changes
+little. **That asymmetry is why the defect stayed invisible** — it was near-zero
+against the floor and ~4 dB against every trained model.
+
+**Corrected reading.** nafnet and restormer tie on PSNR (0.006 dB apart, inside
+noise), but nafnet wins SSIM by 0.018 and runs 4.7x faster. nafnet beats the
+baseline by 0.505 dB and +0.0202 SSIM, past the ~0.2 dB resolution threshold for
+this protocol; before the fix that same gap read as a marginal 0.227 dB. It does
+so with fewer parameters and the lowest latency measured.
+
+Not settled by this run: single seed at 1200 steps. deform_fusion's row remains
+not like-for-like in either direction — it consumes 5 frames against 1.
+
+`ffc_resunet` did not train: its Fourier branch cast only the FFT input to
+float32 while the conv between the transforms still ran under autocast and
+returned bfloat16, which `torch.complex` rejects. Fixed, with every registered
+backbone now covered by a bf16 forward-and-backward test.
+
+---
+
+## 11. Controlled B vs C, re-scored — the gap tripled
+
+3 seeds x 6000 steps each, everything matched but the supervision scheme and
+the seed. Re-scored from the saved checkpoints; scheme B is fed `input_w1` and
+scheme C `target_full`, because B trains on a sub-band and scoring it on a
+full-band frame would compare it on an input it never saw.
+
+| | B complementary | C frame pair, position | C − B | \|diff\|/sd |
+|---|---|---|---|---|
+| **Aligned** | 22.261 ± 0.235 | **25.215 ± 0.054** | **+2.954 dB** | **17.3** |
+| Unaligned | 20.086 ± 0.107 | 20.938 ± 0.016 | +0.852 dB | 11.1 |
+
+SSIM moved with it: +0.0048 → **+0.0371**.
+
+**The bias mechanism, predicted and then confirmed.** Alignment gain by scheme:
+
+| Scheme | Mean gain | Range over 3 seeds |
+|---|---|---|
+| B (band-limited input, 2.43x PSF) | +2.175 dB | 2.011 – 2.262 |
+| C (full-band input) | +4.277 dB | 4.240 – 4.318 |
+
+**Zero overlap across six independent runs.** B is the blurrier scheme by
+construction, and it gained about half what C gained from the same correction —
+the direction section 9 predicts, stated before the run and not after it.
+
+Taken with section 10 this is one rule tested twice with opposite outcomes:
+deform_fusion was the blurriest model, was flattered most, and LOST its lead
+when aligned; B is blurrier than C, was flattered, and C's lead WIDENED. A rule
+that only ever explained results after the fact would not have managed that.
+
+Qualitatively (`docs/figures/bc_comparison.png`) B shows heavy vertical
+streaking and a washed-out choroid, which is what a band-limited input should
+produce. C holds the layer structure and speckle texture close to the
+reference. All three seeds of each are near-identical, matching C's sd of 0.054.
+
+**This settles the question the run was built to answer.** The 0.56 dB
+single-seed gap that prompted it was not a coin flip that happened to land for
+C; it was a 2.95 dB gap being compressed by a broken metric.
+
+---
+
+## 12. Open / incomplete
+
+- **Re-score the remaining checkpoints.** The architecture sweep (§10) and the
+  controlled comparison (§11) are done. Sections 4, 5 and 6 still carry the
+  unaligned numbers and remain provisional; they save `.pt` files, so each is an
+  eval pass via `experiments/rescore_checkpoints.py`, not a retrain.
+- **Re-run the sweep with `ffc_resunet` included**, now that its autocast defect
+  is fixed — it is the one candidate the sweep never actually measured.
+- **Confirm the sweep at more than one seed.** §10 is a single seed at 1200
+  steps. The nafnet-over-baseline gap (0.505 dB) clears the ~0.2 dB threshold,
+  but nafnet vs restormer (0.006 dB) is not a result.
 - **README results table** has not been regenerated since the SNR estimator fix.
   Because `max ≥ p99.99`, the published ΔSNR was **understated**; re-running
   should move those numbers up.
@@ -278,11 +372,20 @@ correct values are ~0.04.
 
 ## Reliability note
 
-Six claims made from reasoning were overturned by measurement: the 0.975 repeat
-correlation, the mask decorrelation advantage, the pooled-gain hypothesis, a
-"slow-axis blur" that measured a quantity the network never computes, a
-registration regression that compared linear-domain against log-domain
-correlation, and a prediction that scheme C would fail.
+Seven claims made from reasoning were overturned by measurement: the 0.975
+repeat correlation, the mask decorrelation advantage, the pooled-gain
+hypothesis, a "slow-axis blur" that measured a quantity the network never
+computes, a registration regression that compared linear-domain against
+log-domain correlation, a prediction that scheme C would fail, and
+`deform_fusion`'s multi-frame lead — which survived exactly as long as the
+reference went unregistered.
+
+The seventh is the sharpest instance of the pattern, because the reasoning was
+not merely unsupported but *self-consistent and wrong*: the multi-frame model
+was expected to win on the grounds that it sees more information, it did win on
+the metric, and the metric was broken in the one direction that rewards the
+thing that model actually does. A plausible mechanism plus a confirming number
+is still not a result if the number was never checked.
 
 The pattern is consistent — reasoning ahead of measurement failed; measuring
 first held. Treat any claim here without a number attached as provisional.

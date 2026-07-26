@@ -35,13 +35,20 @@ class FourierUnit(nn.Module):
         self.bn = nn.BatchNorm2d(out_ch * 2)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, c, h, w = x.shape
-        # float32 for the FFT: bf16 autocast would wreck the phase.
-        ffted = torch.fft.rfft2(x.float(), norm="ortho")
-        ffted = torch.cat([ffted.real, ffted.imag], dim=1)
-        ffted = F.relu(self.bn(self.conv(ffted)), inplace=True)
-        real, imag = ffted.chunk(2, dim=1)
-        out = torch.fft.irfft2(torch.complex(real, imag), s=(h, w), norm="ortho")
+        h, w = x.shape[-2:]
+        # The WHOLE frequency branch runs in float32, not just the transforms.
+        # Casting only the rfft2 input is not enough: self.conv still executes
+        # under autocast and returns bf16, and torch.complex rejects bf16 --
+        # "Expected both inputs to be Half, Float or Double tensors". Disabling
+        # autocast for the block also keeps phase out of a 8-bit mantissa,
+        # which is the reason for the float32 in the first place.
+        with torch.amp.autocast(x.device.type, enabled=False):
+            xf = x.float()
+            ffted = torch.fft.rfft2(xf, norm="ortho")
+            ffted = torch.cat([ffted.real, ffted.imag], dim=1)
+            ffted = F.relu(self.bn(self.conv(ffted)), inplace=True)
+            real, imag = ffted.chunk(2, dim=1)
+            out = torch.fft.irfft2(torch.complex(real, imag), s=(h, w), norm="ortho")
         return out.to(x.dtype)
 
 
