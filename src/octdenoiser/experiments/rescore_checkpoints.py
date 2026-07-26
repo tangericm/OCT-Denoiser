@@ -34,6 +34,7 @@ import torch
 from octdenoiser.configs.default import FolderSpec
 from octdenoiser.experiments.run_fair_eval import (
     REFERENCE_STACKS,
+    SCHEME_INPUTS,
     TISSUE,
     Reference,
     _to_unit,
@@ -56,20 +57,28 @@ def _spec(root: str, folder: str, alines: int) -> FolderSpec:
                       crop_depth=(0, 1024), window_sigma=0.05, gap=0.60, gap_offset=0.015)
 
 
-def _input_for(proc: BscanProcessor, i: int, n_frames: int, multi: bool) -> np.ndarray:
-    """The tensor the model was trained to consume, centred on frame i."""
-    if not multi:
-        one = proc.process_one(proc.bscan_paths[i], frame_idx=i, fft_workers=-1)
-        return np.stack([one["target_full"]])
-    last = len(proc.bscan_paths) - 1
-    idx = [min(max(i + (j - n_frames // 2) * POSITION_STRIDE, 0), last)
-           for j in range(n_frames)]
-    return np.stack([proc.process_one(proc.bscan_paths[j], frame_idx=j,
-                                      fft_workers=-1)["target_full"] for j in idx])
+def _input_for(proc: BscanProcessor, i: int, n_frames: int,
+               multi: bool, keys: tuple[str, ...]) -> np.ndarray:
+    """The tensor the model was trained to consume, centred on frame i.
+
+    `keys` matters: scheme B trains on a single spectral SUB-BAND ("input_w1"),
+    not on the full-band reconstruction. Feeding it "target_full" would score it
+    on an input it never saw -- the confound the ablation harness was already
+    fixed once to avoid. Scheme C genuinely does consume "target_full".
+    """
+    if multi:
+        last = len(proc.bscan_paths) - 1
+        idx = [min(max(i + (j - n_frames // 2) * POSITION_STRIDE, 0), last)
+               for j in range(n_frames)]
+        return np.stack([proc.process_one(proc.bscan_paths[j], frame_idx=j,
+                                          fft_workers=-1)["target_full"] for j in idx])
+    one = proc.process_one(proc.bscan_paths[i], frame_idx=i, fft_workers=-1)
+    return np.stack([one[k] for k in keys])
 
 
 @torch.no_grad()
-def score_both_ways(model, multi: bool, args, references: dict[str, Reference]) -> dict:
+def score_both_ways(model, multi: bool, keys: tuple[str, ...], args,
+                    references: dict[str, Reference]) -> dict:
     """Score every eval frame against the aligned AND the unaligned reference."""
     model.eval()
     acc: dict[str, list[float]] = {
@@ -84,7 +93,7 @@ def score_both_ways(model, multi: bool, args, references: dict[str, Reference]) 
         proc = BscanProcessor(_spec(args.m2_root, folder, alines))
         step = max(1, len(proc.bscan_paths) // args.eval_frames)
         for i in range(0, min(len(proc.bscan_paths), args.eval_frames * step), step):
-            chans = _input_for(proc, i, args.n_frames, multi)
+            chans = _input_for(proc, i, args.n_frames, multi, keys)
             x = torch.from_numpy(chans[None].astype(np.float32)).to(args.device)
             p_z = _to_unit(_zscore(model(x)[0, 0].float().cpu().numpy()[TISSUE]))
 
@@ -147,8 +156,8 @@ def qualitative_panels(models: dict, args, references: dict[str, Reference],
     z0, z1 = args.zoom_z, args.zoom_z + args.zoom_h
 
     tiles: list[tuple[str, np.ndarray]] = [("noisy input", raw)]
-    for name, (model, multi) in models.items():
-        chans = _input_for(proc, frame, args.n_frames, multi)
+    for name, (model, multi, keys) in models.items():
+        chans = _input_for(proc, frame, args.n_frames, multi, keys)
         xt = torch.from_numpy(chans[None].astype(np.float32)).to(args.device)
         tiles.append((name, model(xt)[0, 0].float().cpu().numpy()[TISSUE]))
     tiles.append(("50-frame average\n(reference)", ref))
@@ -174,20 +183,34 @@ def qualitative_panels(models: dict, args, references: dict[str, Reference],
 
 
 def load_checkpoints(ckpt_dir: str, device: str, base: int) -> dict:
-    """Rebuild each saved model from its checkpoint's own recorded shape."""
+    """Rebuild each saved model from its checkpoint's own recorded shape.
+
+    The checkpoint carries whichever of `arch` or `scheme` its producing script
+    wrote. `scheme` selects the input channels the model was trained on, which
+    is NOT the same across schemes -- see _input_for.
+    """
     models = {}
     for fn in sorted(os.listdir(ckpt_dir)):
         if not fn.endswith(".pt"):
             continue
         name = fn[:-3]
         blob = torch.load(os.path.join(ckpt_dir, fn), map_location=device)
-        arch = blob.get("arch", name)
+        scheme = blob.get("scheme")
+        arch = blob.get("arch", "resunet_pseudo3d" if scheme else name)
         in_ch = blob["in_ch"]
+        keys = SCHEME_INPUTS.get(scheme, ("target_full",)) if scheme else ("target_full",)
+        if len(keys) != in_ch and name not in MULTI_FRAME:
+            raise ValueError(
+                f"{name}: checkpoint says in_ch={in_ch} but scheme {scheme!r} maps to "
+                f"{len(keys)} input channel(s) {keys}. Scoring it would feed the model "
+                f"something it was never trained on."
+            )
         model = create_model(arch, base=base, in_ch=in_ch).to(device)
         model.load_state_dict(blob["model"])
         model.eval()
-        models[name] = (model, name in MULTI_FRAME)
-        print(f"  loaded {name:<22} arch={arch:<20} in_ch={in_ch}", flush=True)
+        models[name] = (model, name in MULTI_FRAME, keys)
+        print(f"  loaded {name:<26} arch={arch:<18} in_ch={in_ch}  input={'+'.join(keys)}",
+              flush=True)
     return models
 
 
@@ -240,8 +263,8 @@ def main():
     print("\nscoring", flush=True)
     floor = noisy_floor_both_ways(args, references)
     results: dict[str, dict] = {"_noisy_floor": floor, "_config": vars(args)}
-    for name, (model, multi) in models.items():
-        results[name] = score_both_ways(model, multi, args, references)
+    for name, (model, multi, keys) in models.items():
+        results[name] = score_both_ways(model, multi, keys, args, references)
         m = results[name]
         print(f"  {name:<22} aligned {m['psnr_aligned']:.3f} / {m['ssim_aligned']:.4f}   "
               f"unaligned {m['psnr_unaligned']:.3f} / {m['ssim_unaligned']:.4f}   "
