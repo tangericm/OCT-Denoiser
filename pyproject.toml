@@ -105,6 +105,16 @@ warn_unused_ignores = true
 disallow_untyped_defs = false
 check_untyped_defs = true
 
+# Third-party sources are not ours to type-check, and parsing them under our
+# python_version target breaks: mypy applies python_version=3.10 semantics to
+# every file it follows, so a dependency written with 3.12+ syntax (PEP 695
+# `type` statements in tifffile) is a hard syntax error. CI caught this on the
+# 3.12 job while 3.11 passed, because pip resolved an older tifffile there.
+[[tool.mypy.overrides]]
+module = ["tifffile.*", "scipy.*", "matplotlib.*", "optuna.*", "torchvision.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 # Ratchet. These modules do not type-check yet; the gate enforces the other 22
 # so the clean set can only grow. Work the list down largest-first and delete
 # each entry as it goes green -- do NOT add to it.
