@@ -308,16 +308,55 @@ backbone now covered by a bf16 forward-and-backward test.
 
 ---
 
-## 11. Open / incomplete
+## 11. Controlled B vs C, re-scored — the gap tripled
 
-- **Controlled B-vs-C comparison**, 3 seeds × 6000 steps. B's three seeds gave
-  PSNR 19.987 / 20.071 / 20.201 — mean 20.09, sd 0.11. The single-seed gap that
-  prompted the run was 0.56 dB, five times that spread, so it survives unless
-  C's own spread is much wider. C is still training.
-- **Re-score the remaining checkpoints.** The architecture sweep is done (§10).
-  Sections 4, 5 and 6 and the controlled comparison still carry the unaligned
-  numbers; all of them save `.pt` files, so each is an eval pass via
-  `experiments/rescore_checkpoints.py`, not a retrain.
+3 seeds x 6000 steps each, everything matched but the supervision scheme and
+the seed. Re-scored from the saved checkpoints; scheme B is fed `input_w1` and
+scheme C `target_full`, because B trains on a sub-band and scoring it on a
+full-band frame would compare it on an input it never saw.
+
+| | B complementary | C frame pair, position | C − B | \|diff\|/sd |
+|---|---|---|---|---|
+| **Aligned** | 22.261 ± 0.235 | **25.215 ± 0.054** | **+2.954 dB** | **17.3** |
+| Unaligned | 20.086 ± 0.107 | 20.938 ± 0.016 | +0.852 dB | 11.1 |
+
+SSIM moved with it: +0.0048 → **+0.0371**.
+
+**The bias mechanism, predicted and then confirmed.** Alignment gain by scheme:
+
+| Scheme | Mean gain | Range over 3 seeds |
+|---|---|---|
+| B (band-limited input, 2.43x PSF) | +2.175 dB | 2.011 – 2.262 |
+| C (full-band input) | +4.277 dB | 4.240 – 4.318 |
+
+**Zero overlap across six independent runs.** B is the blurrier scheme by
+construction, and it gained about half what C gained from the same correction —
+the direction section 9 predicts, stated before the run and not after it.
+
+Taken with section 10 this is one rule tested twice with opposite outcomes:
+deform_fusion was the blurriest model, was flattered most, and LOST its lead
+when aligned; B is blurrier than C, was flattered, and C's lead WIDENED. A rule
+that only ever explained results after the fact would not have managed that.
+
+Qualitatively (`docs/figures/bc_comparison.png`) B shows heavy vertical
+streaking and a washed-out choroid, which is what a band-limited input should
+produce. C holds the layer structure and speckle texture close to the
+reference. All three seeds of each are near-identical, matching C's sd of 0.054.
+
+**This settles the question the run was built to answer.** The 0.56 dB
+single-seed gap that prompted it was not a coin flip that happened to land for
+C; it was a 2.95 dB gap being compressed by a broken metric.
+
+---
+
+## 12. Open / incomplete
+
+- **Re-score the remaining checkpoints.** The architecture sweep (§10) and the
+  controlled comparison (§11) are done. Sections 4, 5 and 6 still carry the
+  unaligned numbers and remain provisional; they save `.pt` files, so each is an
+  eval pass via `experiments/rescore_checkpoints.py`, not a retrain.
+- **Re-run the sweep with `ffc_resunet` included**, now that its autocast defect
+  is fixed — it is the one candidate the sweep never actually measured.
 - **Confirm the sweep at more than one seed.** §10 is a single seed at 1200
   steps. The nafnet-over-baseline gap (0.505 dB) clears the ~0.2 dB threshold,
   but nafnet vs restormer (0.006 dB) is not a result.
