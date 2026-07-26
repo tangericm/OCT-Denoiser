@@ -14,6 +14,7 @@ from octdenoiser.engine.early_stopping import EarlyStopping
 from octdenoiser.engine.eval import evaluate, evaluate_full_frames
 from octdenoiser.engine.losses import compute_total_loss, unpack_batch
 from octdenoiser.networks import create_model
+from octdenoiser.networks.build import build_model_kwargs_from_cfg
 from octdenoiser.utils.helpers import save_json
 from octdenoiser.utils.io_tiff import save_tiff_stack
 from octdenoiser.utils.live_plot import LiveLossPlot
@@ -115,17 +116,10 @@ def run_training(cfg, paths: dict[str, str]) -> dict[str, Any]:
     val_loader = dm.val_loader()
     val_full_loader = dm.val_full_loader()
 
-    # Model
-    model_kwargs = {"base": cfg.base}
-    n_sub = getattr(cfg.folder_specs[0], "n_sub_windows", 0) if cfg.folder_specs else 0
-    if cfg.model_name == "resunet_pseudo3d_multilevel":
-        model_kwargs["n_sub_channels"] = 2 * n_sub
-    else:
-        # Channel count per input_mode: full-band single image (1ch) vs bandgap (2 + subs).
-        if getattr(cfg, "input_mode", "bandgap") == "fullband":
-            model_kwargs["in_ch"] = 1
-        else:
-            model_kwargs["in_ch"] = 2 + (2 * n_sub if n_sub > 0 else 0)
+    # Model. The width follows the SUPERVISION scheme, not input_mode -- both
+    # frame-pair and complementary supervision emit one channel while leaving
+    # input_mode at "bandgap". See networks/build.py.
+    model_kwargs = build_model_kwargs_from_cfg(cfg)
     model = create_model(cfg.model_name, **model_kwargs).to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)

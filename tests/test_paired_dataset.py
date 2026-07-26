@@ -38,12 +38,26 @@ def test_repeat_pairing_steps_one_index():
 def test_repeat_pairs_start_on_even_indices_only():
     """Odd starts would straddle a position boundary, not pair a repeat."""
     ds = _ds(_spec(), pair_mode="repeat")
-    assert ds._pair_starts(10) == [0, 2, 4, 6, 8]
+    assert ds._starts_in_block(0, 10) == [0, 2, 4, 6, 8]
+
+
+def test_repeat_starts_align_to_the_global_position_grid():
+    """A block boundary is not a position boundary; starts must snap to the grid."""
+    ds = _ds(_spec(), pair_mode="repeat")
+    assert ds._starts_in_block(3, 10) == [4, 6, 8], "start 3 would pair p1r1 with p2r0"
 
 
 def test_position_pairs_use_every_start():
     ds = _ds(_spec(), pair_mode="position", position_step=1)
-    assert ds._pair_starts(10) == list(range(8))
+    assert ds._starts_in_block(0, 10) == list(range(8))
+
+
+def test_block_starts_keep_both_frames_inside_the_block():
+    ds = _ds(_spec(), pair_mode="position", position_step=1)
+    starts = ds._starts_in_block(4, 12)
+    assert starts, "block must yield pairs"
+    assert min(starts) >= 4
+    assert max(starts) + ds.frame_offset < 12
 
 
 def test_rejects_bad_pair_mode():
@@ -85,9 +99,29 @@ def test_train_and_val_pairs_are_disjoint(synthetic_spec):
     assert not (tr_pairs & va_pairs), "a pair must not appear in both splits"
 
 
+def test_train_and_val_share_no_frame(synthetic_spec):
+    """The split must isolate FRAMES, not just pairs.
+
+    Position pairs overlap in their constituent frames -- (0,2) and (2,4) both
+    use frame 2 -- so a shuffled pair-level split puts the same frame on both
+    sides. That inflates the validation loss driving early stopping and
+    checkpoint selection. Blocks of contiguous frames are what prevent it.
+    """
+    common = dict(train_frac=0.6, patches_per_frame=1, pair_mode="position", position_step=1)
+    tr = _ds(synthetic_spec, split="train", **common)
+    va = _ds(synthetic_spec, split="val", **common)
+    tr._build_index()
+    va._build_index()
+
+    tr_frames = {f for e in tr._index for f in (e[1], e[2])}
+    va_frames = {f for e in va._index for f in (e[1], e[2])}
+    assert tr_frames and va_frames
+    assert not (tr_frames & va_frames), f"frames in both splits: {sorted(tr_frames & va_frames)}"
+
+
 def test_too_few_frames_raises(synthetic_spec):
     ds = _ds(synthetic_spec, pair_mode="position", position_step=99)
-    with pytest.raises(ValueError, match="too few for pair_mode"):
+    with pytest.raises(ValueError, match="cannot be split into two blocks"):
         ds._build_index()
 
 

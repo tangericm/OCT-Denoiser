@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -90,13 +91,54 @@ def _corr(a: np.ndarray, b: np.ndarray) -> float:
     return float(x @ y / (np.linalg.norm(x) * np.linalg.norm(y) + 1e-12))
 
 
-def build_reference(root: str, folder: str, alines: int, cache_dir: str) -> tuple[np.ndarray, dict]:
+@dataclass
+class Reference:
+    """A registered 50-frame average, plus the shifts that built it.
+
+    The average lives in frame 0's coordinates. Scoring a prediction made from
+    frame i against it compares two images that are physically displaced --
+    these stacks carry real, non-monotonic motion (mean |dz| of several pixels,
+    one stack reaching 22) -- so the metric would charge every model for
+    eye movement on top of whatever denoising it did.
+
+    That is not a constant offset that cancels in a ranking. Misalignment
+    penalises a SHARP output more than a blurred one, which is the same
+    direction PSNR and SSIM are already biased in (see docs/FINDINGS.md section
+    9). Keeping the shifts and undoing them per frame removes the term.
+    """
+
+    image: np.ndarray          # [H, W] log-domain average, in frame 0's coordinates
+    shifts: np.ndarray         # [N, 2] (dz, dx) carrying frame i onto frame 0
+
+    def aligned_to(self, frame_index: int) -> np.ndarray:
+        """The reference resampled into frame `frame_index`'s coordinates.
+
+        The REFERENCE is what gets resampled, never the prediction: a 50-frame
+        average is already smooth, so cubic interpolation costs it essentially
+        nothing, whereas resampling the prediction would blur exactly the fine
+        structure the comparison is meant to measure.
+        """
+        if frame_index >= len(self.shifts):
+            return self.image
+        dz, dx = self.shifts[frame_index]
+        if abs(dz) < 1e-3 and abs(dx) < 1e-3:
+            return self.image
+        return ndshift(self.image, (-float(dz), -float(dx)), order=3, mode="nearest")
+
+
+# Bumped when the cache payload changed (shifts added). Old caches lack the
+# shifts and would silently fall back to the unregistered comparison.
+_CACHE_VERSION = "v2"
+
+
+def build_reference(root: str, folder: str, alines: int, cache_dir: str) -> tuple[Reference, dict]:
     """Register and average one repeat stack. Cached -- this is the slow part."""
     os.makedirs(cache_dir, exist_ok=True)
-    path = os.path.join(cache_dir, f"{folder}.npz")
+    path = os.path.join(cache_dir, f"{folder}_{_CACHE_VERSION}.npz")
     if os.path.exists(path):
         z = np.load(path)
-        return z["reference"], {"cached": True, "n_kept": int(z["n_kept"])}
+        return (Reference(z["reference"], z["shifts"]),
+                {"cached": True, "n_kept": int(z["n_kept"])})
 
     proc = BscanProcessor(_spec(root, folder, alines))
     n = len(proc.bscan_paths)
@@ -118,9 +160,11 @@ def build_reference(root: str, folder: str, alines: int, cache_dir: str) -> tupl
 
     # Reference lives in the same log domain the models output.
     ref_log = np.log10(ref_linear + 1e-6).astype(np.float32)
-    np.savez_compressed(path, reference=ref_log, n_kept=res.n_kept)
-    return ref_log, {"cached": False, "n_kept": res.n_kept,
-                     "corr_after": float(np.mean(res.correlations))}
+    shifts = np.asarray(res.shifts, dtype=np.float32)
+    np.savez_compressed(path, reference=ref_log, shifts=shifts, n_kept=res.n_kept)
+    return (Reference(ref_log, shifts),
+            {"cached": False, "n_kept": res.n_kept,
+             "corr_after": float(np.mean(res.correlations))})
 
 
 @torch.no_grad()
@@ -135,12 +179,15 @@ def score_scheme(model, scheme: str, root: str, device: str,
     for folder, alines in REFERENCE_STACKS:
         if folder not in references:
             continue
-        ref = references[folder][TISSUE]
-        ref_z = _zscore(ref)
+        reference = references[folder]
         proc = BscanProcessor(_spec(root, folder, alines))
         step = max(1, len(proc.bscan_paths) // n_frames)
 
         for i in range(0, min(len(proc.bscan_paths), n_frames * step), step):
+            # Undo frame i's motion so the comparison measures denoising rather
+            # than displacement. Shift the full frame, then crop, so rows moving
+            # into the ROI carry real data.
+            ref_z = _zscore(reference.aligned_to(i)[TISSUE])
             out = proc.process_one(proc.bscan_paths[i], frame_idx=i, fft_workers=-1)
             chans = [out[k] for k in keys]
             x = torch.from_numpy(np.stack(chans)[None].astype(np.float32)).to(device)
@@ -172,10 +219,13 @@ def noisy_input_baseline(root: str, references: dict, n_frames: int) -> dict:
     for folder, alines in REFERENCE_STACKS:
         if folder not in references:
             continue
-        ref_z = _zscore(references[folder][TISSUE])
+        reference = references[folder]
         proc = BscanProcessor(_spec(root, folder, alines))
         step = max(1, len(proc.bscan_paths) // n_frames)
         for i in range(0, min(len(proc.bscan_paths), n_frames * step), step):
+            # Same alignment as score_scheme -- the floor has to be measured the
+            # same way as what it is a floor for.
+            ref_z = _zscore(reference.aligned_to(i)[TISSUE])
             src = proc.process_one(proc.bscan_paths[i], frame_idx=i,
                                    fft_workers=-1)["target_full"][TISSUE]
             src_z = _zscore(src)
@@ -202,7 +252,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
 
     print("building near-clean references (cached after the first run)", flush=True)
-    references: dict[str, np.ndarray] = {}
+    references: dict[str, Reference] = {}
     for folder, alines in REFERENCE_STACKS:
         try:
             ref, info = build_reference(args.m2_root, folder, alines, args.cache_dir)

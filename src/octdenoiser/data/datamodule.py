@@ -34,6 +34,7 @@ class RawBscanDataModule:
                 pair_mode=c.pair_mode,
                 position_step=c.position_step,
                 repeats_per_position=c.repeats_per_position,
+                group_size=getattr(c, "pair_group_size", 64),
                 input_mode="fullband",
                 target_mode="fullband",
                 avg_leave_one_out=mode_kwargs["avg_leave_one_out"],

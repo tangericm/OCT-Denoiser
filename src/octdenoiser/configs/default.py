@@ -115,6 +115,10 @@ class TrainConfig:
     pair_mode: str = "position"            # "position" (measured best) | "repeat"
     position_step: int = 1                 # positions apart; 1 step = 11.7 um at 6mm/512
     repeats_per_position: int = 2          # OCTA x2 volumes interleave 2 repeats
+    # Frames per contiguous train/val block. Pairs overlap in their frames, so
+    # splitting on pairs leaks a frame across the boundary; splitting on blocks
+    # does not, and also separates the spatially correlated neighbouring B-scans.
+    pair_group_size: int = 64
 
     # ------------------------------------------------------------------
     # Model
@@ -220,6 +224,8 @@ class TrainConfig:
                     'supervision="frame_pair" and target_mode="complementary" are two '
                     "different schemes; pick one."
                 )
+            if self.pair_group_size < 2:
+                raise ConfigError(f"pair_group_size must be >= 2, got {self.pair_group_size}")
             return
 
         if not self.folder_specs:

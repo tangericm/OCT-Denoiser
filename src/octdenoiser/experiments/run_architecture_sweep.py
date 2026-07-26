@@ -32,6 +32,7 @@ from octdenoiser.data.paired_dataset import MultiFrameDataset
 from octdenoiser.engine.losses import compute_total_loss, unpack_batch
 from octdenoiser.experiments.run_fair_eval import (
     REFERENCE_STACKS,
+    Reference,
     _to_unit,
     _zscore,
     build_reference,
@@ -101,13 +102,16 @@ def score(model, arch_multi: bool, args, references: dict) -> dict:
     for folder, alines in REFERENCE_STACKS:
         if folder not in references:
             continue
-        ref_z = _zscore(references[folder][TISSUE])
+        reference = references[folder]
         from octdenoiser.configs.default import FolderSpec
         proc = BscanProcessor(FolderSpec(
             root_folder=args.m2_root, data_folder=folder, pixels=2048, alines=alines,
             crop_depth=(0, 1024), window_sigma=0.05, gap=0.60, gap_offset=0.015))
         step = max(1, len(proc.bscan_paths) // args.eval_frames)
         for i in range(0, min(len(proc.bscan_paths), args.eval_frames * step), step):
+            # Prediction is centred on frame i in both branches, so undo frame
+            # i's motion before scoring. See run_fair_eval.Reference.
+            ref_z = _zscore(reference.aligned_to(i)[TISSUE])
             if arch_multi:
                 idx = [min(max(i + (j - args.n_frames // 2) * s, 0),
                            len(proc.bscan_paths) - 1) for j in range(args.n_frames)]
@@ -218,7 +222,7 @@ def main():
     print("  deform_fusion consumes K frames; all others consume one. Not like-for-like.\n",
           flush=True)
 
-    references: dict[str, np.ndarray] = {}
+    references: dict[str, Reference] = {}
     for folder, alines in REFERENCE_STACKS:
         try:
             ref, _ = build_reference(args.m2_root, folder, alines, args.cache_dir)

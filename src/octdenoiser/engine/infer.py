@@ -12,6 +12,7 @@ import torch
 from octdenoiser.configs.default import TrainConfig
 from octdenoiser.engine.metrics import bg_bounds, roi_bounds, roi_snr_cnr, to_physical_intensity
 from octdenoiser.networks import create_model
+from octdenoiser.networks.build import build_model_kwargs
 from octdenoiser.utils.helpers import nanmean
 from octdenoiser.utils.io_tiff import save_tiff_stack
 from octdenoiser.utils.run_manager import ensure_dir, make_param_suffix
@@ -88,7 +89,8 @@ def predict_raw_to_tiffs(
 
     # Input/target construction (must match training)
     input_mode: str = "bandgap",     # "bandgap" = [w1,w2(+subs)]; "fullband" = single full-band image
-    target_mode: str = "fullband",   # "fullband" = same-frame full band; "average" = temporal-average reference
+    target_mode: str = "fullband",   # "fullband" | "average" | "complementary" (one sub-band in, the other out)
+    supervision: str = "spectral",   # "spectral" | "frame_pair" (one full-band frame in, another out)
     avg_leave_one_out: bool = True,
 
 ) -> None:
@@ -123,12 +125,14 @@ def predict_raw_to_tiffs(
     ckpt = torch.load(ckpt_path, map_location="cpu")
     print(f"[INFO] Creating model: {model_name}")
     n_sub = getattr(folder_spec, "n_sub_windows", 0)
-    model_kwargs = {"base": base}
-    if model_name == "resunet_pseudo3d_multilevel":
-        model_kwargs["n_sub_channels"] = 2 * n_sub
-    else:
-        # Channel count must match input_mode (mirrors engine/train.py).
-        model_kwargs["in_ch"] = 1 if input_mode == "fullband" else (2 + (2 * n_sub if n_sub > 0 else 0))
+    # Shared with engine/train.py so the two cannot drift. Width follows the
+    # supervision scheme: frame-pair and complementary checkpoints are both
+    # 1-channel while their config still reads input_mode="bandgap", and
+    # rebuilding them as 2-channel fails strict state-dict load.
+    model_kwargs = build_model_kwargs(
+        model_name=model_name, base=base, input_mode=input_mode,
+        target_mode=target_mode, supervision=supervision, n_sub_windows=n_sub,
+    )
     model = create_model(model_name, **model_kwargs).to(device)
     model.load_state_dict(ckpt["model"], strict=True)
     model.eval()
@@ -140,7 +144,12 @@ def predict_raw_to_tiffs(
         paths = paths[: int(max_frames)]
     F = len(paths)
 
-    is_bandgap = (input_mode != "fullband")
+    is_frame_pair = (supervision == "frame_pair")
+    is_complementary = (target_mode == "complementary")
+    # Frame-pair checkpoints never see a sub-band even though their config still
+    # says input_mode="bandgap" (the datamodule overrides it internally), so
+    # saving w1/w2 alongside their predictions would misrepresent the input.
+    is_bandgap = (input_mode != "fullband") and not is_frame_pair
     is_average = (target_mode == "average")
     need_lin = is_average
 
@@ -221,9 +230,20 @@ def predict_raw_to_tiffs(
     bg_roi_c = bg_bounds(H, W, x0=sx0, x1=sx1)
 
     def _gather_input(out: dict) -> np.ndarray:
-        """Model input per input_mode: bandgap [w1,w2(+subs)] or single full-band image."""
-        if not is_bandgap:
+        """Model input, matched to what the checkpoint was trained on.
+
+        frame_pair    -> [full-band frame]   1 ch   (the pair's other frame was the target)
+        complementary -> [w1]                1 ch   (w2 was the target)
+        fullband      -> [full-band frame]   1 ch
+        bandgap       -> [w1, w2, *subs]     2 + 2*n_sub
+        """
+        if is_frame_pair or input_mode == "fullband":
             return out["target_full"][None, ...].astype(np.float32)  # [1,H,W]
+        if is_complementary:
+            # Fixed to w1. The dataset randomises which sub-band is the input as
+            # a training augmentation but pins it to w1 for full-frame
+            # validation; inference must be deterministic for the same reason.
+            return out["input_w1"][None, ...].astype(np.float32)
         channels = [out["input_w1"], out["input_w2"]]
         if "input_sub_windows" in out:
             channels.extend(out["input_sub_windows"])
@@ -375,6 +395,7 @@ def predict_from_config(cfg, folder_spec, ckpt_path: str, outdir: str, **overrid
         snr_sig_stat=cfg.snr_sig_stat,
         input_mode=getattr(cfg, "input_mode", "bandgap"),
         target_mode=getattr(cfg, "target_mode", "fullband"),
+        supervision=getattr(cfg, "supervision", "spectral"),
         avg_leave_one_out=getattr(cfg, "avg_leave_one_out", True),
         **overrides,
     )

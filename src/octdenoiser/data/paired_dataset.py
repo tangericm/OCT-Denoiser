@@ -70,6 +70,11 @@ class PairedFrameDataset(RawBscanDataset):
                     Default, and the measured best.
       "repeat"   -- pair the two repeats at one position, (2k, 2k+1).
 
+    Train/val are split on contiguous blocks of `group_size` frames, not on
+    pairs. Position pairs share frames -- (0,2) and (2,4) both use frame 2 -- so
+    a pair-level split leaks frames across the boundary and inflates the
+    validation loss that selects the checkpoint.
+
     Reuses the parent's lazy per-worker init, LRU frame cache, cropping and
     augmentation. Only the index and item construction differ.
     """
@@ -84,6 +89,7 @@ class PairedFrameDataset(RawBscanDataset):
         pair_mode: str = "position",
         position_step: int = 1,
         repeats_per_position: int = 2,
+        group_size: int = 64,
         **kw,
     ):
         if pair_mode not in PAIR_MODES:
@@ -94,10 +100,13 @@ class PairedFrameDataset(RawBscanDataset):
             raise ValueError(f"repeats_per_position must be >= 1, got {repeats_per_position}")
         if pair_mode == "repeat" and repeats_per_position < 2:
             raise ValueError('pair_mode="repeat" needs repeats_per_position >= 2')
+        if group_size < 2:
+            raise ValueError(f"group_size must be >= 2, got {group_size}")
 
         self.pair_mode = pair_mode
         self.position_step = position_step
         self.repeats_per_position = repeats_per_position
+        self.group_size = group_size
         self._swapped = False
         # Both sides are full-bandwidth frames; no spectral view is constructed.
         kw.setdefault("input_mode", "fullband")
@@ -112,14 +121,27 @@ class PairedFrameDataset(RawBscanDataset):
             return 1
         return self.repeats_per_position * self.position_step
 
-    def _pair_starts(self, n_frames: int) -> list[int]:
-        """Valid first-frame indices for a pair, within one acquisition."""
+    def _starts_in_block(self, lo: int, hi: int) -> list[int]:
+        """Pair starts whose every constituent frame lies inside [lo, hi)."""
         off = self.frame_offset
         if self.pair_mode == "repeat":
-            # Only even starts pair the two repeats of the SAME position; odd
-            # starts would straddle a position boundary.
-            return list(range(0, n_frames - off, self.repeats_per_position))
-        return list(range(0, n_frames - off))
+            # Only starts on the position grid pair the two repeats of the SAME
+            # position; off-grid starts would straddle a position boundary. The
+            # grid is global, so align to it rather than to the block edge.
+            s = self.repeats_per_position
+            first = ((lo + s - 1) // s) * s
+            return list(range(first, hi - off, s))
+        return list(range(lo, hi - off))
+
+    def _blocks(self, n_frames: int) -> list[tuple[int, int]]:
+        """Contiguous frame ranges to split on, big enough to hold a pair."""
+        n_blocks = max(2, n_frames // self.group_size)
+        edges = np.linspace(0, n_frames, n_blocks + 1).round().astype(int)
+        return [
+            (int(a), int(b))
+            for a, b in zip(edges[:-1], edges[1:], strict=True)
+            if b - a > self.frame_offset
+        ]
 
     def _build_index(self):
         if self._index is not None:
@@ -135,19 +157,38 @@ class PairedFrameDataset(RawBscanDataset):
             if n == 0:
                 raise FileNotFoundError(f"No bscan*.raw found in {data_dir}")
 
-            starts = self._pair_starts(n)
-            if not starts:
+            # Split on contiguous BLOCKS of frames, then form pairs inside each.
+            #
+            # Splitting on pairs is not enough: position pairs overlap in their
+            # frames -- (0,2) and (2,4) both use frame 2 -- so shuffling starts
+            # puts the same frame in train and val, and the validation loss that
+            # drives early stopping and checkpoint selection reads optimistic.
+            # Blocks also handle the correlation between neighbouring B-scans,
+            # which a frame-level split ignores entirely.
+            #
+            # Cost: pairs straddling a block edge are dropped, `frame_offset` of
+            # them per block (~3% at the default group_size=64, offset 2).
+            blocks = self._blocks(n)
+            if len(blocks) < 2:
                 raise ValueError(
-                    f"{fs.data_folder}: {n} frames is too few for pair_mode="
-                    f"{self.pair_mode!r} with offset {self.frame_offset}"
+                    f"{fs.data_folder}: {n} frames cannot be split into two blocks "
+                    f"holding a pair of offset {self.frame_offset}; lower group_size "
+                    f"(currently {self.group_size}) or use a longer acquisition"
                 )
 
-            # Split on PAIRS, so a frame cannot appear in both train and val
-            # through different pairings.
-            order = np.arange(len(starts))
+            order = np.arange(len(blocks))
             rng.shuffle(order)
-            n_train = int(round(self.train_frac * len(starts)))
-            chosen = order[:n_train] if self.split == "train" else order[n_train:]
+            # Clamp so neither split is empty -- an empty val loader fails later
+            # and much less legibly.
+            n_train = int(np.clip(round(self.train_frac * len(blocks)), 1, len(blocks) - 1))
+            picked = order[:n_train] if self.split == "train" else order[n_train:]
+
+            starts = [s for b in picked for s in self._starts_in_block(*blocks[int(b)])]
+            if not starts:
+                raise ValueError(
+                    f"{fs.data_folder}: no valid pairs in the {self.split} blocks for "
+                    f"pair_mode={self.pair_mode!r} with offset {self.frame_offset}"
+                )
 
             if not self.full_frame:
                 z0, z1 = fs.crop_depth
@@ -156,8 +197,7 @@ class PairedFrameDataset(RawBscanDataset):
                 if (z1 - z0) < self.patch_h:
                     raise ValueError(f"patch_h={self.patch_h} > cropped depth {z1 - z0}")
 
-            for k in chosen:
-                i = starts[int(k)]
+            for i in starts:
                 if self.full_frame:
                     index.append((fidx, i, i + self.frame_offset))
                 else:
@@ -251,9 +291,6 @@ class MultiFrameDataset(PairedFrameDataset):
         """Index span from the first input frame to the target."""
         s = self.repeats_per_position * self.position_step
         return (self._half + self._half + 1) * s
-
-    def _pair_starts(self, n_frames: int) -> list[int]:
-        return list(range(0, n_frames - self.frame_offset))
 
     def _input_and_target(self, start: int) -> tuple[list[int], int]:
         s = self.repeats_per_position * self.position_step

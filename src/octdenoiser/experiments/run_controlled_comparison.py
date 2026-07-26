@@ -45,6 +45,7 @@ from octdenoiser.data.datamodule import RawBscanDataModule
 from octdenoiser.engine.losses import compute_total_loss, unpack_batch
 from octdenoiser.experiments.run_fair_eval import (
     REFERENCE_STACKS,
+    Reference,
     build_reference,
     noisy_input_baseline,
     score_scheme,
@@ -143,7 +144,7 @@ def main():
     print("  matched: volumes, architecture, all hyperparameters, step count, eval")
     print("  differs: supervision scheme and seed only\n", flush=True)
 
-    references: dict[str, np.ndarray] = {}
+    references: dict[str, Reference] = {}
     for folder, alines in REFERENCE_STACKS:
         try:
             ref, _ = build_reference(args.m2_root, folder, alines, args.cache_dir)
