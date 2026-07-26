@@ -80,6 +80,13 @@ filterwarnings = [
 line-length = 110
 target-version = "py310"
 src = ["src", "tests"]
+# probes/ is an ARCHIVE, not maintained code. Those scripts produced the measured
+# numbers in docs/FINDINGS.md and are committed so every claim there has a
+# reproducer. They are deliberately left exactly as they ran -- tidying them
+# would risk changing what they computed, which would defeat the point of
+# keeping them. Do not add new work here; new measurements go in
+# src/octdenoiser/experiments/ and are held to the normal gates.
+exclude = ["probes"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
