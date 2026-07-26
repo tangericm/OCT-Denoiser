@@ -236,6 +236,17 @@ degenerate constant output exceeds 1.0.
 two near-tied models (true MSE 5% apart, scored 0.25% apart). Over 32 frames,
 ranking matched a clean reference exactly (Spearman 1.0).
 
+**Every reference-scored number here predates the alignment fix.** Sections 4,
+5 and 6 compared a prediction made from frame *i* against an average registered
+to frame 0 — the registration shifts were computed and then thrown away. These
+stacks carry real non-monotonic motion (one frame reached dz=22 px), so those
+PSNR/SSIM values charge each model for eye movement on top of denoising, and are
+understated in absolute terms. The penalty is not a constant that cancels in a
+ranking: misalignment costs a *sharp* output more than a blurred one, the same
+direction these metrics are already biased in, so the small gaps (B vs C at
+0.56 dB) are the ones least safe to trust. Fixed in `run_fair_eval.Reference`;
+re-scoring needs no retraining because the scripts save checkpoints.
+
 **Corrected numbers.** An earlier repeat-frame correlation of 0.975 was inflated
 by a DC artefact in a reconstruction that skipped k-linearisation; the correct
 value is ~0.50. Gains of 6.25/4.46 came from the discredited linear PTC fit; the
@@ -245,9 +256,13 @@ correct values are ~0.04.
 
 ## 10. Open / incomplete
 
-- **Controlled B-vs-C comparison**, 3 seeds × 6000 steps. B's first two seeds
-  gave PSNR 19.987 and 20.071 (spread 0.084 dB). The single-seed gap that
-  prompted the run was 0.56 dB; whether it survives depends on C's spread.
+- **Controlled B-vs-C comparison**, 3 seeds × 6000 steps. B's three seeds gave
+  PSNR 19.987 / 20.071 / 20.201 — mean 20.09, sd 0.11. The single-seed gap that
+  prompted the run was 0.56 dB, five times that spread, so it survives unless
+  C's own spread is much wider. C is still training.
+- **Re-score all saved checkpoints** with the aligned reference (§9). Both the
+  controlled comparison and the sweep write `.pt` files, so this is an eval
+  pass, not a retrain.
 - **Architecture sweep**, 6 backbones at fixed supervision. `deform_fusion`
   consumes 5 frames against 1 for the rest — more information at inference, not
   a like-for-like architecture win.
